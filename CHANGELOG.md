@@ -44,6 +44,6 @@ Initial public release of Zorb.
 
 ### Notes
 
-- `build` and `run` are currently Linux-host-only workflows.
+- At the `0.1.2` release, `build` and `run` were Linux-host-only workflows.
 - Zorb is still an early compiler with a deliberately small supported language subset.
 - The current semantic source of truth is `SEMANTICS.md`.
