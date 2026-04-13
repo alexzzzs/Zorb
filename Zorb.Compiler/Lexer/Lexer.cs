@@ -387,6 +387,8 @@ namespace Zorb.Compiler.Lexer;
                     tokens.Add(new Token(TokenType.Else, "", loc.Item1, loc.Item2));
                 else if (text == "continue")
                     tokens.Add(new Token(TokenType.Continue, "", loc.Item1, loc.Item2));
+                else if (text == "break")
+                    tokens.Add(new Token(TokenType.Break, "", loc.Item1, loc.Item2));
                 else if (text == "true")
                     tokens.Add(new Token(TokenType.True, "", loc.Item1, loc.Item2));
                 else if (text == "false")

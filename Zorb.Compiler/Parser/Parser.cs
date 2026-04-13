@@ -100,6 +100,7 @@ private void Synchronize()
             case TokenType.Const:
             case TokenType.Error:
             case TokenType.Export:
+            case TokenType.Break:
                 return;
         }
 
@@ -631,6 +632,14 @@ public List<Node> ParseProgram()
         if (Current.Type == TokenType.Continue)
         {
             var stmt = new ContinueStmt();
+            StampNode(stmt, Current);
+            Advance();
+            return stmt;
+        }
+
+        if (Current.Type == TokenType.Break)
+        {
+            var stmt = new BreakStmt();
             StampNode(stmt, Current);
             Advance();
             return stmt;

@@ -104,6 +104,8 @@ public class WhileStmt : Statement
 
 public class ContinueStmt : Statement { }
 
+public class BreakStmt : Statement { }
+
 public class AssignStmt : Statement
 {
     public Expr Target { get; set; } = null!;

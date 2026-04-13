@@ -28,6 +28,7 @@ public class TypeChecker
     private readonly Dictionary<long, string> _errorValues = new();
     private string _currentDir = ".";
     private FunctionDecl? _currentFunction;
+    private int _loopDepth;
 
     private readonly Stack<HashSet<string>> _fileScopes = new();
     private readonly Dictionary<string, List<string>> _fileExports = new();
@@ -226,6 +227,9 @@ public class TypeChecker
                 for (int i = 0; i < whileStmt.Body.Count; i++)
                     whileStmt.Body[i] = NormalizeAliasReferences(whileStmt.Body[i]);
                 return whileStmt;
+
+            case BreakStmt breakStmt:
+                return breakStmt;
 
             case AsmStatementNode asmStmt:
                 for (int i = 0; i < asmStmt.Outputs.Count; i++)
@@ -636,7 +640,20 @@ public class TypeChecker
                 {
                     _errors.Error(whileStmt.Condition, $"Condition must have type 'bool', got '{FormatType(GetExpressionType(whileStmt.Condition, reportErrors: false))}'. Compare explicitly if you meant truthiness.");
                 }
-                CheckBlock(whileStmt.Body);
+                _loopDepth++;
+                try
+                {
+                    CheckBlock(whileStmt.Body);
+                }
+                finally
+                {
+                    _loopDepth--;
+                }
+                return FlowOutcome.FallsThrough;
+
+            case BreakStmt breakStmt:
+                if (_loopDepth == 0)
+                    _errors.Error(breakStmt, "'break' is only allowed inside a while loop.");
                 return FlowOutcome.FallsThrough;
 
             case AsmStatementNode asmStmt:

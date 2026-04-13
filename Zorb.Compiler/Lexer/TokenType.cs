@@ -54,6 +54,7 @@ public enum TokenType
     Export,
     Else,
     Continue,
+    Break,
     True,
     False
 }
