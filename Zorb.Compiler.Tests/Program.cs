@@ -5,6 +5,7 @@ using Zorb.Compiler.AST;
 using Zorb.Compiler.Codegen;
 using Zorb.Compiler.Lexer;
 using Zorb.Compiler.Parser;
+using Zorb.Compiler.Parsing;
 using Zorb.Compiler.Semantic;
 using Zorb.Compiler.Utils;
 
@@ -257,23 +258,9 @@ static FixtureCompilation CompileRuntimeFixture(string mainPath, string fixtureD
 
 static List<Node> ParseFile(string path, out List<string> errors)
 {
-    var source = File.ReadAllText(path);
-    List<Token> tokens;
-    try
-    {
-        var lexer = new Lexer(source, path);
-        tokens = lexer.Tokenize();
-    }
-    catch (LexerException ex)
-    {
-        errors = new List<string> { $"{ex.File}:{ex.Line}:{ex.Column}: error: {ex.Message}" };
-        return new List<Node>();
-    }
-
-    var parser = new Parser(tokens, path);
-    var ast = parser.ParseProgram();
-    errors = parser.ErrorReporter.Errors;
-    return ast;
+    var parseResult = ImportGraphParser.ParseWithImports(path);
+    errors = parseResult.Errors;
+    return parseResult.EntryNodes;
 }
 
 static List<string> ReadExpectationLines(string fixtureDir, string fileName)
