@@ -191,4 +191,4 @@ dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj -- --update-
 
 ## Current Design Note
 
-Imported-file parse failures are currently discovered during import processing in semantic analysis, so some malformed import fixtures are intentionally classified as `semantic` rather than `parse`.
+Imported files are now lexed and parsed during the initial parse walk of the import graph, so malformed imported source is classified as `parse`.

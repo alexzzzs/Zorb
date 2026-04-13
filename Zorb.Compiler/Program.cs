@@ -5,6 +5,7 @@ using Zorb.Compiler.AST;
 using Zorb.Compiler.Codegen;
 using Zorb.Compiler.Lexer;
 using Zorb.Compiler.Parser;
+using Zorb.Compiler.Parsing;
 using Zorb.Compiler.Semantic;
 using Zorb.Compiler.Utils;
 
@@ -88,34 +89,20 @@ class Program
     {
         var inputPath = Path.GetFullPath(options.InputPath);
         var currentDir = Path.GetDirectoryName(inputPath) ?? ".";
-        var source = File.ReadAllText(inputPath);
-
-        List<Token> tokens;
-        try
-        {
-            var lexer = new Lexer(source, inputPath);
-            tokens = lexer.Tokenize();
-        }
-        catch (LexerException ex)
-        {
-            var errors = new ErrorReporter();
-            errors.Error(ex.Message, ex.Line, ex.Column, ex.File);
-            Console.Error.WriteLine("Parse failed.");
-            errors.ReportAll();
-            return null;
-        }
 
         if (options.DumpTokens)
-            DumpTokens(tokens);
+            DumpTokensForFile(inputPath);
 
-        var parser = new Parser(tokens, inputPath);
-        var ast = parser.ParseProgram();
-        if (parser.ErrorReporter.HasErrors)
+        var parseResult = ImportGraphParser.ParseWithImports(inputPath);
+        if (parseResult.Errors.Count > 0)
         {
             Console.Error.WriteLine("Parse failed.");
-            parser.ErrorReporter.ReportAll();
+            foreach (var error in parseResult.Errors)
+                Console.Error.WriteLine(error);
             return null;
         }
+
+        var ast = parseResult.EntryNodes;
 
         var typeChecker = new TypeChecker();
         typeChecker.Check(ast, currentDir);
@@ -147,6 +134,14 @@ class Program
             Console.Error.WriteLine(ex.Message);
             return null;
         }
+    }
+
+    private static void DumpTokensForFile(string inputPath)
+    {
+        var source = File.ReadAllText(inputPath);
+        var lexer = new Lexer(source, inputPath);
+        var tokens = lexer.Tokenize();
+        DumpTokens(tokens);
     }
 
     private static int EmitCOutput(string cCode, string outputPath)
