@@ -11,8 +11,9 @@ using Zorb.Compiler.Utils;
 
 class Program
 {
-    private const string HostLinuxCompileFlags = "-O2 -nostdlib -fno-pie -no-pie -z execstack -fno-builtin";
-    private const string RunTimeoutSeconds = "30s";
+    private const string HostLinuxFreestandingCompileFlags = "-O2 -nostdlib -fno-pie -no-pie -z execstack -fno-builtin";
+    private const string HostLinuxHostedCompileFlags = "-O2";
+    private const int RunTimeoutMilliseconds = 30_000;
 
     private enum CommandMode
     {
@@ -31,8 +32,10 @@ class Program
         public bool EmitC { get; set; } = true;
         public bool DumpTokens { get; set; }
         public bool NoStdLib { get; set; }
+        public bool NoStdLibExplicitlySet { get; set; }
         public bool ShowHelp { get; set; }
         public bool ShowVersion { get; set; }
+        public bool OutputPathExplicitlySet { get; set; }
     }
 
     static int Main(string[] args)
@@ -55,7 +58,9 @@ class Program
                 return 0;
             }
 
-            var compilation = CompileInput(options);
+            var effectiveNoStdLib = ResolveNoStdLib(options);
+            var outputPath = ResolveOutputPath(options);
+            var compilation = CompileInput(options, effectiveNoStdLib);
             if (compilation == null)
                 return 1;
 
@@ -67,9 +72,9 @@ class Program
 
             return options.Mode switch
             {
-                CommandMode.EmitC => EmitCOutput(compilation.GeneratedCode, options.OutputPath),
-                CommandMode.Build => BuildExecutable(compilation.InputPath, compilation.GeneratedCode, options.OutputPath, options.KeepCPath),
-                CommandMode.Run => RunExecutable(compilation.InputPath, compilation.GeneratedCode, options.KeepCPath),
+                CommandMode.EmitC => EmitCOutput(compilation.GeneratedCode, outputPath),
+                CommandMode.Build => BuildExecutable(compilation.InputPath, compilation.GeneratedCode, outputPath, options.KeepCPath, effectiveNoStdLib),
+                CommandMode.Run => RunExecutable(compilation.InputPath, compilation.GeneratedCode, options.KeepCPath, effectiveNoStdLib),
                 _ => 1
             };
         }
@@ -85,7 +90,7 @@ class Program
         }
     }
 
-    private static CompiledProgram? CompileInput(Options options)
+    private static CompiledProgram? CompileInput(Options options, bool effectiveNoStdLib)
     {
         var inputPath = Path.GetFullPath(options.InputPath);
         var currentDir = Path.GetDirectoryName(inputPath) ?? ".";
@@ -117,8 +122,8 @@ class Program
         {
             var generator = new CGenerator(currentDir, typeChecker.SymbolTable)
             {
-                PreserveStart = options.NoStdLib,
-                NoStdLib = options.NoStdLib
+                PreserveStart = effectiveNoStdLib,
+                NoStdLib = effectiveNoStdLib
             };
 
             return new CompiledProgram(
@@ -152,14 +157,30 @@ class Program
         return 0;
     }
 
-    private static int BuildExecutable(string inputPath, string cCode, string outputPath, string? keepCPath)
+    private static int BuildExecutable(string inputPath, string cCode, string outputPath, string? keepCPath, bool noStdLib)
     {
-        if (!OperatingSystem.IsLinux())
+        if (OperatingSystem.IsLinux())
         {
-            Console.Error.WriteLine("Build currently supports Linux hosts only.");
-            return 1;
+            return BuildExecutableOnLinux(cCode, outputPath, keepCPath, noStdLib);
         }
 
+        if (OperatingSystem.IsWindows())
+        {
+            if (noStdLib)
+            {
+                Console.Error.WriteLine("Windows build currently supports hosted output only. Omit -nostdlib.");
+                return 1;
+            }
+
+            return BuildExecutableOnWindows(cCode, outputPath, keepCPath);
+        }
+
+        Console.Error.WriteLine("Build currently supports Linux and Windows hosts only.");
+        return 1;
+    }
+
+    private static int BuildExecutableOnLinux(string cCode, string outputPath, string? keepCPath, bool noStdLib)
+    {
         EnsureToolAvailable("gcc");
 
         var fullOutputPath = Path.GetFullPath(outputPath);
@@ -174,7 +195,7 @@ class Program
 
         var compile = RunProcess(
             "gcc",
-            $"{HostLinuxCompileFlags} \"{cSourcePath}\" -o \"{fullOutputPath}\"",
+            $"{GetLinuxCompileFlags(noStdLib)} \"{cSourcePath}\" -o \"{fullOutputPath}\"",
             Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
 
         if (compile.ExitCode != 0)
@@ -192,16 +213,65 @@ class Program
         return 0;
     }
 
-    private static int RunExecutable(string inputPath, string cCode, string? keepCPath)
+    private static int BuildExecutableOnWindows(string cCode, string outputPath, string? keepCPath)
     {
-        if (!OperatingSystem.IsLinux())
+        var compiler = EnsureToolAvailable("clang-cl", "cl");
+        var fullOutputPath = NormalizeWindowsExecutablePath(Path.GetFullPath(outputPath));
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory());
+
+        var cSourcePath = keepCPath != null
+            ? Path.GetFullPath(keepCPath)
+            : Path.Combine(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(fullOutputPath) + ".c");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
+        File.WriteAllText(cSourcePath, cCode);
+
+        var compile = RunProcess(
+            compiler,
+            GetWindowsCompileArguments(compiler, cSourcePath, fullOutputPath),
+            Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
+
+        if (compile.ExitCode != 0)
         {
-            Console.Error.WriteLine("Run currently supports Linux hosts only.");
-            return 1;
+            Console.Error.WriteLine("Native build failed.");
+            if (!string.IsNullOrWhiteSpace(compile.StdErr))
+                Console.Error.Write(compile.StdErr);
+            if (!string.IsNullOrWhiteSpace(compile.StdOut))
+                Console.Error.Write(compile.StdOut);
+            return compile.ExitCode;
         }
 
+        Console.WriteLine($"Executable built at {fullOutputPath}");
+        Console.WriteLine($"Intermediate C written to {cSourcePath}");
+        Console.WriteLine($"Windows toolchain: {compiler}");
+        return 0;
+    }
+
+    private static int RunExecutable(string inputPath, string cCode, string? keepCPath, bool noStdLib)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            return RunExecutableOnLinux(inputPath, cCode, keepCPath, noStdLib);
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            if (noStdLib)
+            {
+                Console.Error.WriteLine("Windows run currently supports hosted output only. Omit -nostdlib.");
+                return 1;
+            }
+
+            return RunExecutableOnWindows(inputPath, cCode, keepCPath);
+        }
+
+        Console.Error.WriteLine("Run currently supports Linux and Windows hosts only.");
+        return 1;
+    }
+
+    private static int RunExecutableOnLinux(string inputPath, string cCode, string? keepCPath, bool noStdLib)
+    {
         EnsureToolAvailable("gcc");
-        EnsureToolAvailable("timeout");
 
         var tempDir = Path.Combine(
             Path.GetTempPath(),
@@ -219,7 +289,7 @@ class Program
 
             var compile = RunProcess(
                 "gcc",
-                $"{HostLinuxCompileFlags} \"{cSourcePath}\" -o \"{binaryPath}\"",
+                $"{GetLinuxCompileFlags(noStdLib)} \"{cSourcePath}\" -o \"{binaryPath}\"",
                 Path.GetDirectoryName(cSourcePath) ?? tempDir);
 
             if (compile.ExitCode != 0)
@@ -232,7 +302,7 @@ class Program
                 return compile.ExitCode;
             }
 
-            var execution = RunProcess("timeout", $"{RunTimeoutSeconds} \"{binaryPath}\"", tempDir);
+            var execution = RunProcessWithTimeout(binaryPath, "", tempDir, RunTimeoutMilliseconds);
             if (!string.IsNullOrEmpty(execution.StdOut))
                 Console.Write(execution.StdOut);
             if (!string.IsNullOrEmpty(execution.StdErr))
@@ -247,14 +317,109 @@ class Program
         }
     }
 
-    private static void EnsureToolAvailable(string toolName)
+    private static int RunExecutableOnWindows(string inputPath, string cCode, string? keepCPath)
     {
-        var check = RunProcess("which", toolName, Directory.GetCurrentDirectory());
-        if (check.ExitCode != 0 || string.IsNullOrWhiteSpace(check.StdOut))
-            throw new ZorbCompilerException($"Required tool '{toolName}' was not found in PATH.");
+        var compiler = EnsureToolAvailable("clang-cl", "cl");
+
+        var tempDir = Path.Combine(
+            Path.GetTempPath(),
+            "zorb-run",
+            Path.GetFileNameWithoutExtension(inputPath) + "-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var binaryFileName = Path.GetFileNameWithoutExtension(inputPath) + ".exe";
+            var binaryPath = Path.Combine(tempDir, binaryFileName);
+            var cSourcePath = keepCPath != null ? Path.GetFullPath(keepCPath) : Path.Combine(tempDir, "out.c");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(cSourcePath) ?? tempDir);
+            File.WriteAllText(cSourcePath, cCode);
+
+            var compile = RunProcess(
+                compiler,
+                GetWindowsCompileArguments(compiler, cSourcePath, binaryPath),
+                Path.GetDirectoryName(cSourcePath) ?? tempDir);
+
+            if (compile.ExitCode != 0)
+            {
+                Console.Error.WriteLine("Native build failed.");
+                if (!string.IsNullOrWhiteSpace(compile.StdErr))
+                    Console.Error.Write(compile.StdErr);
+                if (!string.IsNullOrWhiteSpace(compile.StdOut))
+                    Console.Error.Write(compile.StdOut);
+                return compile.ExitCode;
+            }
+
+            var execution = RunProcessWithTimeout(binaryPath, "", tempDir, RunTimeoutMilliseconds);
+            if (!string.IsNullOrEmpty(execution.StdOut))
+                Console.Write(execution.StdOut);
+            if (!string.IsNullOrEmpty(execution.StdErr))
+                Console.Error.Write(execution.StdErr);
+
+            return execution.ExitCode;
+        }
+        finally
+        {
+            if (keepCPath == null && Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static string GetLinuxCompileFlags(bool noStdLib)
+    {
+        return noStdLib ? HostLinuxFreestandingCompileFlags : HostLinuxHostedCompileFlags;
+    }
+
+    private static string GetWindowsCompileArguments(string compiler, string cSourcePath, string outputPath)
+    {
+        return compiler switch
+        {
+            "clang-cl" => $"/nologo /TC /O2 \"{cSourcePath}\" /Fe:\"{outputPath}\" /link kernel32.lib",
+            "cl" => $"/nologo /TC /O2 \"{cSourcePath}\" /Fe:\"{outputPath}\" /link kernel32.lib",
+            _ => throw new ZorbCompilerException($"Unsupported Windows compiler '{compiler}'.")
+        };
+    }
+
+    private static string NormalizeWindowsExecutablePath(string outputPath)
+    {
+        return outputPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? outputPath
+            : outputPath + ".exe";
+    }
+
+    private static string EnsureToolAvailable(params string[] toolNames)
+    {
+        foreach (var toolName in toolNames)
+        {
+            if (IsToolAvailable(toolName))
+                return toolName;
+        }
+
+        if (toolNames.Length == 1)
+            throw new ZorbCompilerException($"Required tool '{toolNames[0]}' was not found in PATH.");
+
+        throw new ZorbCompilerException($"Required tools were not found in PATH. Install one of: {string.Join(", ", toolNames)}.");
+    }
+
+    private static bool IsToolAvailable(string toolName)
+    {
+        var locator = OperatingSystem.IsWindows() ? "where" : "which";
+        var check = RunProcess(locator, toolName, Directory.GetCurrentDirectory());
+        return check.ExitCode == 0 && !string.IsNullOrWhiteSpace(check.StdOut);
     }
 
     private static ProcessResult RunProcess(string fileName, string arguments, string workingDirectory)
+    {
+        return RunProcessCore(fileName, arguments, workingDirectory, timeoutMilliseconds: null);
+    }
+
+    private static ProcessResult RunProcessWithTimeout(string fileName, string arguments, string workingDirectory, int timeoutMilliseconds)
+    {
+        return RunProcessCore(fileName, arguments, workingDirectory, timeoutMilliseconds);
+    }
+
+    private static ProcessResult RunProcessCore(string fileName, string arguments, string workingDirectory, int? timeoutMilliseconds)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -267,10 +432,56 @@ class Program
         };
 
         using var process = Process.Start(startInfo) ?? throw new Exception($"Failed to start process '{fileName}'.");
-        var stdOut = process.StandardOutput.ReadToEnd();
-        var stdErr = process.StandardError.ReadToEnd();
+        var stdOutTask = process.StandardOutput.ReadToEndAsync();
+        var stdErrTask = process.StandardError.ReadToEndAsync();
+
+        if (timeoutMilliseconds.HasValue)
+        {
+            if (!process.WaitForExit(timeoutMilliseconds.Value))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+
+                throw new ZorbCompilerException($"Process '{fileName}' timed out after {timeoutMilliseconds.Value / 1000} seconds.");
+            }
+        }
+        else
+        {
+            process.WaitForExit();
+        }
+
+        var stdOut = stdOutTask.GetAwaiter().GetResult();
+        var stdErr = stdErrTask.GetAwaiter().GetResult();
         process.WaitForExit();
         return new ProcessResult(process.ExitCode, stdOut, stdErr);
+    }
+
+    private static bool ResolveNoStdLib(Options options)
+    {
+        if (options.NoStdLibExplicitlySet)
+            return options.NoStdLib;
+
+        return options.Mode switch
+        {
+            CommandMode.Build or CommandMode.Run => OperatingSystem.IsLinux(),
+            _ => options.NoStdLib
+        };
+    }
+
+    private static string ResolveOutputPath(Options options)
+    {
+        if (options.OutputPathExplicitlySet || options.Mode == CommandMode.EmitC)
+            return options.OutputPath;
+
+        if ((options.Mode == CommandMode.Build || options.Mode == CommandMode.Run) && OperatingSystem.IsWindows())
+            return "out.exe";
+
+        return options.OutputPath;
     }
 
     private static Options? ParseArgs(string[] args)
@@ -312,6 +523,7 @@ class Program
 
                 case "-nostdlib":
                     options.NoStdLib = true;
+                    options.NoStdLibExplicitlySet = true;
                     break;
 
                 case "--check":
@@ -346,6 +558,7 @@ class Program
                         return null;
                     }
                     options.OutputPath = args[++i];
+                    options.OutputPathExplicitlySet = true;
                     break;
 
                 default:
@@ -391,6 +604,7 @@ class Program
         Console.WriteLine("  -o, --output <path>  Write generated C or built binary to the given path.");
         Console.WriteLine("  --keep-c <path>      Keep the generated C file when using build or run.");
         Console.WriteLine("  -nostdlib            Preserve _start and generate no-stdlib output.");
+        Console.WriteLine("                      Build/run default to freestanding output on Linux and hosted output on Windows.");
         Console.WriteLine("  -h, --help           Show this help text.");
         Console.WriteLine("  --version            Show the compiler version.");
     }
