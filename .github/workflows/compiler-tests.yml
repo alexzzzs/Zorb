@@ -32,8 +32,75 @@ jobs:
       - name: Run Fixture Suite
         run: dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj --configuration Release
 
+  windows-hosted-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup MSVC developer command prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Restore
+        run: dotnet restore Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj
+
+      - name: Build Compiler
+        run: dotnet build Zorb.Compiler/Zorb.Compiler.csproj -c Release --no-restore
+
+      - name: Build hello world on Windows host
+        shell: pwsh
+        run: |
+          $outDir = Join-Path $env:RUNNER_TEMP "zorb-windows-build"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $exePath = Join-Path $outDir "hello.exe"
+          dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj --configuration Release -- build Zorb.Compiler.Tests/fixtures/runtime_hello_world/main.zorb -o $exePath
+          if (-not (Test-Path $exePath)) {
+            throw "Expected built executable at $exePath"
+          }
+
+      - name: Run hello world on Windows host
+        shell: pwsh
+        run: |
+          $stdoutPath = Join-Path $env:RUNNER_TEMP "zorb-windows-run-stdout.txt"
+          $stderrPath = Join-Path $env:RUNNER_TEMP "zorb-windows-run-stderr.txt"
+          $expectedStdout = [System.IO.File]::ReadAllText("Zorb.Compiler.Tests/fixtures/runtime_hello_world/expect-stdout.txt").Replace("`r`n", "`n")
+          $expectedExit = [int]([System.IO.File]::ReadAllText("Zorb.Compiler.Tests/fixtures/runtime_hello_world/expect-exit.txt").Trim())
+
+          $arguments = @(
+            "run",
+            "--project", "Zorb.Compiler/Zorb.Compiler.csproj",
+            "--configuration", "Release",
+            "--",
+            "run",
+            "Zorb.Compiler.Tests/fixtures/runtime_hello_world/main.zorb"
+          )
+
+          $process = Start-Process dotnet -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+          $actualStdout = ""
+          if (Test-Path $stdoutPath) {
+            $actualStdout = [System.IO.File]::ReadAllText($stdoutPath).Replace("`r`n", "`n")
+          }
+
+          if ($process.ExitCode -ne $expectedExit) {
+            $stderr = if (Test-Path $stderrPath) { [System.IO.File]::ReadAllText($stderrPath) } else { "" }
+            throw "Expected exit code $expectedExit but got $($process.ExitCode).`nSTDERR:`n$stderr`nSTDOUT:`n$actualStdout"
+          }
+
+          if ($actualStdout -ne $expectedStdout) {
+            throw "Windows run stdout mismatch.`nExpected:`n$expectedStdout`nActual:`n$actualStdout"
+          }
+
   publish-standalone:
-    needs: test
+    needs:
+      - test
+      - windows-hosted-smoke
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
     strategy:
       fail-fast: false

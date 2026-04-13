@@ -1,9 +1,4 @@
 #include <stdint.h>
-#include <unistd.h>
-#ifdef _WIN32
-    #include <windows.h>
-#endif
-
 #if defined(__linux__)
     #define __zorb_builtin_is_linux 1
 #else
@@ -25,7 +20,6 @@
     #define __zorb_builtin_is_aarch64 0
 #endif
 
-#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
 
 #if defined(__x86_64__)
 static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int64_t a4, int64_t a5, int64_t a6) {
@@ -77,16 +71,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 #define __syscall7(n, a, b, c, d, e, f) __zorb_syscall((int64_t)n, (int64_t)a, (int64_t)b, (int64_t)c, (int64_t)d, (int64_t)e, (int64_t)f)
 
 
-#endif
 int64_t add(int64_t a, int64_t b);
 int64_t main();
-
-#ifdef _WIN32
-extern int64_t GetStdHandle(int32_t nStdHandle);
-extern int32_t WriteFile(int64_t h, int8_t* buf, uint32_t len, uint32_t* written, int64_t overlapped);
-extern int32_t ExitProcess(uint32_t uExitCode);
-extern uint8_t* VirtualAlloc(uint8_t* addr, int64_t size, uint32_t type, uint32_t protect);
-#endif
 
 int64_t add(int64_t a, int64_t b) {
     return (a + b);

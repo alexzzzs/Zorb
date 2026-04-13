@@ -9,6 +9,10 @@ All notable changes to this project will be documented in this file.
 - `break` statement support for exiting the nearest enclosing `while` loop.
 - Semantic validation that rejects `break` outside loop bodies.
 - Regression coverage for valid loop-breaking runtime behavior and invalid out-of-loop `break` usage.
+- Windows host support for `build` and `run`, with hosted output that recommends `clang-cl` and can also use `cl.exe`.
+- CLI host defaults that keep Linux `build` and `run` freestanding while using hosted output on Windows.
+- Windows build guidance in the README, including toolchain and linker expectations for standard-library-based programs.
+- GitHub Actions Windows smoke coverage that builds and runs the hello-world fixture through the hosted Windows CLI path.
 
 ## [0.1.2] - 2026-04-13
 
@@ -40,6 +44,6 @@ Initial public release of Zorb.
 
 ### Notes
 
-- `build` and `run` are currently Linux-host-only workflows.
+- At the `0.1.2` release, `build` and `run` were Linux-host-only workflows.
 - Zorb is still an early compiler with a deliberately small supported language subset.
 - The current semantic source of truth is `SEMANTICS.md`.

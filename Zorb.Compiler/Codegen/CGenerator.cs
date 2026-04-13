@@ -17,7 +17,7 @@ public class CGenerator
     private sealed record GeneratedExpression(string Prelude, string Code, TypeNode? Type);
 
     private readonly List<StructNode> _structs = new();
-    private readonly HashSet<string> _includes = new() { "stdint.h", "unistd.h" };
+    private readonly HashSet<string> _includes = new() { "stdint.h" };
     private readonly HashSet<string> _cHeaders = new();
     private readonly string _currentDir;
     private readonly SymbolTable _symbolTable;
@@ -139,9 +139,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         var functions = allNodes.OfType<FunctionDecl>().ToList();
         foreach (var fn in functions)
         {
-            var cName = fn.Name;
-            if (fn.NamespacePath.Count > 0)
-                cName = string.Join("_", fn.NamespacePath) + "_" + fn.Name;
+            var cName = GetFunctionCName(fn.NamespacePath, fn.Name, null);
             if (emittedItems.Contains(cName))
                 continue;
             emittedItems.Add(cName);
@@ -153,13 +151,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
         // Standard headers
         sb.AppendLine("#include <stdint.h>");
-        sb.AppendLine("#include <unistd.h>");
         
-        // Platform-specific headers
-        sb.AppendLine("#ifdef _WIN32");
-        sb.AppendLine("    #include <windows.h>");
-        sb.AppendLine("#endif");
-        sb.AppendLine();
         sb.AppendLine("#if defined(__linux__)");
         sb.AppendLine("    #define __zorb_builtin_is_linux 1");
         sb.AppendLine("#else");
@@ -184,7 +176,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         // User C headers
         foreach (var header in _includes)
         {
-            if (header != "stdint.h" && header != "unistd.h")
+            if (header != "stdint.h")
                 sb.AppendLine($"#include <{header}>");
         }
         foreach (var header in _cHeaders)
@@ -194,11 +186,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         }
         sb.AppendLine();
 
-        // Linux syscalls
-        sb.AppendLine("#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)");
-        if (NoStdLib || IsLinux)
-            sb.AppendLine(LinuxSyscallWrapper);
-        sb.AppendLine("#endif");
+        // Syscall shim always exists so non-Linux branches still parse on other hosts.
+        sb.AppendLine(LinuxSyscallWrapper);
 
         // Emit AST structs first (must be before prototypes)
         var emittedStructs = new HashSet<string>();
@@ -221,10 +210,9 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         foreach (var fn in functions)
         {
             if (fn.IsExtern) continue;
-            var cReturnType = MapType(fn.ReturnType);
-            var cName = (fn.Name == "_start" && !PreserveStart)
-                ? "main"
-                : FlattenName(fn.NamespacePath, fn.Name, null);
+            var lowersToHostedMain = ShouldLowerToHostedMain(fn.NamespacePath, fn.Name);
+            var cReturnType = lowersToHostedMain ? "int" : MapType(fn.ReturnType);
+            var cName = GetFunctionCName(fn.NamespacePath, fn.Name, null);
             if (emittedPrototypes.Contains(cName)) continue;
             emittedPrototypes.Add(cName);
             var parameters = string.Join(", ", fn.Parameters.Select(p => MapType(p.TypeName, p.Name)));
@@ -235,24 +223,6 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
         // Emit constants/variables
         sb.Append(varsSb.ToString());
-
-        // Windows externs
-        var emittedExterns = new HashSet<string>();
-        sb.AppendLine("#ifdef _WIN32");
-        foreach (var externDecl in new[] {
-            "extern int64_t GetStdHandle(int32_t nStdHandle);",
-            "extern int32_t WriteFile(int64_t h, int8_t* buf, uint32_t len, uint32_t* written, int64_t overlapped);",
-            "extern int32_t ExitProcess(uint32_t uExitCode);",
-            "extern uint8_t* VirtualAlloc(uint8_t* addr, int64_t size, uint32_t type, uint32_t protect);"
-        })
-        {
-            if (!emittedExterns.Contains(externDecl)) {
-                emittedExterns.Add(externDecl);
-                sb.AppendLine(externDecl);
-            }
-        }
-        sb.AppendLine("#endif");
-        sb.AppendLine();
 
         // Emit functions
         sb.Append(funcsSb.ToString());
@@ -346,18 +316,19 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             _localVars["__return_type"] = fn.ReturnType;
         }
 
-        var sb = new StringBuilder();
-        var cReturnType = MapType(fn.ReturnType);
-        var parameters = string.Join(", ", fn.Parameters.Select(p => MapType(p.TypeName, p.Name)));
         var rawName = fn.Name;
-        var cName = (rawName == "_start" && !PreserveStart) ? "main" : FlattenName(fn.NamespacePath, fn.Name, prefix);
+        var sb = new StringBuilder();
+        var lowersToHostedMain = ShouldLowerToHostedMain(fn.NamespacePath, rawName);
+        var cReturnType = lowersToHostedMain ? "int" : MapType(fn.ReturnType);
+        var parameters = string.Join(", ", fn.Parameters.Select(p => MapType(p.TypeName, p.Name)));
+        var cName = GetFunctionCName(fn.NamespacePath, rawName, prefix);
 
         var attrs = new List<string>();
         foreach (var attr in fn.Attributes)
         {
             if (attr == "noinline")
                 attrs.Add("noinline");
-            else if (attr == "noclone")
+            else if (attr == "noclone" && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 attrs.Add("noclone");
             else if (attr.StartsWith("align(") && attr.EndsWith(")"))
                 attrs.Add($"aligned({attr.Substring(6, attr.Length - 7)})");
@@ -374,6 +345,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         _insideFunctionBody = true;
         foreach (var stmt in fn.Body)
             sb.AppendLine($"    {GenerateStatement(stmt)}");
+        if (lowersToHostedMain && fn.ReturnType.Name == "void" && !fn.ReturnType.IsPointer && !fn.ReturnType.IsErrorUnion)
+            sb.AppendLine("    return 0;");
         _insideFunctionBody = false;
         sb.AppendLine("}");
         return sb.ToString();
@@ -499,6 +472,19 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         return string.Join("_", parts);
     }
 
+    private bool ShouldLowerToHostedMain(List<string> namespacePath, string name)
+    {
+        return !PreserveStart && namespacePath.Count == 0 && name == "_start";
+    }
+
+    private string GetFunctionCName(List<string> namespacePath, string name, string? prefix = null)
+    {
+        if (ShouldLowerToHostedMain(namespacePath, name))
+            return "main";
+
+        return FlattenName(namespacePath, name, prefix);
+    }
+
     private string GenerateStatement(Statement stmt)
     {
         if (stmt is ExpressionStatement es)
@@ -575,23 +561,31 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         }
         if (stmt is IfStmt ifs)
         {
+            if (TryGetPlatformPreprocessorCondition(ifs.Condition, out var preprocessorCondition))
+            {
+                var conditionalSb = new StringBuilder();
+                conditionalSb.AppendLine($"#if {preprocessorCondition}");
+                AppendIndentedGeneratedBlock(conditionalSb, ifs.Body, "    ");
+                if (ifs.ElseBody.Count > 0)
+                {
+                    conditionalSb.AppendLine("#else");
+                    AppendIndentedGeneratedBlock(conditionalSb, ifs.ElseBody, "    ");
+                }
+                conditionalSb.Append("#endif");
+                return conditionalSb.ToString();
+            }
+
             var generatedCondition = GenerateExpressionWithPrelude(ifs.Condition);
             var cond = generatedCondition.Code;
             var sb = new StringBuilder();
             sb.Append(generatedCondition.Prelude);
             sb.AppendLine($"if ({cond}) {{");
-            var bodyLocals = CloneLocalVars();
-            foreach (var s in ifs.Body)
-                sb.AppendLine($"        {GenerateStatement(s)}");
-            RestoreLocalVars(bodyLocals);
+            AppendIndentedGeneratedBlock(sb, ifs.Body, "        ");
             sb.Append("    }");
             if (ifs.ElseBody.Count > 0)
             {
                 sb.AppendLine(" else {");
-                var elseLocals = CloneLocalVars();
-                foreach (var s in ifs.ElseBody)
-                    sb.AppendLine($"        {GenerateStatement(s)}");
-                RestoreLocalVars(elseLocals);
+                AppendIndentedGeneratedBlock(sb, ifs.ElseBody, "        ");
                 sb.Append("    }");
             }
             return sb.ToString();
@@ -610,10 +604,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 AppendIndentedBlock(sb, generatedCondition.Prelude, "        ");
                 sb.AppendLine($"        if (!({generatedCondition.Code})) break;");
             }
-            var loopLocals = CloneLocalVars();
-            foreach (var s in ws.Body)
-                sb.AppendLine($"        {GenerateStatement(s)}");
-            RestoreLocalVars(loopLocals);
+            AppendIndentedGeneratedBlock(sb, ws.Body, "        ");
             sb.Append("    }");
             return sb.ToString();
         }
@@ -679,6 +670,55 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         throw new System.Exception("Unknown statement type");
     }
 
+    private string GenerateStatementBlock(List<Statement> statements)
+    {
+        if (statements.Count == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+        var savedLocals = CloneLocalVars();
+        foreach (var statement in statements)
+        {
+            var generated = GenerateStatement(statement);
+            if (!string.IsNullOrEmpty(generated))
+                sb.AppendLine(generated);
+        }
+        RestoreLocalVars(savedLocals);
+        return sb.ToString().TrimEnd();
+    }
+
+    private void AppendIndentedGeneratedBlock(StringBuilder sb, List<Statement> statements, string indent)
+    {
+        var generated = GenerateStatementBlock(statements);
+        if (!string.IsNullOrEmpty(generated))
+            AppendIndentedBlock(sb, generated, indent);
+    }
+
+    private bool TryGetPlatformPreprocessorCondition(Expr expr, out string condition)
+    {
+        if (expr is BuiltinExpr builtin)
+        {
+            switch (builtin.Name)
+            {
+                case "Builtin.IsLinux":
+                    condition = "defined(__linux__)";
+                    return true;
+                case "Builtin.IsWindows":
+                    condition = "defined(_WIN32)";
+                    return true;
+                case "Builtin.IsX86_64":
+                    condition = "defined(__x86_64__) || defined(_M_X64)";
+                    return true;
+                case "Builtin.IsAArch64":
+                    condition = "defined(__aarch64__) || defined(_M_ARM64)";
+                    return true;
+            }
+        }
+
+        condition = string.Empty;
+        return false;
+    }
+
     private string GenerateAsmOperands(List<AsmOperand> operands)
     {
         return string.Join(", ", operands.Select(operand =>
@@ -733,13 +773,16 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                     return new GeneratedExpression(callPrelude.ToString(), $"{target}({args})", GetExprType(expr));
                 }
 
-                var cCallName = FlattenName(call.NamespacePath, call.Name, null);
+                var cCallName = GetFunctionCName(call.NamespacePath, call.Name, null);
                 return new GeneratedExpression(callPrelude.ToString(), $"{cCallName}({args})", GetExprType(expr));
             case NumberExpr num:
                 return new GeneratedExpression("", num.Value.ToString(), GetExprType(expr));
             case StringExpr str:
                 return new GeneratedExpression("", $"\"{EscapeCString(str.Value)}\"", GetExprType(expr));
             case IdentifierExpr ident:
+                if (_symbolTable.TryLookup(ident.Name, out var identSym) && identSym!.Kind == SymbolKind.Function)
+                    return new GeneratedExpression("", GetFunctionCName(new List<string>(), ident.Name, null), GetExprType(expr));
+
                 return new GeneratedExpression("", ident.Name, GetExprType(expr));
             case BinaryExpr bin:
                 var generatedLeft = GenerateExpressionWithPrelude(bin.Left);
