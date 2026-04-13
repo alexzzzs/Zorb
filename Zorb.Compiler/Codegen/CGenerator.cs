@@ -552,23 +552,31 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         }
         if (stmt is IfStmt ifs)
         {
+            if (TryGetPlatformPreprocessorCondition(ifs.Condition, out var preprocessorCondition))
+            {
+                var conditionalSb = new StringBuilder();
+                conditionalSb.AppendLine($"#if {preprocessorCondition}");
+                AppendIndentedGeneratedBlock(conditionalSb, ifs.Body, "    ");
+                if (ifs.ElseBody.Count > 0)
+                {
+                    conditionalSb.AppendLine("#else");
+                    AppendIndentedGeneratedBlock(conditionalSb, ifs.ElseBody, "    ");
+                }
+                conditionalSb.Append("#endif");
+                return conditionalSb.ToString();
+            }
+
             var generatedCondition = GenerateExpressionWithPrelude(ifs.Condition);
             var cond = generatedCondition.Code;
             var sb = new StringBuilder();
             sb.Append(generatedCondition.Prelude);
             sb.AppendLine($"if ({cond}) {{");
-            var bodyLocals = CloneLocalVars();
-            foreach (var s in ifs.Body)
-                sb.AppendLine($"        {GenerateStatement(s)}");
-            RestoreLocalVars(bodyLocals);
+            AppendIndentedGeneratedBlock(sb, ifs.Body, "        ");
             sb.Append("    }");
             if (ifs.ElseBody.Count > 0)
             {
                 sb.AppendLine(" else {");
-                var elseLocals = CloneLocalVars();
-                foreach (var s in ifs.ElseBody)
-                    sb.AppendLine($"        {GenerateStatement(s)}");
-                RestoreLocalVars(elseLocals);
+                AppendIndentedGeneratedBlock(sb, ifs.ElseBody, "        ");
                 sb.Append("    }");
             }
             return sb.ToString();
@@ -587,10 +595,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 AppendIndentedBlock(sb, generatedCondition.Prelude, "        ");
                 sb.AppendLine($"        if (!({generatedCondition.Code})) break;");
             }
-            var loopLocals = CloneLocalVars();
-            foreach (var s in ws.Body)
-                sb.AppendLine($"        {GenerateStatement(s)}");
-            RestoreLocalVars(loopLocals);
+            AppendIndentedGeneratedBlock(sb, ws.Body, "        ");
             sb.Append("    }");
             return sb.ToString();
         }
@@ -654,6 +659,55 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             return $"__asm__ volatile ({quotedCode} : {outputs} : {inputs} : {clobbers});";
         }
         throw new System.Exception("Unknown statement type");
+    }
+
+    private string GenerateStatementBlock(List<Statement> statements)
+    {
+        if (statements.Count == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+        var savedLocals = CloneLocalVars();
+        foreach (var statement in statements)
+        {
+            var generated = GenerateStatement(statement);
+            if (!string.IsNullOrEmpty(generated))
+                sb.AppendLine(generated);
+        }
+        RestoreLocalVars(savedLocals);
+        return sb.ToString().TrimEnd();
+    }
+
+    private void AppendIndentedGeneratedBlock(StringBuilder sb, List<Statement> statements, string indent)
+    {
+        var generated = GenerateStatementBlock(statements);
+        if (!string.IsNullOrEmpty(generated))
+            AppendIndentedBlock(sb, generated, indent);
+    }
+
+    private bool TryGetPlatformPreprocessorCondition(Expr expr, out string condition)
+    {
+        if (expr is BuiltinExpr builtin)
+        {
+            switch (builtin.Name)
+            {
+                case "Builtin.IsLinux":
+                    condition = "defined(__linux__)";
+                    return true;
+                case "Builtin.IsWindows":
+                    condition = "defined(_WIN32)";
+                    return true;
+                case "Builtin.IsX86_64":
+                    condition = "defined(__x86_64__) || defined(_M_X64)";
+                    return true;
+                case "Builtin.IsAArch64":
+                    condition = "defined(__aarch64__) || defined(_M_ARM64)";
+                    return true;
+            }
+        }
+
+        condition = string.Empty;
+        return false;
     }
 
     private string GenerateAsmOperands(List<AsmOperand> operands)
