@@ -1,0 +1,1 @@
+Catch expressions are not supported in global initializers.

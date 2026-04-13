@@ -1032,10 +1032,16 @@ public List<Node> ParseProgram()
             return castExpr;
         }
 
-        if (Current.Type == TokenType.Amp || Current.Type == TokenType.Minus)
+        if (Current.Type == TokenType.Amp || Current.Type == TokenType.Minus || Current.Type == TokenType.Bang)
         {
             var startToken = Current;
-            var op = Current.Type == TokenType.Amp ? "&" : "-";
+            var op = Current.Type switch
+            {
+                TokenType.Amp => "&",
+                TokenType.Minus => "-",
+                TokenType.Bang => "!",
+                _ => throw new InvalidOperationException("Unexpected unary operator token.")
+            };
             Advance();
             var operand = ParsePostfix();
             var unaryExpr = new UnaryExpr { Operator = op, Operand = operand };

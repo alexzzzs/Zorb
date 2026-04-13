@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Semantic validation that rejects `catch` expressions inside global initializers before code generation.
+- Regression coverage for rejected global-initializer `catch` expressions.
+- Expanded Windows hosted CI smoke coverage across multiple runtime fixtures.
+- Additional checked-in examples for import aliasing, error handling, and cross-platform stdlib usage.
+- Unary boolean negation with `!`.
+- Boolean equality and inequality comparisons with `==` and `!=`.
 - `break` statement support for exiting the nearest enclosing `while` loop.
 - Semantic validation that rejects `break` outside loop bodies.
 - Regression coverage for valid loop-breaking runtime behavior and invalid out-of-loop `break` usage.

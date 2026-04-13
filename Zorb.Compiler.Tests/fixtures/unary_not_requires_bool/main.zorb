@@ -1,0 +1,6 @@
+fn main() {
+    value: i64 = 1
+    if !value {
+        return
+    }
+}

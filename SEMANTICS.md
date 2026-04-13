@@ -80,6 +80,12 @@ The lexer recognizes:
 - Type arrow: `->`
 - Error-union marker: `!`
 
+Unary operators:
+
+- `&expr` takes the address of an expression.
+- `-expr` negates a numeric expression.
+- `!expr` negates a boolean expression.
+
 ### Number Literals
 
 - Decimal integer literals are supported.
@@ -239,6 +245,7 @@ Meaning:
 - Variables are explicitly typed.
 - There is no local type inference.
 - A variable may be declared without an initializer.
+- Global initializers may not contain `catch` expressions.
 - `const` marks the generated C declaration as `const`.
 
 Qualified names:

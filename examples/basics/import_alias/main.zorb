@@ -1,0 +1,15 @@
+import "math.zorb" as math
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn _start() {
+    sum: i64 = math.ops.add(20, 22)
+    std.io.print("sum ready\n")
+    if sum == 42 {
+        std.io.print("answer = 42\n")
+        std.os.exit(0)
+        return
+    }
+
+    std.os.exit(1)
+}
