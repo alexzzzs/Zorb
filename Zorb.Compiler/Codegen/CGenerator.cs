@@ -154,11 +154,6 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         // Standard headers
         sb.AppendLine("#include <stdint.h>");
         
-        // Platform-specific headers
-        sb.AppendLine("#ifdef _WIN32");
-        sb.AppendLine("    #include <windows.h>");
-        sb.AppendLine("#endif");
-        sb.AppendLine();
         sb.AppendLine("#if defined(__linux__)");
         sb.AppendLine("    #define __zorb_builtin_is_linux 1");
         sb.AppendLine("#else");
@@ -193,11 +188,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         }
         sb.AppendLine();
 
-        // Linux syscalls
-        sb.AppendLine("#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)");
-        if (NoStdLib || IsLinux)
-            sb.AppendLine(LinuxSyscallWrapper);
-        sb.AppendLine("#endif");
+        // Syscall shim always exists so non-Linux branches still parse on other hosts.
+        sb.AppendLine(LinuxSyscallWrapper);
 
         // Emit AST structs first (must be before prototypes)
         var emittedStructs = new HashSet<string>();
@@ -220,7 +212,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         foreach (var fn in functions)
         {
             if (fn.IsExtern) continue;
-            var cReturnType = MapType(fn.ReturnType);
+            var lowersToHostedMain = fn.Name == "_start" && !PreserveStart;
+            var cReturnType = lowersToHostedMain ? "int" : MapType(fn.ReturnType);
             var cName = (fn.Name == "_start" && !PreserveStart)
                 ? "main"
                 : FlattenName(fn.NamespacePath, fn.Name, null);
@@ -234,24 +227,6 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
         // Emit constants/variables
         sb.Append(varsSb.ToString());
-
-        // Windows externs
-        var emittedExterns = new HashSet<string>();
-        sb.AppendLine("#ifdef _WIN32");
-        foreach (var externDecl in new[] {
-            "extern int64_t GetStdHandle(int32_t nStdHandle);",
-            "extern int32_t WriteFile(int64_t h, int8_t* buf, uint32_t len, uint32_t* written, int64_t overlapped);",
-            "extern int32_t ExitProcess(uint32_t uExitCode);",
-            "extern uint8_t* VirtualAlloc(uint8_t* addr, int64_t size, uint32_t type, uint32_t protect);"
-        })
-        {
-            if (!emittedExterns.Contains(externDecl)) {
-                emittedExterns.Add(externDecl);
-                sb.AppendLine(externDecl);
-            }
-        }
-        sb.AppendLine("#endif");
-        sb.AppendLine();
 
         // Emit functions
         sb.Append(funcsSb.ToString());
@@ -345,10 +320,11 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             _localVars["__return_type"] = fn.ReturnType;
         }
 
-        var sb = new StringBuilder();
-        var cReturnType = MapType(fn.ReturnType);
-        var parameters = string.Join(", ", fn.Parameters.Select(p => MapType(p.TypeName, p.Name)));
         var rawName = fn.Name;
+        var sb = new StringBuilder();
+        var lowersToHostedMain = rawName == "_start" && !PreserveStart;
+        var cReturnType = lowersToHostedMain ? "int" : MapType(fn.ReturnType);
+        var parameters = string.Join(", ", fn.Parameters.Select(p => MapType(p.TypeName, p.Name)));
         var cName = (rawName == "_start" && !PreserveStart) ? "main" : FlattenName(fn.NamespacePath, fn.Name, prefix);
 
         var attrs = new List<string>();
@@ -356,7 +332,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         {
             if (attr == "noinline")
                 attrs.Add("noinline");
-            else if (attr == "noclone")
+            else if (attr == "noclone" && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 attrs.Add("noclone");
             else if (attr.StartsWith("align(") && attr.EndsWith(")"))
                 attrs.Add($"aligned({attr.Substring(6, attr.Length - 7)})");
@@ -373,6 +349,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         _insideFunctionBody = true;
         foreach (var stmt in fn.Body)
             sb.AppendLine($"    {GenerateStatement(stmt)}");
+        if (lowersToHostedMain && fn.ReturnType.Name == "void" && !fn.ReturnType.IsPointer && !fn.ReturnType.IsErrorUnion)
+            sb.AppendLine("    return 0;");
         _insideFunctionBody = false;
         sb.AppendLine("}");
         return sb.ToString();
