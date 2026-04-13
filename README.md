@@ -85,13 +85,13 @@ Emit C:
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- main.zorb -o out.c
 ```
 
-Build a native Linux executable:
+Build a native executable on the current host:
 
 ```bash
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb -o out
 ```
 
-Compile and run a program on the current Linux host:
+Compile and run a program on the current host:
 
 ```bash
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- run main.zorb
@@ -103,13 +103,39 @@ Keep the generated C while building or running:
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb -o out --keep-c out.c
 ```
 
-For "freestanding" output, compile the generated C with the required Linux x86_64 flags:
+On Linux, `build` and `run` default to freestanding output and preserve `_start`.
+For freestanding output, compile the generated C with the required Linux x86_64 flags:
 
 ```bash
 gcc -O2 -nostdlib -fno-pie -no-pie -z execstack -fno-builtin out.c -o out
 ```
 
 Flag rationale is documented in [CFLAGS.md](./CFLAGS.md).
+
+## Windows Host Builds
+
+On Windows, the recommended compiler driver is `clang-cl`.
+It integrates with the normal Windows/MSVC link environment, which makes it the most convenient path for Zorb programs that use the Windows-facing standard library bindings in `std/io.zorb` and `std/os.zorb`.
+
+Build a native Windows executable:
+
+```powershell
+dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb -o out.exe
+```
+
+Compile and run a program on the current Windows host:
+
+```powershell
+dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- run main.zorb
+```
+
+Notes:
+
+- Windows `build` and `run` currently use hosted output and map `_start` to `main`.
+- `-nostdlib` build and run remain Linux-oriented and are not currently supported on Windows hosts.
+- `clang-cl` is the recommended Windows toolchain.
+- `cl.exe` may also work, but `clang-cl` is the preferred default.
+- Plain `clang` and MinGW-style flows may work, but currently require manual linker setup for the Windows API libraries used by the standard library modules.
 
 ## Test
 

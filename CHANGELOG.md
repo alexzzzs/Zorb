@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 - `break` statement support for exiting the nearest enclosing `while` loop.
 - Semantic validation that rejects `break` outside loop bodies.
 - Regression coverage for valid loop-breaking runtime behavior and invalid out-of-loop `break` usage.
+- Windows host support for `build` and `run`, with hosted output that recommends `clang-cl` and can also use `cl.exe`.
+- CLI host defaults that keep Linux `build` and `run` freestanding while using hosted output on Windows.
+- Windows build guidance in the README, including toolchain and linker expectations for standard-library-based programs.
 
 ## [0.1.2] - 2026-04-13
 
