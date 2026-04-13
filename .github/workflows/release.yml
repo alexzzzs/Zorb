@@ -71,8 +71,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           mkdir -p release-assets
-          cd "${{ matrix.output_dir }}"
-          zip -r "../../release-assets/${{ matrix.asset_name }}" .
+          zip -r "release-assets/${{ matrix.asset_name }}" "${{ matrix.output_dir }}"
 
       - name: Package release asset
         if: matrix.os == 'windows-latest'
