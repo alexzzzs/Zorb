@@ -1,0 +1,4 @@
+__attribute__((noinline, noclone)) int64_t std_str_len(char* s)
+int64_t len = std_str_from_i64(-42, buf);
+std_str_reverse(buf, len);
+return std_str_len((char*)buf);

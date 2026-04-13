@@ -1,0 +1,9 @@
+import "../../../std/mem.zorb"
+
+fn main() -> i64 {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(4096) catch |err| {
+        return err
+    }
+    ptr: *u8 = (std.mem.HeapAllocator.alloc(&heap, 64)).value
+    return cast(i64, ptr)
+}

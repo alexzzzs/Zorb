@@ -1,0 +1,5 @@
+void job(void* arg)
+std_async_init();
+std_task_spawn(&heap, job, (void*)0);
+std_async_loop();
+std_os_exit(0);

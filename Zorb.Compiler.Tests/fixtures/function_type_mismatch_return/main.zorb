@@ -1,0 +1,15 @@
+fn good(value: i64) -> i64 {
+    return value
+}
+
+fn bad(value: i64) -> *u8 {
+    return cast(*u8, 0)
+}
+
+fn use(cb: fn(i64) -> i64) -> i64 {
+    return cb(1)
+}
+
+fn main() -> i64 {
+    return use(bad)
+}

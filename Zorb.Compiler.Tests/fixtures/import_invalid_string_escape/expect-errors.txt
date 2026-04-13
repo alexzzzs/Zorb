@@ -1,0 +1,2 @@
+broken.zorb
+Unsupported escape sequence '\q'

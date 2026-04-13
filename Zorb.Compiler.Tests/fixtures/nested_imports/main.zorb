@@ -1,0 +1,5 @@
+import "middle.zorb"
+
+fn main() -> i64 {
+    return middle.answer()
+}

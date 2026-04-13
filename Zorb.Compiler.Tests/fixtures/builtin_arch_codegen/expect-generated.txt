@@ -1,0 +1,4 @@
+define __zorb_builtin_is_x86_64 1
+define __zorb_builtin_is_aarch64 0
+if (__zorb_builtin_is_x86_64) {
+if (__zorb_builtin_is_aarch64) {

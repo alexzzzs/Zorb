@@ -1,0 +1,5 @@
+fn classify(flag: bool) -> i64 {
+    if flag {
+        return 1
+    }
+}

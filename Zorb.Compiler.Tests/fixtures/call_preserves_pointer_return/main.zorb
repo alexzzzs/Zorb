@@ -1,0 +1,7 @@
+fn alloc() -> *u8 {
+    return cast(*u8, 0)
+}
+
+fn main() {
+    ptr: *u8 = alloc()
+}

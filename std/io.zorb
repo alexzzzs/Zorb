@@ -1,0 +1,91 @@
+// std/io.zorb
+
+import "str.zorb"
+export struct std.io {}
+
+// Windows Externs
+import c "windows.h"
+extern fn GetStdHandle(nStdHandle: i32) -> i64
+extern fn WriteFile(h: i64, buf: *i8, len: u32, written: *u32, overlapped: i64) -> i32
+
+export fn std.io.print(msg: string) {
+    if Builtin.IsLinux {
+        length: i64 = std.str.len(msg)
+        write_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            write_nr = 1
+        }
+        if Builtin.IsAArch64 {
+            write_nr = 64
+        }
+        if write_nr != 0 {
+            syscall(write_nr, 1, cast(i64, msg), length)
+        }
+    }
+    
+    if Builtin.IsWindows {
+        handle: i64 = GetStdHandle(-11) // STD_OUTPUT_HANDLE
+        length: u32 = cast(u32, std.str.len(msg))
+        written: u32 = 0
+        WriteFile(handle, cast(*i8, msg), length, &written, 0)
+    }
+}
+
+export fn std.io.println(msg: string) {
+    std.io.print(msg)
+    
+    if Builtin.IsLinux {
+        write_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            write_nr = 1
+        }
+        if Builtin.IsAArch64 {
+            write_nr = 64
+        }
+        if write_nr != 0 {
+            syscall(write_nr, 1, cast(i64, "\n"), 1)
+        }
+    }
+    
+    if Builtin.IsWindows {
+        handle: i64 = GetStdHandle(-11)
+        written: u32 = 0
+        WriteFile(handle, cast(*i8, "\n"), 1, &written, 0)
+    }
+}
+
+export fn std.io.print_i64(val: i64) {
+    
+    buf: [32]u8
+    len: i64 = std.str.from_i64(val, &buf)
+    std.io.write(1, &buf, len)
+}
+
+export fn std.io.write(fd: i32, buf: *u8, len: i64) {
+    if Builtin.IsLinux {
+        write_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            write_nr = 1
+        }
+        if Builtin.IsAArch64 {
+            write_nr = 64
+        }
+        if write_nr != 0 {
+            syscall(write_nr, cast(i64, fd), cast(i64, buf), len)
+        }
+    }
+
+    if Builtin.IsWindows {
+        handle: i64 = 0
+        if fd == 1 {
+            handle = GetStdHandle(-11)
+        }
+        if fd == 2 {
+            handle = GetStdHandle(-12)
+        }
+        if handle != 0 {
+            written: u32 = 0
+            WriteFile(handle, cast(*i8, buf), cast(u32, len), &written, 0)
+        }
+    }
+}

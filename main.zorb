@@ -1,0 +1,47 @@
+import "std/str.zorb"
+import "std/io.zorb"
+import "std/os.zorb"
+import "std/mem.zorb"
+import "std/errors.zorb" 
+import "std/task.zorb"
+import "std/async.zorb"
+
+fn my_heavy_task(arg: *void) {
+    std.io.write(1, cast(*u8, "Fiber active\n"), 13)
+    std.task.yield() 
+    std.io.write(1, cast(*u8, "Fiber finishing\n"), 16)
+}
+
+fn _start() {
+    std.io.print("Zorb Runtime Booting... OS: ")
+    
+    os_type: i32 = std.os.get_type()
+    if os_type == 1 { std.io.println("Linux") }
+    else if os_type == 2 { std.io.println("Windows") }
+
+    // Initialize Heap with 128MB 134217728 bytes
+    gpa: std.mem.HeapAllocator = std.mem.HeapAllocator.init(134217728) catch |init_err| {
+        std.io.println("Failed to initialize heap.")
+        std.os.exit(init_err)
+        return
+    }
+
+    std.async.init()
+    
+    std.io.println("Spawning 1000 fibers...")
+    i: i64 = 0
+    while i < 1000 {
+        spawn_result: i32 = std.task.spawn(&gpa, my_heavy_task, cast(*void, 0)) catch |spawn_err| {
+            std.io.println("Failed to spawn fiber.")
+            std.os.exit(1)
+            return
+        }
+        i = i + 1
+    }
+    
+    std.io.println("Entering Event Loop.")
+    std.async.loop()
+
+    std.io.println("Program finished gracefully.")
+    std.os.exit(0)
+}

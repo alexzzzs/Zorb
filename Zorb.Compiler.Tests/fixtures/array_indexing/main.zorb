@@ -1,0 +1,5 @@
+fn main() {
+    buf: [4]u8
+    item: u8 = buf[0]
+    buf[1] = item
+}

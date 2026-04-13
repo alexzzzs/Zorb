@@ -1,0 +1,62 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+import "../../../std/mem.zorb"
+import "../../../std/task.zorb"
+import "../../../std/async.zorb"
+
+yields_done: i64 = 0
+
+fn spinner(arg: *void) {
+    i: i64 = 0
+    checksum: i64 = 7
+
+    while i < 512 {
+        checksum = checksum + 3
+        yields_done = yields_done + 1
+        std.task.yield()
+        checksum = checksum - 1
+        i = i + 1
+    }
+
+    if checksum != 1031 {
+        std.os.exit(21)
+        return
+    }
+}
+
+fn witness(arg: *void) {
+    seen: i64 = 0
+    while seen < 512 {
+        seen = seen + 1
+        std.task.yield()
+    }
+}
+
+fn _start() {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(262144) catch |init_err| {
+        std.os.exit(init_err)
+        return
+    }
+
+    std.async.init()
+
+    std.task.spawn(&heap, spinner, cast(*void, 0)) catch |spawn_err| {
+        std.os.exit(spawn_err)
+        return
+    }
+
+    std.task.spawn(&heap, witness, cast(*void, 0)) catch |spawn_err| {
+        std.os.exit(spawn_err)
+        return
+    }
+
+    std.async.loop()
+
+    if yields_done != 512 {
+        std.os.exit(22)
+        return
+    }
+
+    std.io.print("done\n")
+    std.os.exit(0)
+}

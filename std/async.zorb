@@ -1,0 +1,59 @@
+import "task.zorb"
+
+export struct std.async {}
+epoll_fd: i32 = -1
+
+export fn std.async.init() {
+    if Builtin.IsLinux {
+        epoll_create1_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            epoll_create1_nr = 291
+        }
+        if Builtin.IsAArch64 {
+            epoll_create1_nr = 20
+        }
+        if epoll_create1_nr != 0 {
+            epoll_fd = cast(i32, syscall(epoll_create1_nr, 0))
+        }
+    }
+}
+
+export fn std.async.loop() {
+    // Condition fix: Exit when no more active fibers exist
+    while active_fibers > 0 {
+        while cast(i64, ready_queue_head) != 0 {
+            f: *Fiber = std.task.dequeue()
+            if f.state == 2 { continue }
+            std.task.resume(f)
+        }
+
+        if active_fibers > 0 {
+            std.async.poll_events()
+        }
+    }
+}
+
+fn std.async.poll_events() {
+    if Builtin.IsWindows {
+        return
+    }
+
+    // If tasks are running, don't block (timeout 0)
+    // If waiting for IO, block (timeout -1)
+    timeout: i64 = 0
+    if cast(i64, ready_queue_head) == 0 { timeout = -1 }
+    
+    events: [128]u8
+    if Builtin.IsLinux {
+        epoll_wait_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            epoll_wait_nr = 281
+        }
+        if Builtin.IsAArch64 {
+            epoll_wait_nr = 22
+        }
+        if epoll_wait_nr != 0 {
+            syscall(epoll_wait_nr, cast(i64, epoll_fd), cast(i64, &events), 10, timeout, 0, 0)
+        }
+    }
+}

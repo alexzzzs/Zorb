@@ -1,0 +1,52 @@
+// std/mem.zorb
+import "errors.zorb"
+import "os.zorb"
+
+export struct std.mem {}
+
+export struct std.mem.HeapAllocator {
+    buffer: *u8,
+    len: i64,
+    pos: i64
+}
+
+// This is our initialization that picks a side
+export fn std.mem.HeapAllocator.init(initial_size: i64) !std.mem.HeapAllocator {
+    alloc: std.mem.HeapAllocator
+
+    if initial_size <= 0 {
+        return error.InvalidSize
+    }
+
+    // Ask the OS for the initial heap memory
+    raw_mem: *u8 = std.os.get_pages(initial_size) catch |err| {
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        if err == error.UnsupportedPlatform {
+            return error.UnsupportedPlatform
+        }
+        return error.OutOfMemory
+    }
+
+    alloc.buffer = raw_mem
+    alloc.len = initial_size
+    alloc.pos = 0
+    return alloc
+}
+
+export fn std.mem.HeapAllocator.alloc(self: *std.mem.HeapAllocator, size: i64) !*u8 {
+    if size <= 0 {
+        return error.InvalidSize
+    }
+
+    aligned_size: i64 = (size + 7) & -8
+    
+    if self.pos + aligned_size > self.len {
+        return error.OutOfMemory
+    }
+    
+    ptr: *u8 = &self.buffer[self.pos]
+    self.pos = self.pos + aligned_size
+    return ptr
+}

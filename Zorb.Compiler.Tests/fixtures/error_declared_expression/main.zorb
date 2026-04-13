@@ -1,0 +1,6 @@
+error Fail = 100
+
+fn main() -> i32 {
+    code: i32 = error.Fail
+    return code
+}

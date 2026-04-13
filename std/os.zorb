@@ -1,0 +1,73 @@
+// std/os.zorb
+
+import "errors.zorb"
+
+export struct std.os {}
+
+import c "windows.h"
+extern fn ExitProcess(uExitCode: u32) -> i32
+extern fn VirtualAlloc(addr: *u8, size: i64, type: u32, protect: u32) -> *u8
+
+export fn std.os.exit(code: i32) {
+    if Builtin.IsLinux {
+        if Builtin.IsX86_64 {
+            syscall(60, code)
+        }
+
+        if Builtin.IsAArch64 {
+            syscall(93, code)
+        }
+    }
+    
+    if Builtin.IsWindows {
+        ExitProcess(cast(u32, code))
+    }
+}
+
+export fn std.os.get_type() -> i32 {
+    if Builtin.IsLinux {
+        return 1
+    }
+    if Builtin.IsWindows {
+        return 2
+    }
+    return 0
+}
+
+export fn std.os.get_pages(size: i64) !*u8 {
+    if size <= 0 {
+        return error.InvalidSize
+    }
+
+    if Builtin.IsLinux {
+        mmap_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            mmap_nr = 9
+        }
+        if Builtin.IsAArch64 {
+            mmap_nr = 222
+        }
+        if mmap_nr == 0 {
+            return error.NotImplemented
+        }
+
+        // addr: 0, len: size, prot: 3 (READ|WRITE), flags: 34 (PRIVATE|ANON), fd: -1, offset: 0
+        addr: i64 = syscall(mmap_nr, 0, size, 3, 34, -1, 0)
+        if addr < 0 {
+            return error.OutOfMemory
+        }
+        return cast(*u8, addr)
+    }
+    
+    if Builtin.IsWindows {
+        // MEM_COMMIT | MEM_RESERVE = 0x3000
+        // PAGE_READWRITE = 0x04
+        pages: *u8 = VirtualAlloc(cast(*u8, 0), size, 12288, 4)
+        if cast(i64, pages) == 0 {
+            return error.OutOfMemory
+        }
+        return pages
+    }
+
+    return error.UnsupportedPlatform
+}

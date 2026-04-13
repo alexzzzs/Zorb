@@ -1,0 +1,3 @@
+fn _start() {
+    message: string = "line 1\nline 2\t\"quoted\"\\tail\r\n"
+}

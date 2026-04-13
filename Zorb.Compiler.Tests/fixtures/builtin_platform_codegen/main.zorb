@@ -1,0 +1,11 @@
+fn main() -> i32 {
+    if Builtin.IsLinux {
+        return 1
+    }
+
+    if Builtin.IsWindows {
+        return 2
+    }
+
+    return 3
+}

@@ -1,0 +1,3 @@
+fn helper() {
+    message: string = "bad \q escape"
+}

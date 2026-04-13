@@ -1,0 +1,9 @@
+error Fail = 100
+
+fn may_fail() !i64 {
+    return error.Fail
+}
+
+fn main() {
+    value: i64 = cast(i64, may_fail())
+}

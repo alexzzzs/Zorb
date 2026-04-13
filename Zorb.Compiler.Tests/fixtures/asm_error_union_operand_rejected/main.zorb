@@ -1,0 +1,14 @@
+error Fail = 100
+
+fn may_fail() !i64 {
+    return error.Fail
+}
+
+fn main() -> i64 {
+    asm {
+        "/* noop */"
+        :
+        : "r"(may_fail())
+    }
+    return 0
+}

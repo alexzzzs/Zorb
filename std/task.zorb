@@ -1,0 +1,180 @@
+import "mem.zorb"
+import "errors.zorb"
+
+export struct Fiber {
+    id: i64,
+    stack_ptr: *u8,
+    state: i32, // 0: Ready, 2: Dead
+    func: fn(*void) -> void,
+    arg: *void,
+    next: *Fiber
+}
+
+export current_fiber: *Fiber = cast(*Fiber, 0)
+export ready_queue_head: *Fiber = cast(*Fiber, 0)
+export ready_queue_tail: *Fiber = cast(*Fiber, 0)
+export scheduler_sp: *u8 = cast(*u8, 0)
+
+// The fix: track active fibers
+export active_fibers: i64 = 0
+
+fn std.task.context_switch_barrier() {
+    if Builtin.IsX86_64 {
+        asm {
+            ""
+            : : : "rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "memory"
+        }
+    }
+
+    if Builtin.IsAArch64 {
+        asm {
+            ""
+            : : : "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "memory"
+        }
+    }
+}
+
+fn fiber_entry_point() {
+    f: *Fiber = current_fiber
+    f.func(f.arg)
+    f.state = 2 
+    active_fibers = active_fibers - 1 // Decrement when finished
+    std.task.yield_to_scheduler()
+}
+
+export [noinline]
+fn std.task.yield_to_scheduler() {
+    std.task.context_switch_barrier()
+    std.task.swap_context(&(current_fiber.stack_ptr), scheduler_sp)
+}
+
+export [noinline]
+fn std.task.resume(f: *Fiber) {
+    current_fiber = f
+    std.task.context_switch_barrier()
+    std.task.swap_context(&scheduler_sp, f.stack_ptr)
+}
+
+export [noinline, noclone]
+fn std.task.swap_context(old_sp_ptr: **u8, new_sp: *u8) {
+    if Builtin.IsX86_64 {
+        asm {
+            "pushq %%rbp; pushq %%rbx; pushq %%r12; pushq %%r13; pushq %%r14; pushq %%r15"
+            "movq %%rsp, (%0)"
+            "movq %1, %%rsp"
+            "popq %%r15; popq %%r14; popq %%r13; popq %%r12; popq %%rbx; popq %%rbp"
+            : : "r"(old_sp_ptr), "r"(new_sp) : "memory"
+        }
+        return
+    }
+
+    if Builtin.IsAArch64 {
+        asm {
+            "stp x19, x20, [sp, #-16]!"
+            "stp x21, x22, [sp, #-16]!"
+            "stp x23, x24, [sp, #-16]!"
+            "stp x25, x26, [sp, #-16]!"
+            "stp x27, x28, [sp, #-16]!"
+            "stp x29, x30, [sp, #-16]!"
+            "mov x2, sp"
+            "str x2, [%0]"
+            "mov sp, %1"
+            "ldp x29, x30, [sp], #16"
+            "ldp x27, x28, [sp], #16"
+            "ldp x25, x26, [sp], #16"
+            "ldp x23, x24, [sp], #16"
+            "ldp x21, x22, [sp], #16"
+            "ldp x19, x20, [sp], #16"
+            : : "r"(old_sp_ptr), "r"(new_sp) : "x2", "memory"
+        }
+    }
+}
+
+export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> void, arg: *void) !i32 {
+    if cast(i64, gpa) == 0 {
+        return error.InvalidArgument
+    }
+
+    if Builtin.IsX86_64 {
+        stack_size: i64 = 65536
+        raw_stack: *u8 = (std.mem.HeapAllocator.alloc(gpa, stack_size)) catch |stack_err| {
+            return error.OutOfMemory
+        }
+        fiber_mem: *u8 = (std.mem.HeapAllocator.alloc(gpa, Builtin.sizeof(Fiber))) catch |fiber_err| {
+            return error.OutOfMemory
+        }
+        f: *Fiber = cast(*Fiber, fiber_mem)
+        
+        f.func = taskFunc
+        f.arg = arg
+        f.state = 0
+        active_fibers = active_fibers + 1 // Increment when created
+        
+        top: i64 = (cast(i64, raw_stack) + stack_size) & -16
+        sp_exec: **u8 = cast(**u8, top - 8)
+        sp_exec[0] = cast(*u8, fiber_entry_point)
+        f.stack_ptr = cast(*u8, top - 56)
+        
+        std.task.enqueue(f)
+        return 0
+    } else if Builtin.IsAArch64 {
+        stack_size: i64 = 65536
+        raw_stack: *u8 = (std.mem.HeapAllocator.alloc(gpa, stack_size)) catch |stack_err| {
+            return error.OutOfMemory
+        }
+        fiber_mem: *u8 = (std.mem.HeapAllocator.alloc(gpa, Builtin.sizeof(Fiber))) catch |fiber_err| {
+            return error.OutOfMemory
+        }
+        f: *Fiber = cast(*Fiber, fiber_mem)
+
+        f.func = taskFunc
+        f.arg = arg
+        f.state = 0
+        active_fibers = active_fibers + 1
+
+        top: i64 = (cast(i64, raw_stack) + stack_size) & -16
+        ctx: **u8 = cast(**u8, top - 96)
+        ctx[0] = cast(*u8, 0)
+        ctx[1] = cast(*u8, cast(i64, fiber_entry_point))
+        ctx[2] = cast(*u8, 0)
+        ctx[3] = cast(*u8, 0)
+        ctx[4] = cast(*u8, 0)
+        ctx[5] = cast(*u8, 0)
+        ctx[6] = cast(*u8, 0)
+        ctx[7] = cast(*u8, 0)
+        ctx[8] = cast(*u8, 0)
+        ctx[9] = cast(*u8, 0)
+        ctx[10] = cast(*u8, 0)
+        ctx[11] = cast(*u8, 0)
+        f.stack_ptr = cast(*u8, ctx)
+
+        std.task.enqueue(f)
+        return 0
+    } else {
+        return error.NotImplemented
+    }
+}
+
+export fn std.task.yield() {
+    std.task.enqueue(current_fiber)
+    std.task.yield_to_scheduler()
+}
+
+fn std.task.enqueue(f: *Fiber) {
+    f.next = cast(*Fiber, 0)
+    if cast(i64, ready_queue_tail) == 0 {
+        ready_queue_head = f
+        ready_queue_tail = f
+    } else {
+        ready_queue_tail.next = f
+        ready_queue_tail = f
+    }
+}
+
+export fn std.task.dequeue() -> *Fiber {
+    if cast(i64, ready_queue_head) == 0 { return cast(*Fiber, 0) }
+    f: *Fiber = ready_queue_head
+    ready_queue_head = f.next
+    if cast(i64, ready_queue_head) == 0 { ready_queue_tail = cast(*Fiber, 0) }
+    return f
+}

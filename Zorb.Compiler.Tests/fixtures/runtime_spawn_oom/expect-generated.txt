@@ -1,0 +1,3 @@
+struct Result_i32 std_task_spawn
+std_task_spawn(&heap, job, (void*)0)
+std_io_print("oom\n");

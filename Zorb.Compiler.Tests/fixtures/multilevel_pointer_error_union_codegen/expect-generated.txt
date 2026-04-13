@@ -1,0 +1,3 @@
+struct Result_i32_ptr_ptr {
+int32_t** value;
+return (struct Result_i32_ptr_ptr){ .value = (int32_t**)0, .error = 0 };

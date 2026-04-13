@@ -1,0 +1,7 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn _start() {
+    std.io.print("line 1\nline 2\t\"quoted\"\\tail\n")
+    std.os.exit(0)
+}

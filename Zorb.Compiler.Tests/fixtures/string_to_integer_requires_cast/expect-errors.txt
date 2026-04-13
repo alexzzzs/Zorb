@@ -1,0 +1,1 @@
+Argument 1 of 'takes_raw' expects type 'i64', got 'string'

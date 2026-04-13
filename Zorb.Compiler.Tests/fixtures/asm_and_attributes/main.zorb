@@ -1,0 +1,18 @@
+[noinline, noclone]
+fn helper(arg: i64) -> i64 {
+    return arg
+}
+
+[align(16)]
+buffer: [32]u8
+
+fn main() -> i64 {
+    value: i64 = helper(7)
+    asm {
+        "addq $1, %0"
+        : "=r"(value)
+        : "0"(value)
+        : "memory"
+    }
+    return value
+}

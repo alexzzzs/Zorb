@@ -1,0 +1,15 @@
+error Fail = 100
+
+fn may_fail(flag: i64) !i64 {
+    if flag != 0 {
+        return error.Fail
+    }
+    return 7
+}
+
+fn main() -> i64 {
+    value: i64 = may_fail(1) catch |err| {
+        return err
+    }
+    return value
+}

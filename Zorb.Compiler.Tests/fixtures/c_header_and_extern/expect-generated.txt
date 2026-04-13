@@ -1,0 +1,2 @@
+extern int64_t GetStdHandle(int32_t nStdHandle);
+return GetStdHandle(-11);

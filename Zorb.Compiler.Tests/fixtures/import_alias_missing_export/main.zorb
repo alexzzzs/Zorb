@@ -1,0 +1,5 @@
+import "lib.zorb" as util
+
+fn main() -> i64 {
+    return util.missing()
+}

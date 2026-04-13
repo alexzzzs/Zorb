@@ -1,0 +1,8 @@
+write_nr = 1
+write_nr = 64
+syscall(60, code)
+syscall(93, code)
+epoll_create1_nr = 291
+epoll_create1_nr = 20
+epoll_wait_nr = 281
+epoll_wait_nr = 22

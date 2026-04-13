@@ -1,0 +1,22 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+error Fail = 100
+
+fn may_fail(flag: i64) !i64 {
+    if flag != 0 {
+        return error.Fail
+    }
+
+    return 7
+}
+
+fn _start() {
+    may_fail(1) catch |err| {
+        std.io.print("handled\n")
+        std.os.exit(0)
+        return
+    }
+
+    std.os.exit(1)
+}

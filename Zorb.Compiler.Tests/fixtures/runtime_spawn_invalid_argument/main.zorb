@@ -1,0 +1,23 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+import "../../../std/task.zorb"
+import "../../../std/mem.zorb"
+import "../../../std/errors.zorb"
+
+fn job(arg: *void) {}
+
+fn _start() {
+    result: i32 = std.task.spawn(cast(*std.mem.HeapAllocator, 0), job, cast(*void, 0)) catch |err| {
+        if err == error.InvalidArgument {
+            std.io.print("invalid arg\n")
+            std.os.exit(0)
+            return
+        }
+
+        std.os.exit(err)
+        return
+    }
+
+    std.io.print("unexpected\n")
+    std.os.exit(1)
+}

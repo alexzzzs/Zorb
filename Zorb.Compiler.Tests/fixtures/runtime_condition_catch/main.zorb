@@ -1,0 +1,29 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+error Fail = 100
+
+fn may_fail(flag: i64) !i64 {
+    if flag != 0 {
+        return error.Fail
+    }
+
+    return 1
+}
+
+fn _start() {
+    count: i64 = 0
+    while may_fail(0) catch |err| {
+        std.os.exit(err)
+        return
+    } == 1 {
+        count = count + 1
+        if count == 2 {
+            std.io.print("loop\n")
+            std.os.exit(0)
+            return
+        }
+    }
+
+    std.os.exit(1)
+}

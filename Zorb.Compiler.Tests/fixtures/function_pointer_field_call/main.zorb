@@ -1,0 +1,8 @@
+struct Fiber {
+    func: fn(*void) -> void,
+    arg: *void
+}
+
+fn run(f: *Fiber) {
+    f.func(f.arg)
+}

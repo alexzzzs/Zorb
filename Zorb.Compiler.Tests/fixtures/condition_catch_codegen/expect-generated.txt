@@ -1,0 +1,4 @@
+struct Result_i64 __zorb_catch_result_
+int32_t __zorb_catch_err_
+if ((__zorb_catch_result_
+return 7;

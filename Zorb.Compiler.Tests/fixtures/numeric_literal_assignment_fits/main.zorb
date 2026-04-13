@@ -1,0 +1,6 @@
+fn main() -> i64 {
+    small: i32 = 42
+    count: u32 = 7
+    flag: u8 = 1
+    return small
+}

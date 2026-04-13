@@ -1,0 +1,4 @@
+fn main() {
+    ptr: *u8 = cast(*u8, 0)
+    ptr = &ptr
+}

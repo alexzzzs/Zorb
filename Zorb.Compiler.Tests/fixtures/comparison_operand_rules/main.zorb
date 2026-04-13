@@ -1,0 +1,15 @@
+fn main() -> i32 {
+    left: *u8 = cast(*u8, 0)
+    right: *i8 = cast(*i8, 0)
+    same: string = "a"
+
+    if left == right {
+        return 1
+    }
+
+    if same < same {
+        return 2
+    }
+
+    return 0
+}

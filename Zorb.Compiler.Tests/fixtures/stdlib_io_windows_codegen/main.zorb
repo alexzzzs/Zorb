@@ -1,0 +1,6 @@
+import "../../../std/io.zorb"
+
+fn main() {
+    buf: [4]u8
+    std.io.write(2, &buf, 4)
+}

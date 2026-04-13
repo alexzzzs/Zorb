@@ -1,0 +1,5 @@
+fn main() -> i64 {
+    ptr: *u8 = cast(*u8, 0)
+    value: i64 = ptr
+    return value
+}

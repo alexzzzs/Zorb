@@ -1,0 +1,10 @@
+error Fail = 100
+error Retry = 101
+
+fn fail() !i64 {
+    return error.Fail
+}
+
+fn retry() !i64 {
+    return error.Retry
+}

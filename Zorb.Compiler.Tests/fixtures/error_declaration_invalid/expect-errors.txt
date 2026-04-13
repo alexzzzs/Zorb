@@ -1,0 +1,1 @@
+Error declaration 'Error_Fail' must use a numeric literal initializer.

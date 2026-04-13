@@ -1,0 +1,5 @@
+fn takes_raw(value: i64) {}
+
+fn main() {
+    takes_raw("hello")
+}

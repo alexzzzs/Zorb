@@ -1,0 +1,7 @@
+fn main() -> i64 {
+    value: i64 = 1
+    if true {
+        value: i32 = 2
+    }
+    return value
+}

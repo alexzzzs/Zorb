@@ -1,0 +1,11 @@
+fn main() -> i32 {
+    if Builtin.IsX86_64 {
+        return 1
+    }
+
+    if Builtin.IsAArch64 {
+        return 2
+    }
+
+    return 3
+}

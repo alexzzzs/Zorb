@@ -1,0 +1,22 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+import "../../../std/mem.zorb"
+import "../../../std/task.zorb"
+
+fn job(arg: *void) {}
+
+fn _start() {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(4096) catch |init_err| {
+        std.io.print("init\n")
+        std.os.exit(init_err)
+        return
+    }
+    spawn_result: i32 = std.task.spawn(&heap, job, cast(*void, 0)) catch |spawn_err| {
+        std.io.print("oom\n")
+        std.os.exit(0)
+        return
+    }
+
+    std.io.print("unexpected\n")
+    std.os.exit(1)
+}

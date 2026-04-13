@@ -1,0 +1,5 @@
+export struct leaf {}
+
+export fn leaf.answer() -> i64 {
+    return 42
+}

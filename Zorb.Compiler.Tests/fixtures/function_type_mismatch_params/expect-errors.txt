@@ -1,0 +1,1 @@
+Argument 1 of 'use' expects type 'fn(i64) -> i64', got 'fn(*u8) -> i64'

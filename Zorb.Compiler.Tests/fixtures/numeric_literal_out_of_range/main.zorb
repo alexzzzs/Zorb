@@ -1,0 +1,4 @@
+fn main() -> i64 {
+    small: u8 = 300
+    return small
+}

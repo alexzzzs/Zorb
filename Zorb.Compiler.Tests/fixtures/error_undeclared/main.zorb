@@ -1,0 +1,3 @@
+fn may_fail() !i64 {
+    return error.Fail
+}

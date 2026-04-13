@@ -1,0 +1,6 @@
+fn use(buf: *u8) {}
+
+fn main() {
+    buf: [4]u8
+    use(buf)
+}

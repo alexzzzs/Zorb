@@ -1,0 +1,17 @@
+// std/errors.zorb
+export struct Error {}
+
+export error OutOfMemory = 1
+export error InvalidSize = 2
+export error InvalidArgument = 3
+export error BufferTooSmall = 4
+export error OutOfBounds = 5
+export error Overflow = 6
+export error NullPointer = 7
+export error AlreadyExists = 8
+export error NotFound = 9
+export error WouldBlock = 10
+export error EndOfFile = 11
+export error IOError = 12
+export error UnsupportedPlatform = 13
+export error NotImplemented = 14

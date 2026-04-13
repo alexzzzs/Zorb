@@ -1,0 +1,5 @@
+if (__zorb_builtin_is_aarch64) {
+__asm__ volatile ("stp x19, x20, [sp, #-16]!\n"
+"ldp x29, x30, [sp], #16\n"
+ctx[1] = (uint8_t*)(int64_t)fiber_entry_point;
+f->stack_ptr = (uint8_t*)ctx;

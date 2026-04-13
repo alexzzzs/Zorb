@@ -1,0 +1,7 @@
+import "leaf.zorb"
+
+export struct middle {}
+
+export fn middle.answer() -> i64 {
+    return leaf.answer()
+}

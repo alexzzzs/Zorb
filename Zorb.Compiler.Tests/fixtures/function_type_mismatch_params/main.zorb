@@ -1,0 +1,11 @@
+fn bad(value: *u8) -> i64 {
+    return 0
+}
+
+fn use(cb: fn(i64) -> i64) -> i64 {
+    return cb(1)
+}
+
+fn main() -> i64 {
+    return use(bad)
+}

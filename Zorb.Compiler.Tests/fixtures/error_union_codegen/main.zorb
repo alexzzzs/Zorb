@@ -1,0 +1,10 @@
+error Fail = 100
+
+fn may_fail(flag: i64) !i64 {
+    if flag != 0 {
+        return error.Fail
+    }
+    return 7
+}
+
+fn main() {}

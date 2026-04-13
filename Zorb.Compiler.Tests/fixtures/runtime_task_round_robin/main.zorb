@@ -1,0 +1,69 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+import "../../../std/mem.zorb"
+import "../../../std/task.zorb"
+import "../../../std/async.zorb"
+
+fn task_a(arg: *void) {
+    step: i64 = 1
+    std.io.print("a1\n")
+    std.task.yield()
+    step = step + 1
+    if step != 2 {
+        std.os.exit(11)
+        return
+    }
+
+    std.io.print("a2\n")
+    std.task.yield()
+    step = step + 1
+    if step != 3 {
+        std.os.exit(12)
+        return
+    }
+
+    std.io.print("a3\n")
+}
+
+fn task_b(arg: *void) {
+    step: i64 = 1
+    std.io.print("b1\n")
+    std.task.yield()
+    step = step + 1
+    if step != 2 {
+        std.os.exit(21)
+        return
+    }
+
+    std.io.print("b2\n")
+    std.task.yield()
+    step = step + 1
+    if step != 3 {
+        std.os.exit(22)
+        return
+    }
+
+    std.io.print("b3\n")
+}
+
+fn _start() {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(262144) catch |init_err| {
+        std.os.exit(init_err)
+        return
+    }
+
+    std.async.init()
+
+    std.task.spawn(&heap, task_a, cast(*void, 0)) catch |spawn_err| {
+        std.os.exit(spawn_err)
+        return
+    }
+
+    std.task.spawn(&heap, task_b, cast(*void, 0)) catch |spawn_err| {
+        std.os.exit(spawn_err)
+        return
+    }
+
+    std.async.loop()
+    std.os.exit(0)
+}

@@ -1,0 +1,10 @@
+struct S {}
+
+value: S
+
+fn takes(x: i32) {}
+
+fn main() {
+    value: i32 = 2
+    takes(value)
+}

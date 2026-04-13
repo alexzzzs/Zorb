@@ -1,0 +1,14 @@
+import "../../../std/mem.zorb"
+import "../../../std/task.zorb"
+
+fn job(arg: *void) {}
+
+fn main() {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(131072) catch |init_err| {
+        return
+    }
+
+    std.task.spawn(&heap, job, cast(*void, 0)) catch |spawn_err| {
+        return
+    }
+}

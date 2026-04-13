@@ -1,0 +1,1 @@
+Error value '100' is already declared as 'Error_Fail'. Distinct error names must use distinct numeric values.

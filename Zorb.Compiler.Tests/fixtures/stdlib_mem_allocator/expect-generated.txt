@@ -1,0 +1,4 @@
+struct Result_u8_ptr
+struct Result_std_mem_HeapAllocator
+struct std_mem_HeapAllocator heap = __zorb_catch_result_
+uint8_t* ptr = std_mem_HeapAllocator_alloc(&heap, 64).value;

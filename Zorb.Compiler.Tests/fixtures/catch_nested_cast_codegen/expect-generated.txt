@@ -1,0 +1,4 @@
+struct Result_u8_ptr __zorb_catch_result_
+int32_t __zorb_catch_err_
+int32_t err = __zorb_catch_err_
+int8_t* ptr = (int8_t*)__zorb_catch_result_

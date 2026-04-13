@@ -1,0 +1,6 @@
+import "lib/util.zorb"
+import "./lib/util.zorb"
+
+fn main() -> i64 {
+    return util.answer()
+}

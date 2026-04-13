@@ -1,0 +1,3 @@
+struct Result_i64 __zorb_catch_result_
+int32_t __zorb_catch_err_
+return consume(__zorb_catch_result_

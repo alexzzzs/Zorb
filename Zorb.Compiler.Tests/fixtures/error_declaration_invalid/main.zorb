@@ -1,0 +1,5 @@
+error Fail = cast(i32, 100)
+
+fn may_fail() !i64 {
+    return error.Fail
+}

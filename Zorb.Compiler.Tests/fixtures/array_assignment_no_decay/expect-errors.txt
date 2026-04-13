@@ -1,0 +1,1 @@
+Cannot assign expression of type '[4]u8' to variable 'ptr' of type '*u8'

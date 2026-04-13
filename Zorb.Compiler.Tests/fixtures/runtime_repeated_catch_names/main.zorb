@@ -1,0 +1,29 @@
+import "../../../std/os.zorb"
+
+error Fail = 100
+
+fn may_fail(flag: i64) !i64 {
+    if flag != 0 {
+        return error.Fail
+    }
+
+    return 1
+}
+
+fn _start() {
+    first: i64 = may_fail(0) catch |err| {
+        std.os.exit(err)
+        return
+    }
+
+    second: i64 = may_fail(0) catch |err| {
+        std.os.exit(err)
+        return
+    }
+
+    if first + second == 2 {
+        std.os.exit(0)
+    }
+
+    std.os.exit(1)
+}

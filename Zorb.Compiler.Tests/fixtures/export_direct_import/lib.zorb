@@ -1,0 +1,5 @@
+export struct lib {}
+
+export fn lib.answer() -> i64 {
+    return 42
+}

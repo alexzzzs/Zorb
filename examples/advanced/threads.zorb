@@ -1,0 +1,72 @@
+struct Sys {}
+struct Sys.IO {}
+struct Sys.Thread {}
+
+// --- GLOBAL SCOPE ---
+// Ensure these are treated as stable data labels
+msg1: *u8 = "Task1\n"
+msg2: *u8 = "Task2\n"
+
+[align(16)]
+stack1: u8[4096]
+
+[align(16)]
+stack2: u8[4096]
+
+fn Sys.IO.write(fd: i32, buf: *u8, len: i64) {
+    syscall(1, fd, cast(i64, buf), len)
+}
+
+fn Sys.Thread.spawn(taskFunc: fn(*void) -> void, arg: *void, stackTop: *void) -> i32 {
+    flags: i64 = 273 // CLONE_VM | SIGCHLD
+    ret: i32 = 0
+
+    asm {
+        // 1. Prepare child stack while in Parent context
+        // We use q suffix to ensure 64-bit moves
+        "movq %4, -8(%2)\n\t"   // Store arg at top
+        "movq %3, -16(%2)\n\t"  // Store taskFunc below arg
+        "subq $16, %2\n\t"      // Update the stack pointer for the syscall
+        
+        // 2. The Clone Syscall
+        "syscall\n\t"
+        
+        "testq %%rax, %%rax\n\t"
+        "jnz 1f\n\t"            // Parent jumps to label 1
+        
+        // --- CHILD THREAD START ---
+        "popq %%rax\n\t"        // Pop taskFunc into rax
+        "popq %%rdi\n\t"        // Pop arg into rdi (ABI requirement)
+        "andq $-16, %%rsp\n\t"  // Align stack to 16 bytes
+        "call *%%rax\n\t"       // Execute task(arg)
+        
+        "movq $60, %%rax\n\t"   // sys_exit
+        "xorq %%rdi, %%rdi\n\t"
+        "syscall\n\t"
+        
+        "1:\n"                  // --- PARENT RESUMES ---
+        : "=a"(ret)
+        : "a"(56), "S"(stackTop), "r"(taskFunc), "r"(arg), "D"(flags)
+        : "memory", "rcx", "r11"
+    }
+
+    return ret
+}
+
+fn task(arg: *void) {
+    msg: *u8 = cast(*u8, arg)
+    Sys.IO.write(1, msg, 6)
+}
+
+fn _start() {
+    // Pass the addresses of the global message pointers
+    // We point to 4080 to ensure 16-byte alignment at the top
+    pid1: i32 = Sys.Thread.spawn(task, msg1, &stack1[4080])
+    pid2: i32 = Sys.Thread.spawn(task, msg2, &stack2[4080])
+
+    // Wait for children
+    if (pid1 > 0) { syscall(61, pid1, 0, 0, 0) }
+    if (pid2 > 0) { syscall(61, pid2, 0, 0, 0) }
+
+    syscall(60, 0) 
+}

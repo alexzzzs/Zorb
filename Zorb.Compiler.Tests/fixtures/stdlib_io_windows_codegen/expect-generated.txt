@@ -1,0 +1,2 @@
+GetStdHandle(-12)
+WriteFile(handle, (int8_t*)buf, (uint32_t)len, &written, 0)

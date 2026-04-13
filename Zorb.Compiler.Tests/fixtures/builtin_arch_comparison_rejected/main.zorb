@@ -1,0 +1,7 @@
+fn main() -> i32 {
+    if Builtin.IsAArch64 != 0 {
+        return 1
+    }
+
+    return 0
+}
