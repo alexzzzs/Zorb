@@ -308,7 +308,10 @@ The current statement forms are:
 - `while`
 - `return`
 - `continue`
+- `break`
 - inline `asm`
+
+`break` exits the nearest enclosing `while`.
 
 There is no dedicated block statement syntax beyond the bodies of `if`, `else`, `while`, and functions.
 
