@@ -1,4 +1,4 @@
 define __zorb_builtin_is_linux 1
 define __zorb_builtin_is_windows 0
-if (__zorb_builtin_is_linux) {
-if (__zorb_builtin_is_windows) {
+#if defined(__linux__)
+#if defined(_WIN32)
