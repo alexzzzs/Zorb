@@ -17,7 +17,7 @@ public class CGenerator
     private sealed record GeneratedExpression(string Prelude, string Code, TypeNode? Type);
 
     private readonly List<StructNode> _structs = new();
-    private readonly HashSet<string> _includes = new() { "stdint.h", "unistd.h" };
+    private readonly HashSet<string> _includes = new() { "stdint.h" };
     private readonly HashSet<string> _cHeaders = new();
     private readonly string _currentDir;
     private readonly SymbolTable _symbolTable;
@@ -153,7 +153,6 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
         // Standard headers
         sb.AppendLine("#include <stdint.h>");
-        sb.AppendLine("#include <unistd.h>");
         
         // Platform-specific headers
         sb.AppendLine("#ifdef _WIN32");
@@ -184,7 +183,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         // User C headers
         foreach (var header in _includes)
         {
-            if (header != "stdint.h" && header != "unistd.h")
+            if (header != "stdint.h")
                 sb.AppendLine($"#include <{header}>");
         }
         foreach (var header in _cHeaders)
