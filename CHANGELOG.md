@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- `break` statement support for exiting the nearest enclosing `while` loop.
+- Semantic validation that rejects `break` outside loop bodies.
+- Regression coverage for valid loop-breaking runtime behavior and invalid out-of-loop `break` usage.
+
 ## [0.1.2] - 2026-04-13
 
 Initial public release of Zorb.

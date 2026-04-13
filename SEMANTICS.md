@@ -53,6 +53,7 @@ The lexer recognizes these reserved words:
 - `catch`
 - `const`
 - `continue`
+- `break`
 - `true`
 - `false`
 - `error`
@@ -224,6 +225,12 @@ name: Type
 name: Type = expr
 const name: Type = expr
 ```
+
+### Loop Control
+
+- `continue` skips to the next iteration of the nearest enclosing `while`.
+- `break` exits the nearest enclosing `while`.
+- `break` is valid only inside a `while` body.
 
 Meaning:
 

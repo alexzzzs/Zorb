@@ -16,7 +16,7 @@ The compiler supports a focused language subset:
 - functions, `extern fn`, and namespaced declarations
 - `struct` types
 - globals and `const` globals
-- `if`, `else`, `while`, `continue`, and `return`
+- `if`, `else`, `while`, `continue`, `break`, and `return`
 - pointers, fixed-size arrays, function types, and error unions
 - imports, including `import "file.zorb" as alias`
 - inline assembly
