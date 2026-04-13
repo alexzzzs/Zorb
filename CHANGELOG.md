@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Windows host support for `build` and `run`, with hosted output that recommends `clang-cl` and can also use `cl.exe`.
 - CLI host defaults that keep Linux `build` and `run` freestanding while using hosted output on Windows.
 - Windows build guidance in the README, including toolchain and linker expectations for standard-library-based programs.
+- GitHub Actions Windows smoke coverage that builds and runs the hello-world fixture through the hosted Windows CLI path.
 
 ## [0.1.2] - 2026-04-13
 
