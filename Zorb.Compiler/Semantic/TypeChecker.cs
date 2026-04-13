@@ -412,11 +412,7 @@ public class TypeChecker
             if (node is ImportNode importNode) ProcessImport(importNode, currentDir);
             else if (node is VariableDeclarationNode varDecl && varDecl.Value != null)
             {
-                varDecl.Value = NormalizeAliasReferences(varDecl.Value);
-                CheckExpression(varDecl.Value);
-                var exprType = GetExpressionType(varDecl.Value);
-                if (!IsAssignableTo(varDecl.TypeName, varDecl.Value, exprType))
-                    _errors.Error($"Cannot assign {exprType?.Name ?? "unknown"} to {varDecl.TypeName.Name}");
+                CheckVariableInitializer(varDecl);
             }
             else if (node is FunctionDecl functionDecl)
             {
@@ -689,16 +685,7 @@ public class TypeChecker
         ValidateTypeReference(varDecl.TypeName, varDecl);
         _symbolTable.DefineVariable(varDecl.Name, varDecl.TypeName);
 
-        if (varDecl.Value != null)
-        {
-            varDecl.Value = NormalizeAliasReferences(varDecl.Value);
-            CheckExpression(varDecl.Value);
-            var exprType = GetExpressionType(varDecl.Value);
-            if (!IsAssignableTo(varDecl.TypeName, varDecl.Value, exprType))
-            {
-                _errors.Error(varDecl, $"Cannot assign expression of type '{FormatType(exprType)}' to variable '{varDecl.Name}' of type '{FormatType(varDecl.TypeName)}'.");
-            }
-        }
+        CheckVariableInitializer(varDecl);
     }
 
     private void CheckAssignment(AssignStmt assign)
@@ -770,6 +757,10 @@ public class TypeChecker
 
             case UnaryExpr un:
                 CheckExpression(un.Operand);
+                if (un.Operator == "!" && !IsBoolType(un.Operand))
+                {
+                    _errors.Error(un, $"Operator '!' requires a bool operand, got '{FormatType(GetExpressionType(un.Operand, reportErrors: false))}'.");
+                }
                 break;
 
             case CastExpr cast:
@@ -865,6 +856,27 @@ public class TypeChecker
                 return ContainsCatchExpression(cast.Expr);
             default:
                 return false;
+        }
+    }
+
+    private void CheckVariableInitializer(VariableDeclarationNode varDecl)
+    {
+        if (varDecl.Value == null)
+            return;
+
+        varDecl.Value = NormalizeAliasReferences(varDecl.Value);
+
+        if (_currentFunction == null && ContainsCatchExpression(varDecl.Value))
+        {
+            _errors.Error(varDecl.Value, "Catch expressions are not supported in global initializers.");
+            return;
+        }
+
+        CheckExpression(varDecl.Value);
+        var exprType = GetExpressionType(varDecl.Value);
+        if (!IsAssignableTo(varDecl.TypeName, varDecl.Value, exprType))
+        {
+            _errors.Error(varDecl, $"Cannot assign expression of type '{FormatType(exprType)}' to variable '{varDecl.Name}' of type '{FormatType(varDecl.TypeName)}'.");
         }
     }
 
@@ -981,13 +993,16 @@ public class TypeChecker
             if (IsNumericType(leftType) && IsNumericType(rightType))
                 return;
 
+            if (IsBoolType(leftType) && IsBoolType(rightType))
+                return;
+
             if (IsStringType(leftType) && IsStringType(rightType))
                 return;
 
             if (leftType.IsPointer && rightType.IsPointer && SameType(leftType, rightType))
                 return;
 
-            _errors.Error($"Operator '{bin.Operator}' requires numeric operands, matching pointer types, or two strings");
+            _errors.Error($"Operator '{bin.Operator}' requires numeric operands, bool operands, matching pointer types, or two strings");
         }
     }
 
@@ -1318,6 +1333,10 @@ public class TypeChecker
                     if (operandType != null)
                         return AddressOfType(operandType);
                 }
+                else if (un.Operator == "!")
+                {
+                    return new TypeNode { Name = "bool" };
+                }
                 else if (un.Operator == "-")
                 {
                     return GetExpressionType(un.Operand, reportErrors);
@@ -1387,6 +1406,16 @@ public class TypeChecker
             && !type.IsFunction
             && type.ArraySize == null
             && _numericTypes.Contains(type.Name);
+    }
+
+    private static bool IsBoolType(TypeNode? type)
+    {
+        return type != null
+            && !type.IsPointer
+            && !type.IsErrorUnion
+            && !type.IsFunction
+            && type.ArraySize == null
+            && type.Name == "bool";
     }
 
     private static bool IsStringType(TypeNode? type)

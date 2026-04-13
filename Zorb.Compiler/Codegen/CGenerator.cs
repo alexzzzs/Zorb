@@ -933,6 +933,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 if (targetType == null) return null;
                 return GetStructFieldType(targetType, field.Field);
             case BinaryExpr bin:
+                if (bin.Operator is "==" or "!=" or ">" or "<" or ">=" or "<=")
+                    return new TypeNode { Name = "bool" };
                 return GetExprType(bin.Left);
             case CallExpr call:
                 if (call.TargetExpr != null)
@@ -986,6 +988,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
                     return AddressOfType(operandType);
                 }
+                if (un.Operator == "!")
+                    return new TypeNode { Name = "bool" };
                 return GetExprType(un.Operand);
             default:
                 return null;
