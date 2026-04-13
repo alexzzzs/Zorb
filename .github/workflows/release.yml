@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release-assets:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: zorb-release-linux-x64
+            output_dir: artifacts/compiler/linux-x64
+            asset_name: zorb-compiler-linux-x64-${{ github.ref_name }}.zip
+          - os: windows-latest
+            artifact_name: zorb-release-win-x64
+            output_dir: artifacts/compiler/win-x64
+            asset_name: zorb-compiler-win-x64-${{ github.ref_name }}.zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Compute release version metadata
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Publish standalone compiler
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          INFORMATIONAL_VERSION: ${{ steps.version.outputs.version }}
+        run: bash scripts/publish-compiler-linux.sh "${{ matrix.output_dir }}"
+
+      - name: Publish standalone compiler
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          INFORMATIONAL_VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/publish-compiler-windows.ps1 "${{ matrix.output_dir }}"
+
+      - name: Write version metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "${{ matrix.output_dir }}/version.txt" <<EOF
+          version=${{ steps.version.outputs.version }}
+          tag=${GITHUB_REF_NAME}
+          commit=${GITHUB_SHA}
+          EOF
+
+      - name: Package release asset
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p release-assets
+          cd "${{ matrix.output_dir }}"
+          zip -r "../../release-assets/${{ matrix.asset_name }}" .
+
+      - name: Package release asset
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          Compress-Archive -Path "${{ matrix.output_dir }}/*" -DestinationPath "release-assets/${{ matrix.asset_name }}" -Force
+
+      - name: Upload packaged asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release-assets/${{ matrix.asset_name }}
+
+  create-release:
+    needs: build-release-assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download packaged assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*

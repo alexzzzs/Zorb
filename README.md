@@ -57,6 +57,7 @@ $env:INFORMATIONAL_VERSION="0.1.1-dev.42+abcdef12"
 ```
 
 The GitHub Actions workflow publishes standalone Linux and Windows compiler artifacts automatically on pushes to `master` and on version tags such as `v0.1.0`.
+Version tags such as `v0.1.0` also create a GitHub Release and attach zipped standalone compiler binaries as release assets.
 
 ## Run The Compiler
 
