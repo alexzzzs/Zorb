@@ -30,6 +30,34 @@ The current semantic source of truth is [SEMANTICS.md](./SEMANTICS.md).
 dotnet build Zorb.Compiler/Zorb.Compiler.csproj -c Release
 ```
 
+Publish a standalone compiler binary:
+
+```bash
+./scripts/publish-compiler-linux.sh
+```
+
+Publish a version-stamped standalone Linux compiler build:
+
+```bash
+VERSION=0.1.1-dev.42 INFORMATIONAL_VERSION=0.1.1-dev.42+abcdef12 ./scripts/publish-compiler-linux.sh
+```
+
+On Windows PowerShell:
+
+```powershell
+./scripts/publish-compiler-windows.ps1
+```
+
+Publish a version-stamped standalone Windows compiler build:
+
+```powershell
+$env:VERSION="0.1.1-dev.42"
+$env:INFORMATIONAL_VERSION="0.1.1-dev.42+abcdef12"
+./scripts/publish-compiler-windows.ps1
+```
+
+The GitHub Actions workflow publishes standalone Linux and Windows compiler artifacts automatically on pushes to `master` and on version tags such as `v0.1.0`.
+
 ## Run The Compiler
 
 Check a file without emitting C:

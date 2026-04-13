@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using Zorb.Compiler.AST;
 using Zorb.Compiler.Codegen;
 using Zorb.Compiler.Lexer;
@@ -9,7 +10,6 @@ using Zorb.Compiler.Utils;
 
 class Program
 {
-    private const string CompilerVersion = "0.2.0";
     private const string HostLinuxCompileFlags = "-O2 -nostdlib -fno-pie -no-pie -z execstack -fno-builtin";
     private const string RunTimeoutSeconds = "30s";
 
@@ -50,7 +50,7 @@ class Program
 
             if (options.ShowVersion)
             {
-                Console.WriteLine($"Zorb.Compiler {CompilerVersion}");
+                Console.WriteLine($"Zorb.Compiler {GetCompilerVersion()}");
                 return 0;
             }
 
@@ -420,6 +420,16 @@ class Program
             .Replace("\t", "\\t", StringComparison.Ordinal)
             .Replace("\0", "\\0", StringComparison.Ordinal)
             .Replace("'", "\\'", StringComparison.Ordinal);
+    }
+
+    private static string GetCompilerVersion()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informationalVersion))
+            return informationalVersion;
+
+        return assembly.GetName().Version?.ToString() ?? "0.0.0-dev";
     }
 
     private sealed record CompiledProgram(

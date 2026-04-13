@@ -1,4 +1,4 @@
-name: Compiler Tests
+name: Compiler CI
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -17,17 +18,88 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Restore Compiler
-        run: dotnet restore Zorb.Compiler/Zorb.Compiler.csproj
-
-      - name: Restore Tests
+      - name: Restore
         run: dotnet restore Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj
 
       - name: Build Compiler
         run: dotnet build Zorb.Compiler/Zorb.Compiler.csproj -c Release --no-restore
 
-      - name: Build Tests
-        run: dotnet build Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj -c Release --no-restore
-
       - name: Run Fixture Suite
-        run: dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj --no-build --configuration Release
+        run: dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj --configuration Release
+
+  publish-standalone:
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: zorb-compiler-linux-x64
+          - os: windows-latest
+            artifact_name: zorb-compiler-win-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Compute version metadata
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          short_sha="$(git rev-parse --short=8 HEAD)"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            informational_version="$version"
+          else
+            base_version="0.1.1"
+            version="${base_version}-dev.${GITHUB_RUN_NUMBER}"
+            informational_version="${version}+${short_sha}"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "informational_version=$informational_version" >> "$GITHUB_OUTPUT"
+
+      - name: Publish standalone compiler
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          INFORMATIONAL_VERSION: ${{ steps.version.outputs.informational_version }}
+        run: bash scripts/publish-compiler-linux.sh "artifacts/compiler/linux-x64"
+
+      - name: Publish standalone compiler
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          INFORMATIONAL_VERSION: ${{ steps.version.outputs.informational_version }}
+        run: ./scripts/publish-compiler-windows.ps1 "artifacts/compiler/win-x64"
+
+      - name: Record version metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/compiler
+          cat > "artifacts/compiler/version.txt" <<EOF
+          version=${{ steps.version.outputs.version }}
+          informational_version=${{ steps.version.outputs.informational_version }}
+          commit=${GITHUB_SHA}
+          ref=${GITHUB_REF}
+          EOF
+
+      - name: Upload standalone compiler artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: artifacts/compiler
