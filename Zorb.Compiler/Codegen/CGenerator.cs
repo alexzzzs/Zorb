@@ -619,6 +619,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         }
         if (stmt is ContinueStmt)
             return "continue;";
+        if (stmt is BreakStmt)
+            return "break;";
         if (stmt is AssignStmt assign)
         {
             var targetType = GetExprType(assign.Target);

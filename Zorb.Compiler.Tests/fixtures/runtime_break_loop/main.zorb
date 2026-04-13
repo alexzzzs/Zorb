@@ -1,0 +1,17 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn _start() {
+    count: i64 = 0
+
+    while true {
+        if count == 2 {
+            break
+        }
+
+        count = count + 1
+    }
+
+    std.io.print("ok\n")
+    std.os.exit(0)
+}

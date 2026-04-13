@@ -53,6 +53,7 @@ The lexer recognizes these reserved words:
 - `catch`
 - `const`
 - `continue`
+- `break`
 - `true`
 - `false`
 - `error`
@@ -225,6 +226,12 @@ name: Type = expr
 const name: Type = expr
 ```
 
+### Loop Control
+
+- `continue` skips to the next iteration of the nearest enclosing `while`.
+- `break` exits the nearest enclosing `while`.
+- `break` is valid only inside a `while` body.
+
 Meaning:
 
 - Error declarations define globally visible error codes.
@@ -301,7 +308,10 @@ The current statement forms are:
 - `while`
 - `return`
 - `continue`
+- `break`
 - inline `asm`
+
+`break` exits the nearest enclosing `while`.
 
 There is no dedicated block statement syntax beyond the bodies of `if`, `else`, `while`, and functions.
 
