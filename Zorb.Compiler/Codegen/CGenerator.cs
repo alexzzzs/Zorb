@@ -139,9 +139,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         var functions = allNodes.OfType<FunctionDecl>().ToList();
         foreach (var fn in functions)
         {
-            var cName = fn.Name;
-            if (fn.NamespacePath.Count > 0)
-                cName = string.Join("_", fn.NamespacePath) + "_" + fn.Name;
+            var cName = GetFunctionCName(fn.NamespacePath, fn.Name, null);
             if (emittedItems.Contains(cName))
                 continue;
             emittedItems.Add(cName);
@@ -212,11 +210,9 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         foreach (var fn in functions)
         {
             if (fn.IsExtern) continue;
-            var lowersToHostedMain = fn.Name == "_start" && !PreserveStart;
+            var lowersToHostedMain = ShouldLowerToHostedMain(fn.NamespacePath, fn.Name);
             var cReturnType = lowersToHostedMain ? "int" : MapType(fn.ReturnType);
-            var cName = (fn.Name == "_start" && !PreserveStart)
-                ? "main"
-                : FlattenName(fn.NamespacePath, fn.Name, null);
+            var cName = GetFunctionCName(fn.NamespacePath, fn.Name, null);
             if (emittedPrototypes.Contains(cName)) continue;
             emittedPrototypes.Add(cName);
             var parameters = string.Join(", ", fn.Parameters.Select(p => MapType(p.TypeName, p.Name)));
@@ -322,10 +318,10 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
         var rawName = fn.Name;
         var sb = new StringBuilder();
-        var lowersToHostedMain = rawName == "_start" && !PreserveStart;
+        var lowersToHostedMain = ShouldLowerToHostedMain(fn.NamespacePath, rawName);
         var cReturnType = lowersToHostedMain ? "int" : MapType(fn.ReturnType);
         var parameters = string.Join(", ", fn.Parameters.Select(p => MapType(p.TypeName, p.Name)));
-        var cName = (rawName == "_start" && !PreserveStart) ? "main" : FlattenName(fn.NamespacePath, fn.Name, prefix);
+        var cName = GetFunctionCName(fn.NamespacePath, rawName, prefix);
 
         var attrs = new List<string>();
         foreach (var attr in fn.Attributes)
@@ -474,6 +470,19 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         parts.AddRange(path);
         parts.Add(name);
         return string.Join("_", parts);
+    }
+
+    private bool ShouldLowerToHostedMain(List<string> namespacePath, string name)
+    {
+        return !PreserveStart && namespacePath.Count == 0 && name == "_start";
+    }
+
+    private string GetFunctionCName(List<string> namespacePath, string name, string? prefix = null)
+    {
+        if (ShouldLowerToHostedMain(namespacePath, name))
+            return "main";
+
+        return FlattenName(namespacePath, name, prefix);
     }
 
     private string GenerateStatement(Statement stmt)
@@ -764,13 +773,16 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                     return new GeneratedExpression(callPrelude.ToString(), $"{target}({args})", GetExprType(expr));
                 }
 
-                var cCallName = FlattenName(call.NamespacePath, call.Name, null);
+                var cCallName = GetFunctionCName(call.NamespacePath, call.Name, null);
                 return new GeneratedExpression(callPrelude.ToString(), $"{cCallName}({args})", GetExprType(expr));
             case NumberExpr num:
                 return new GeneratedExpression("", num.Value.ToString(), GetExprType(expr));
             case StringExpr str:
                 return new GeneratedExpression("", $"\"{EscapeCString(str.Value)}\"", GetExprType(expr));
             case IdentifierExpr ident:
+                if (_symbolTable.TryLookup(ident.Name, out var identSym) && identSym!.Kind == SymbolKind.Function)
+                    return new GeneratedExpression("", GetFunctionCName(new List<string>(), ident.Name, null), GetExprType(expr));
+
                 return new GeneratedExpression("", ident.Name, GetExprType(expr));
             case BinaryExpr bin:
                 var generatedLeft = GenerateExpressionWithPrelude(bin.Left);

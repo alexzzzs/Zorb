@@ -447,6 +447,7 @@ class Program
                 {
                 }
 
+                Console.Error.WriteLine($"Process '{fileName}' timed out after {timeoutMilliseconds.Value / 1000} seconds.");
                 throw new ZorbCompilerException($"Process '{fileName}' timed out after {timeoutMilliseconds.Value / 1000} seconds.");
             }
         }
