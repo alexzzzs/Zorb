@@ -1019,6 +1019,7 @@ public class TypeChecker
             var resolvedQualifiedName = qualifiedName;
             var targetResolvedViaAlias = !string.IsNullOrEmpty(qualifiedName) &&
                 TryResolveAliasQualifiedName(qualifiedName, out resolvedQualifiedName);
+            call.ResolvedTargetQualifiedName = targetResolvedViaAlias ? resolvedQualifiedName : null;
 
             if (!string.IsNullOrEmpty(resolvedQualifiedName) && _symbolTable.TryLookup(resolvedQualifiedName, out var qualifiedInfo))
             {

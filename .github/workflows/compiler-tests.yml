@@ -35,6 +35,8 @@ jobs:
   windows-hosted-smoke:
     runs-on: windows-latest
     timeout-minutes: 20
+    env:
+      WINDOWS_SMOKE_FIXTURES: runtime_hello_world;runtime_string_escapes;runtime_condition_catch
 
     steps:
       - name: Checkout
@@ -57,11 +59,7 @@ jobs:
       - name: Build runtime fixtures on Windows host
         shell: pwsh
         run: |
-          $fixtures = @(
-            "runtime_hello_world",
-            "runtime_string_escapes",
-            "runtime_condition_catch"
-          )
+          $fixtures = $env:WINDOWS_SMOKE_FIXTURES -split ';' | Where-Object { $_ }
 
           $outDir = Join-Path $env:RUNNER_TEMP "zorb-windows-build"
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
@@ -69,19 +67,19 @@ jobs:
           foreach ($fixture in $fixtures) {
             $exePath = Join-Path $outDir "$fixture.exe"
             dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj --configuration Release --no-build -- build "Zorb.Compiler.Tests/fixtures/$fixture/main.zorb" -o $exePath
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0) {
+              throw "Build for $fixture failed with exit code $exitCode. Expected executable at $exePath."
+            }
             if (-not (Test-Path $exePath)) {
-              throw "Expected built executable at $exePath"
+              throw "Build for $fixture did not produce the expected executable at $exePath."
             }
           }
 
       - name: Run runtime fixtures on Windows host
         shell: pwsh
         run: |
-          $fixtures = @(
-            "runtime_hello_world",
-            "runtime_string_escapes",
-            "runtime_condition_catch"
-          )
+          $fixtures = $env:WINDOWS_SMOKE_FIXTURES -split ';' | Where-Object { $_ }
 
           function Read-NormalizedText([string]$Path) {
             if (-not (Test-Path $Path)) {

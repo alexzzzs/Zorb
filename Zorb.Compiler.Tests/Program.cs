@@ -42,13 +42,23 @@ catch (Exception ex)
 }
 
 var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-var examplePaths = new[]
-{
-    Path.Combine(projectRoot, "examples", "basics", "import_alias", "main.zorb"),
-    Path.Combine(projectRoot, "examples", "basics", "error_catch.zorb"),
-    Path.Combine(projectRoot, "examples", "basics", "platform_info.zorb"),
-    Path.Combine(projectRoot, "examples", "advanced", "threads.zorb")
-};
+var examplesRoot = Path.Combine(projectRoot, "examples");
+var examplePaths = Directory.EnumerateFiles(examplesRoot, "*.zorb", SearchOption.AllDirectories)
+    .Where(path =>
+    {
+        var fileName = Path.GetFileName(path);
+        if (string.Equals(fileName, "main.zorb", StringComparison.Ordinal))
+            return true;
+
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(directory))
+            return true;
+
+        var siblingMainPath = Path.Combine(directory, "main.zorb");
+        return !File.Exists(siblingMainPath);
+    })
+    .OrderBy(path => path, StringComparer.Ordinal)
+    .ToArray();
 
 foreach (var examplePath in examplePaths)
 {
@@ -162,7 +172,8 @@ static void RunExampleCompilationTest(string examplePath)
     if (!string.IsNullOrEmpty(compilation.FailureMessage))
         allErrors.Add(compilation.FailureMessage);
 
-    AssertPhase(compilation.Phase, FixturePhase.Success, compilation.FailureMessage);
+    var diagnosticsText = string.Join(Environment.NewLine, allErrors);
+    AssertPhase(compilation.Phase, FixturePhase.Success, diagnosticsText);
     AssertNoErrors(allErrors);
 }
 

@@ -417,6 +417,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             "u16" => "u16",
             "u32" => "u32",
             "u64" => "u64",
+            "bool" => "bool",
             "string" => "ptr",
             "void" => "void",
             "char" => "char",
@@ -447,6 +448,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             "u16" => "uint16_t",
             "u32" => "uint32_t",
             "u64" => "uint64_t",
+            "bool" => "int32_t",
             "string" => "char*",
             "void" => "int8_t",
             "char" => "char",
@@ -773,6 +775,17 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
                 if (call.TargetExpr != null)
                 {
+                    if (!string.IsNullOrEmpty(call.ResolvedTargetQualifiedName))
+                    {
+                        var resolvedParts = call.ResolvedTargetQualifiedName.Split('.');
+                        var resolvedName = resolvedParts[^1];
+                        var resolvedNamespacePath = resolvedParts.Length > 1
+                            ? resolvedParts[..^1].ToList()
+                            : new List<string>();
+                        var resolvedTarget = GetFunctionCName(resolvedNamespacePath, resolvedName, null);
+                        return new GeneratedExpression(callPrelude.ToString(), $"{resolvedTarget}({args})", GetExprType(expr));
+                    }
+
                     var generatedTarget = GenerateExpressionWithPrelude(call.TargetExpr);
                     callPrelude.Append(generatedTarget.Prelude);
                     var target = generatedTarget.Code.Replace(".", "_");
