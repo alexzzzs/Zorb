@@ -10,8 +10,10 @@ All notable changes to this project will be documented in this file.
 - Regression coverage for rejected global-initializer `catch` expressions.
 - Expanded Windows hosted CI smoke coverage across multiple runtime fixtures.
 - Additional checked-in examples for import aliasing, error handling, and cross-platform stdlib usage.
+- Automated compilation coverage for checked-in examples in the fixture harness.
 - Unary boolean negation with `!`.
 - Boolean equality and inequality comparisons with `==` and `!=`.
+- Regression coverage for assigning comparison results to declared `bool` variables.
 - `break` statement support for exiting the nearest enclosing `while` loop.
 - Semantic validation that rejects `break` outside loop bodies.
 - Regression coverage for valid loop-breaking runtime behavior and invalid out-of-loop `break` usage.
@@ -19,6 +21,16 @@ All notable changes to this project will be documented in this file.
 - CLI host defaults that keep Linux `build` and `run` freestanding while using hosted output on Windows.
 - Windows build guidance in the README, including toolchain and linker expectations for standard-library-based programs.
 - GitHub Actions Windows smoke coverage that builds and runs the hello-world fixture through the hosted Windows CLI path.
+
+### Changed
+
+- The advanced threads example now uses the current array type spelling and current pointer-cast and inline-asm operand rules.
+- The Windows hosted smoke workflow avoids redundant compiler rebuilds during repeated `dotnet run` steps.
+
+### Fixed
+
+- Parser diagnostics for invalid postfix array type syntax now explain that arrays must be written as `[N]T`, for example `[4]u8`.
+- Declared `bool` types are treated consistently as built-in types during semantic validation and C code generation.
 
 ## [0.1.2] - 2026-04-13
 
