@@ -1,0 +1,11 @@
+fn main(flag: bool) -> i64 {
+    if flag == false {
+        return 0
+    }
+
+    if true != false {
+        return 1
+    }
+
+    return 2
+}

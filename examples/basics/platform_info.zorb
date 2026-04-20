@@ -1,0 +1,19 @@
+import "../../std/io.zorb"
+import "../../std/os.zorb"
+
+fn _start() {
+    if Builtin.IsLinux {
+        std.io.print("running on linux\n")
+        std.os.exit(0)
+        return
+    }
+
+    if Builtin.IsWindows {
+        std.io.print("running on windows\n")
+        std.os.exit(0)
+        return
+    }
+
+    std.io.print("unknown platform\n")
+    std.os.exit(1)
+}

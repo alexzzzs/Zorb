@@ -1,0 +1,28 @@
+import "../../std/io.zorb"
+import "../../std/os.zorb"
+
+error MissingConfig = 200
+
+fn load_port(ok: bool) !i64 {
+    if !ok {
+        return error.MissingConfig
+    }
+
+    return 8080
+}
+
+fn _start() {
+    port: i64 = load_port(false) catch |err| {
+        std.io.print("config error\n")
+        std.os.exit(err)
+        return
+    }
+
+    if port == 8080 {
+        std.io.print("ready on 8080\n")
+        std.os.exit(0)
+        return
+    }
+
+    std.os.exit(1)
+}

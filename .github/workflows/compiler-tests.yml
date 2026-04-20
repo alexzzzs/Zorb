@@ -35,6 +35,8 @@ jobs:
   windows-hosted-smoke:
     runs-on: windows-latest
     timeout-minutes: 20
+    env:
+      WINDOWS_SMOKE_FIXTURES: runtime_hello_world;runtime_string_escapes;runtime_condition_catch
 
     steps:
       - name: Checkout
@@ -54,47 +56,82 @@ jobs:
       - name: Build Compiler
         run: dotnet build Zorb.Compiler/Zorb.Compiler.csproj -c Release --no-restore
 
-      - name: Build hello world on Windows host
+      - name: Build runtime fixtures on Windows host
         shell: pwsh
         run: |
+          $fixtures = $env:WINDOWS_SMOKE_FIXTURES -split ';' | Where-Object { $_ }
+
           $outDir = Join-Path $env:RUNNER_TEMP "zorb-windows-build"
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-          $exePath = Join-Path $outDir "hello.exe"
-          dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj --configuration Release -- build Zorb.Compiler.Tests/fixtures/runtime_hello_world/main.zorb -o $exePath
-          if (-not (Test-Path $exePath)) {
-            throw "Expected built executable at $exePath"
+
+          foreach ($fixture in $fixtures) {
+            $exePath = Join-Path $outDir "$fixture.exe"
+            dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj --configuration Release --no-build -- build "Zorb.Compiler.Tests/fixtures/$fixture/main.zorb" -o $exePath
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0) {
+              throw "Build for $fixture failed with exit code $exitCode. Expected executable at $exePath."
+            }
+            if (-not (Test-Path $exePath)) {
+              throw "Build for $fixture did not produce the expected executable at $exePath."
+            }
           }
 
-      - name: Run hello world on Windows host
+      - name: Run runtime fixtures on Windows host
         shell: pwsh
         run: |
-          $stdoutPath = Join-Path $env:RUNNER_TEMP "zorb-windows-run-stdout.txt"
-          $stderrPath = Join-Path $env:RUNNER_TEMP "zorb-windows-run-stderr.txt"
-          $expectedStdout = [System.IO.File]::ReadAllText("Zorb.Compiler.Tests/fixtures/runtime_hello_world/expect-stdout.txt").Replace("`r`n", "`n")
-          $expectedExit = [int]([System.IO.File]::ReadAllText("Zorb.Compiler.Tests/fixtures/runtime_hello_world/expect-exit.txt").Trim())
+          $fixtures = $env:WINDOWS_SMOKE_FIXTURES -split ';' | Where-Object { $_ }
 
-          $arguments = @(
-            "run",
-            "--project", "Zorb.Compiler/Zorb.Compiler.csproj",
-            "--configuration", "Release",
-            "--",
-            "run",
-            "Zorb.Compiler.Tests/fixtures/runtime_hello_world/main.zorb"
-          )
+          function Read-NormalizedText([string]$Path) {
+            if (-not (Test-Path $Path)) {
+              return ""
+            }
 
-          $process = Start-Process dotnet -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-          $actualStdout = ""
-          if (Test-Path $stdoutPath) {
-            $actualStdout = [System.IO.File]::ReadAllText($stdoutPath).Replace("`r`n", "`n")
+            return [System.IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
           }
 
-          if ($process.ExitCode -ne $expectedExit) {
-            $stderr = if (Test-Path $stderrPath) { [System.IO.File]::ReadAllText($stderrPath) } else { "" }
-            throw "Expected exit code $expectedExit but got $($process.ExitCode).`nSTDERR:`n$stderr`nSTDOUT:`n$actualStdout"
-          }
+          foreach ($fixture in $fixtures) {
+            $fixtureDir = "Zorb.Compiler.Tests/fixtures/$fixture"
+            $expectedStdout = Read-NormalizedText (Join-Path $fixtureDir "expect-stdout.txt")
+            $expectedExit = [int]([System.IO.File]::ReadAllText((Join-Path $fixtureDir "expect-exit.txt")).Trim())
 
-          if ($actualStdout -ne $expectedStdout) {
-            throw "Windows run stdout mismatch.`nExpected:`n$expectedStdout`nActual:`n$actualStdout"
+            $builtStdoutPath = Join-Path $env:RUNNER_TEMP "$fixture-built-stdout.txt"
+            $builtStderrPath = Join-Path $env:RUNNER_TEMP "$fixture-built-stderr.txt"
+            $exePath = Join-Path (Join-Path $env:RUNNER_TEMP "zorb-windows-build") "$fixture.exe"
+            $builtProcess = Start-Process $exePath -NoNewWindow -Wait -PassThru -RedirectStandardOutput $builtStdoutPath -RedirectStandardError $builtStderrPath
+            $actualBuiltStdout = Read-NormalizedText $builtStdoutPath
+
+            if ($builtProcess.ExitCode -ne $expectedExit) {
+              $stderr = Read-NormalizedText $builtStderrPath
+              throw "Expected built $fixture exit code $expectedExit but got $($builtProcess.ExitCode).`nSTDERR:`n$stderr`nSTDOUT:`n$actualBuiltStdout"
+            }
+
+            if ($actualBuiltStdout -ne $expectedStdout) {
+              throw "Built $fixture stdout mismatch.`nExpected:`n$expectedStdout`nActual:`n$actualBuiltStdout"
+            }
+
+            $stdoutPath = Join-Path $env:RUNNER_TEMP "$fixture-run-stdout.txt"
+            $stderrPath = Join-Path $env:RUNNER_TEMP "$fixture-run-stderr.txt"
+            $arguments = @(
+              "run",
+              "--project", "Zorb.Compiler/Zorb.Compiler.csproj",
+              "--configuration", "Release",
+              "--no-build",
+              "--",
+              "run",
+              "$fixtureDir/main.zorb"
+            )
+
+            $process = Start-Process dotnet -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+            $actualStdout = Read-NormalizedText $stdoutPath
+
+            if ($process.ExitCode -ne $expectedExit) {
+              $stderr = Read-NormalizedText $stderrPath
+              throw "Expected CLI $fixture exit code $expectedExit but got $($process.ExitCode).`nSTDERR:`n$stderr`nSTDOUT:`n$actualStdout"
+            }
+
+            if ($actualStdout -ne $expectedStdout) {
+              throw "CLI $fixture stdout mismatch.`nExpected:`n$expectedStdout`nActual:`n$actualStdout"
+            }
           }
 
   publish-standalone:

@@ -1,0 +1,7 @@
+fn main(flag: bool) -> i64 {
+    if !flag {
+        return 1
+    }
+
+    return 0
+}
