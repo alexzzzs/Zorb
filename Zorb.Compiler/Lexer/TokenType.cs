@@ -20,9 +20,7 @@ public enum TokenType
     Slash,
     Percent,
     Amp,
-    AndAnd,
     Pipe,
-    OrOr,
     Caret,
     LShift,
     RShift,
@@ -58,5 +56,7 @@ public enum TokenType
     Continue,
     Break,
     True,
-    False
+    False,
+    AndAnd,
+    OrOr
 }

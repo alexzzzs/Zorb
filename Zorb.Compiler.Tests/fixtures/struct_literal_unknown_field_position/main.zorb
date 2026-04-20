@@ -1,0 +1,8 @@
+struct Pair {
+    left: i32,
+    right: i32
+}
+
+fn main() {
+    pair: Pair = Pair{ left: 1, wrong: 2 }
+}

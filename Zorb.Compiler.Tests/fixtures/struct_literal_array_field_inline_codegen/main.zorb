@@ -1,0 +1,7 @@
+struct Holder {
+    arr: [2]i64
+}
+
+fn make_holder() -> Holder {
+    return Holder{ arr: [2]i64{ 1, 2 } }
+}

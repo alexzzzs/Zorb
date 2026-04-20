@@ -908,6 +908,12 @@ public class TypeChecker
         }
 
         CheckExpression(varDecl.Value);
+        if (varDecl.TypeName.ArraySize != null && varDecl.Value is not ArrayLiteralExpr)
+        {
+            _errors.Error(varDecl, "Array assignment is not supported. Assign individual elements instead.");
+            return;
+        }
+
         var exprType = GetExpressionType(varDecl.Value);
         if (!IsAssignableTo(varDecl.TypeName, varDecl.Value, exprType))
         {
@@ -1072,19 +1078,19 @@ public class TypeChecker
 
             if (!seen.Add(field.Name))
             {
-                _errors.Error(structLiteral, $"Struct literal for '{fullName}' initializes field '{field.Name}' more than once.");
+                _errors.Error(field, $"Struct literal for '{fullName}' initializes field '{field.Name}' more than once.");
                 continue;
             }
 
             if (!fieldMap.TryGetValue(field.Name, out var fieldType))
             {
-                _errors.Error(structLiteral, $"Struct '{fullName}' does not have a field named '{field.Name}'.");
+                _errors.Error(field, $"Struct '{fullName}' does not have a field named '{field.Name}'.");
                 continue;
             }
 
             var valueType = GetExpressionType(field.Value);
             if (!IsAssignableTo(fieldType, field.Value, valueType))
-                _errors.Error(structLiteral, $"Cannot assign expression of type '{FormatType(valueType)}' to field '{field.Name}' of type '{FormatType(fieldType)}'.");
+                _errors.Error(field, $"Cannot assign expression of type '{FormatType(valueType)}' to field '{field.Name}' of type '{FormatType(fieldType)}'.");
         }
 
         foreach (var field in structFields!)

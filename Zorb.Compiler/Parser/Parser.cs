@@ -1096,13 +1096,15 @@ public List<Node> ParseProgram()
         var fields = new List<StructLiteralField>();
         while (Current.Type != TokenType.RBrace && Current.Type != TokenType.Eof)
         {
-            var fieldName = Expect(TokenType.Identifier, "Expected struct field name in literal.").Value;
-            Expect(TokenType.Colon, $"Expected ':' after struct literal field '{fieldName}'.");
-            fields.Add(new StructLiteralField
+            var fieldNameToken = Expect(TokenType.Identifier, "Expected struct field name in literal.");
+            Expect(TokenType.Colon, $"Expected ':' after struct literal field '{fieldNameToken.Value}'.");
+            var field = new StructLiteralField
             {
-                Name = fieldName,
+                Name = fieldNameToken.Value,
                 Value = ParseExpression()
-            });
+            };
+            StampNode(field, fieldNameToken);
+            fields.Add(field);
 
             if (Current.Type == TokenType.Comma)
             {

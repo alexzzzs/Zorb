@@ -172,8 +172,8 @@ jobs:
             version="${GITHUB_REF_NAME#v}"
             informational_version="$version"
           else
-            base_version="0.1.3"
-            version="${base_version}-dev.${GITHUB_RUN_NUMBER}"
+            base_version="$(dotnet msbuild Zorb.Compiler/Zorb.Compiler.csproj -getProperty:Version -nologo -v:q | tail -n 1 | tr -d '\r')"
+            version="${base_version}.${GITHUB_RUN_NUMBER}"
             informational_version="${version}+${short_sha}"
           fi
 
