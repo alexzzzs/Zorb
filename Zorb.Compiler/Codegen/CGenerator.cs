@@ -27,6 +27,7 @@ public class CGenerator
     private List<Node> _allNodes = new();
     private int _tempCounter;
     private bool _insideFunctionBody;
+    private bool _currentFunctionLowersToHostedMain;
     public bool PreserveStart { get; set; }
     public bool NoStdLib { get; set; }
 
@@ -110,6 +111,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         _allNodes = allNodes;
         _tempCounter = 0;
         _insideFunctionBody = false;
+        _currentFunctionLowersToHostedMain = false;
         
         CollectNodes(nodes, allNodes, processed, emittedItems, _currentDir);
 
@@ -343,11 +345,13 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
         sb.AppendLine($"{attrStr}{cReturnType} {cName}({parameters}) {{");
         _insideFunctionBody = true;
+        _currentFunctionLowersToHostedMain = lowersToHostedMain;
         foreach (var stmt in fn.Body)
             sb.AppendLine($"    {GenerateStatement(stmt)}");
         if (lowersToHostedMain && fn.ReturnType.Name == "void" && !fn.ReturnType.IsPointer && !fn.ReturnType.IsErrorUnion)
             sb.AppendLine("    return 0;");
         _insideFunctionBody = false;
+        _currentFunctionLowersToHostedMain = false;
         sb.AppendLine("}");
         return sb.ToString();
     }
@@ -577,7 +581,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             }
 
             var generatedCondition = GenerateExpressionWithPrelude(ifs.Condition);
-            var cond = generatedCondition.Code;
+            var cond = FormatConditionExpression(generatedCondition.Code);
             var sb = new StringBuilder();
             sb.Append(generatedCondition.Prelude);
             sb.AppendLine($"if ({cond}) {{");
@@ -597,13 +601,13 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             var generatedCondition = GenerateExpressionWithPrelude(ws.Condition);
             if (string.IsNullOrEmpty(generatedCondition.Prelude))
             {
-                sb.AppendLine($"while ({generatedCondition.Code}) {{");
+                sb.AppendLine($"while ({FormatConditionExpression(generatedCondition.Code)}) {{");
             }
             else
             {
                 sb.AppendLine("while (1) {");
                 AppendIndentedBlock(sb, generatedCondition.Prelude, "        ");
-                sb.AppendLine($"        if (!({generatedCondition.Code})) break;");
+                sb.AppendLine($"        if (!({FormatConditionExpression(generatedCondition.Code)})) break;");
             }
             AppendIndentedGeneratedBlock(sb, ws.Body, "        ");
             sb.Append("    }");
@@ -637,7 +641,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         }
         if (stmt is ReturnNode ret)
         {
-            if (ret.Value == null) return "return;";
+            if (ret.Value == null)
+                return _currentFunctionLowersToHostedMain ? "return 0;" : "return;";
 
             var generated = GenerateExpressionWithPrelude((Expr)ret.Value);
             var valueCode = generated.Code;
@@ -1024,6 +1029,13 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             : 1;
         result.ArraySize = null;
         return result;
+    }
+
+    private static string FormatConditionExpression(string code)
+    {
+        if (code.Length >= 2 && code[0] == '(' && code[^1] == ')')
+            return code[1..^1];
+        return code;
     }
 
     private string MapTypeForSizeof(TypeNode type)
