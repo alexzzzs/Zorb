@@ -1,1 +1,1 @@
-Operator '!=' requires numeric operands, matching pointer types, or two strings
+Operator '!=' requires numeric operands, bool operands, matching pointer types, or two strings

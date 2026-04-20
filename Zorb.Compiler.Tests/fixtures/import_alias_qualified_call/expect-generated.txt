@@ -1,1 +1,1 @@
-return util_module_answer();
+return module_answer();

@@ -1,0 +1,8 @@
+fn main(left: i64, right: i64) -> i64 {
+    matches: bool = left == right
+    if matches {
+        return 1
+    }
+
+    return 0
+}

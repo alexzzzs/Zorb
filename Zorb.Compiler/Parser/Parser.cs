@@ -401,6 +401,16 @@ public List<Node> ParseProgram()
         var name = path.Last();
         path.RemoveAt(path.Count - 1);
 
+        if (Current.Type == TokenType.LBracket && Peek(1).Type == TokenType.Number)
+        {
+            ErrorReporter.Error(
+                "Array types must be written as '[N]T', not 'T[N]'. For example, use '[4]u8' instead of 'u8[4]'.",
+                Current.Line,
+                Current.Column,
+                _fileName);
+            throw new ZorbCompilerException("Invalid postfix array type syntax.");
+        }
+
         var typeNode = new TypeNode
         {
             Name = name,
@@ -1032,10 +1042,16 @@ public List<Node> ParseProgram()
             return castExpr;
         }
 
-        if (Current.Type == TokenType.Amp || Current.Type == TokenType.Minus)
+        if (Current.Type == TokenType.Amp || Current.Type == TokenType.Minus || Current.Type == TokenType.Bang)
         {
             var startToken = Current;
-            var op = Current.Type == TokenType.Amp ? "&" : "-";
+            var op = Current.Type switch
+            {
+                TokenType.Amp => "&",
+                TokenType.Minus => "-",
+                TokenType.Bang => "!",
+                _ => throw new InvalidOperationException("Unexpected unary operator token.")
+            };
             Advance();
             var operand = ParsePostfix();
             var unaryExpr = new UnaryExpr { Operator = op, Operand = operand };

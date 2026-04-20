@@ -41,6 +41,41 @@ catch (Exception ex)
     Console.WriteLine("FAIL cli_workflow");
 }
 
+var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+var examplesRoot = Path.Combine(projectRoot, "examples");
+var examplePaths = Directory.EnumerateFiles(examplesRoot, "*.zorb", SearchOption.AllDirectories)
+    .Where(path =>
+    {
+        var fileName = Path.GetFileName(path);
+        if (string.Equals(fileName, "main.zorb", StringComparison.Ordinal))
+            return true;
+
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(directory))
+            return true;
+
+        var siblingMainPath = Path.Combine(directory, "main.zorb");
+        return !File.Exists(siblingMainPath);
+    })
+    .OrderBy(path => path, StringComparer.Ordinal)
+    .ToArray();
+
+foreach (var examplePath in examplePaths)
+{
+    var exampleName = Path.GetRelativePath(projectRoot, examplePath);
+
+    try
+    {
+        RunExampleCompilationTest(examplePath);
+        Console.WriteLine($"PASS {exampleName}");
+    }
+    catch (Exception ex)
+    {
+        failures.Add($"{exampleName}: {ex.Message}");
+        Console.WriteLine($"FAIL {exampleName}");
+    }
+}
+
 if (failures.Count > 0)
 {
     Console.Error.WriteLine();
@@ -119,6 +154,27 @@ static void RunCliWorkflowTests(string fixtureRoot)
         if (Directory.Exists(tempDir))
             Directory.Delete(tempDir, recursive: true);
     }
+}
+
+static void RunExampleCompilationTest(string examplePath)
+{
+    if (!File.Exists(examplePath))
+        throw new Exception($"Example source was not found at '{examplePath}'.");
+
+    var exampleDir = Path.GetDirectoryName(examplePath)
+        ?? throw new Exception($"Unable to determine example directory for '{examplePath}'.");
+
+    var compilation = CompileFixture(examplePath, exampleDir);
+
+    var allErrors = new List<string>();
+    allErrors.AddRange(compilation.ParseErrors);
+    allErrors.AddRange(compilation.Checker.Errors.Errors);
+    if (!string.IsNullOrEmpty(compilation.FailureMessage))
+        allErrors.Add(compilation.FailureMessage);
+
+    var diagnosticsText = string.Join(Environment.NewLine, allErrors);
+    AssertPhase(compilation.Phase, FixturePhase.Success, diagnosticsText);
+    AssertNoErrors(allErrors);
 }
 
 static void RunFixture(string fixtureDir, bool updateSnapshots)

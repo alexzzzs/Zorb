@@ -186,6 +186,13 @@ fn demo(value: i64) {
 
 Representative larger examples live in [`examples/`](./examples) and the executable fixture corpus under [`Zorb.Compiler.Tests/fixtures/`](./Zorb.Compiler.Tests/fixtures).
 
+Current checked-in examples:
+
+- [`examples/basics/import_alias/main.zorb`](./examples/basics/import_alias/main.zorb): import aliasing with a sibling module.
+- [`examples/basics/error_catch.zorb`](./examples/basics/error_catch.zorb): error unions with `catch`, `std.io`, and `std.os`.
+- [`examples/basics/platform_info.zorb`](./examples/basics/platform_info.zorb): portable stdlib output that branches on the active host platform.
+- [`examples/advanced/threads.zorb`](./examples/advanced/threads.zorb): lower-level task/thread setup using inline assembly and Linux syscalls.
+
 ## Project Shape
 
 - `Zorb.Compiler/`: lexer, parser, semantic checker, and C codegen

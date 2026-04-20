@@ -1,0 +1,1 @@
+Array types must be written as '[N]T', not 'T[N]'. For example, use '[4]u8' instead of 'u8[4]'.
