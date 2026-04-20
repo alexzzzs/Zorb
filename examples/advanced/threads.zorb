@@ -4,22 +4,24 @@ struct Sys.Thread {}
 
 // --- GLOBAL SCOPE ---
 // Ensure these are treated as stable data labels
-msg1: *u8 = "Task1\n"
-msg2: *u8 = "Task2\n"
+msg1: *u8 = cast(*u8, "Task1\n")
+msg2: *u8 = cast(*u8, "Task2\n")
 
 [align(16)]
-stack1: u8[4096]
+stack1: [4096]u8
 
 [align(16)]
-stack2: u8[4096]
+stack2: [4096]u8
 
 fn Sys.IO.write(fd: i32, buf: *u8, len: i64) {
     syscall(1, fd, cast(i64, buf), len)
 }
 
-fn Sys.Thread.spawn(taskFunc: fn(*void) -> void, arg: *void, stackTop: *void) -> i32 {
+fn Sys.Thread.spawn(taskFunc: fn(*void) -> void, arg: *void, stackTop: *u8) -> i32 {
     flags: i64 = 273 // CLONE_VM | SIGCHLD
     ret: i32 = 0
+    task_addr: *u8 = cast(*u8, taskFunc)
+    arg_addr: *u8 = cast(*u8, arg)
 
     asm {
         // 1. Prepare child stack while in Parent context
@@ -46,7 +48,7 @@ fn Sys.Thread.spawn(taskFunc: fn(*void) -> void, arg: *void, stackTop: *void) ->
         
         "1:\n"                  // --- PARENT RESUMES ---
         : "=a"(ret)
-        : "a"(56), "S"(stackTop), "r"(taskFunc), "r"(arg), "D"(flags)
+        : "a"(56), "S"(stackTop), "r"(task_addr), "r"(arg_addr), "D"(flags)
         : "memory", "rcx", "r11"
     }
 

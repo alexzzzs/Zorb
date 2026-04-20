@@ -476,6 +476,7 @@ For equality:
 
 - `==` and `!=` allow:
   - numeric vs numeric
+  - `bool` vs `bool`
   - `string` vs `string`
   - pointer vs pointer when the pointer types match exactly
 

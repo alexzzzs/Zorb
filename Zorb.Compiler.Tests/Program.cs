@@ -41,6 +41,31 @@ catch (Exception ex)
     Console.WriteLine("FAIL cli_workflow");
 }
 
+var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+var examplePaths = new[]
+{
+    Path.Combine(projectRoot, "examples", "basics", "import_alias", "main.zorb"),
+    Path.Combine(projectRoot, "examples", "basics", "error_catch.zorb"),
+    Path.Combine(projectRoot, "examples", "basics", "platform_info.zorb"),
+    Path.Combine(projectRoot, "examples", "advanced", "threads.zorb")
+};
+
+foreach (var examplePath in examplePaths)
+{
+    var exampleName = Path.GetRelativePath(projectRoot, examplePath);
+
+    try
+    {
+        RunExampleCompilationTest(examplePath);
+        Console.WriteLine($"PASS {exampleName}");
+    }
+    catch (Exception ex)
+    {
+        failures.Add($"{exampleName}: {ex.Message}");
+        Console.WriteLine($"FAIL {exampleName}");
+    }
+}
+
 if (failures.Count > 0)
 {
     Console.Error.WriteLine();
@@ -119,6 +144,26 @@ static void RunCliWorkflowTests(string fixtureRoot)
         if (Directory.Exists(tempDir))
             Directory.Delete(tempDir, recursive: true);
     }
+}
+
+static void RunExampleCompilationTest(string examplePath)
+{
+    if (!File.Exists(examplePath))
+        throw new Exception($"Example source was not found at '{examplePath}'.");
+
+    var exampleDir = Path.GetDirectoryName(examplePath)
+        ?? throw new Exception($"Unable to determine example directory for '{examplePath}'.");
+
+    var compilation = CompileFixture(examplePath, exampleDir);
+
+    var allErrors = new List<string>();
+    allErrors.AddRange(compilation.ParseErrors);
+    allErrors.AddRange(compilation.Checker.Errors.Errors);
+    if (!string.IsNullOrEmpty(compilation.FailureMessage))
+        allErrors.Add(compilation.FailureMessage);
+
+    AssertPhase(compilation.Phase, FixturePhase.Success, compilation.FailureMessage);
+    AssertNoErrors(allErrors);
 }
 
 static void RunFixture(string fixtureDir, bool updateSnapshots)

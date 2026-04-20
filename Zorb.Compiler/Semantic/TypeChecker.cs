@@ -389,7 +389,7 @@ public class TypeChecker
                         ? string.Join(".", field.Type.NamespacePath) + "." + field.Type.Name 
                         : field.Type.Name;
 
-                    if (field.Type.IsFunction || field.Type.Name == "void" || field.Type.Name == "string") 
+                    if (field.Type.IsFunction || field.Type.Name == "void" || field.Type.Name == "string" || field.Type.Name == "bool") 
                         continue;
 
                     if (!_numericTypes.Contains(field.Type.Name) && !_symbolTable.TryLookupStruct(fieldFullName, out _))
@@ -937,7 +937,7 @@ public class TypeChecker
             return;
         }
 
-        if (type.Name == "void" || type.Name == "string" || _numericTypes.Contains(type.Name))
+        if (type.Name == "void" || type.Name == "string" || type.Name == "bool" || _numericTypes.Contains(type.Name))
             return;
 
         var fullName = type.NamespacePath.Any()
