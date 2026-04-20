@@ -1,0 +1,4 @@
+fn main() {
+    value: i64 = 1
+    flag: bool = value && true
+}

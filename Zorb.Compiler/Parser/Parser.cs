@@ -909,7 +909,6 @@ public List<Node> ParseProgram()
     private Expr ParsePostfix()
     {
         var expr = ParsePrimary();
-        var startToken = Current;
 
         while (true)
         {
@@ -972,6 +971,196 @@ public List<Node> ParseProgram()
             }
         }
 
+        return expr;
+    }
+
+    private bool IsStructLiteralStart()
+    {
+        if (Current.Type != TokenType.Identifier)
+            return false;
+
+        var offset = 1;
+        while (Peek(offset).Type == TokenType.Dot && Peek(offset + 1).Type == TokenType.Identifier)
+            offset += 2;
+
+        if (Peek(offset).Type != TokenType.LBrace)
+            return false;
+
+        offset++;
+        if (Peek(offset).Type == TokenType.RBrace)
+            return true;
+
+        while (true)
+        {
+            if (Peek(offset).Type != TokenType.Identifier)
+                return false;
+
+            offset++;
+            if (Peek(offset).Type != TokenType.Colon)
+                return false;
+
+            offset++;
+            var parenDepth = 0;
+            var bracketDepth = 0;
+            var braceDepth = 0;
+            var sawValueToken = false;
+
+            while (true)
+            {
+                var tokenType = Peek(offset).Type;
+                if (tokenType == TokenType.Eof)
+                    return false;
+
+                if (parenDepth == 0 && bracketDepth == 0 && braceDepth == 0)
+                {
+                    if (tokenType == TokenType.Equals
+                        || tokenType == TokenType.Semicolon
+                        || tokenType == TokenType.Fn
+                        || tokenType == TokenType.If
+                        || tokenType == TokenType.While
+                        || tokenType == TokenType.Return
+                        || tokenType == TokenType.Const
+                        || tokenType == TokenType.Break
+                        || tokenType == TokenType.Continue)
+                    {
+                        return false;
+                    }
+
+                    if (tokenType == TokenType.Comma || tokenType == TokenType.RBrace)
+                    {
+                        if (!sawValueToken)
+                            return false;
+                        break;
+                    }
+                }
+
+                sawValueToken = true;
+                switch (tokenType)
+                {
+                    case TokenType.LParen:
+                        parenDepth++;
+                        break;
+                    case TokenType.RParen:
+                        if (parenDepth == 0)
+                            return false;
+                        parenDepth--;
+                        break;
+                    case TokenType.LBracket:
+                        bracketDepth++;
+                        break;
+                    case TokenType.RBracket:
+                        if (bracketDepth == 0)
+                            return false;
+                        bracketDepth--;
+                        break;
+                    case TokenType.LBrace:
+                        braceDepth++;
+                        break;
+                    case TokenType.RBrace:
+                        if (braceDepth == 0)
+                            return false;
+                        braceDepth--;
+                        break;
+                }
+
+                offset++;
+            }
+
+            if (Peek(offset).Type == TokenType.Comma)
+            {
+                offset++;
+                if (Peek(offset).Type == TokenType.RBrace)
+                    return true;
+                continue;
+            }
+
+            return Peek(offset).Type == TokenType.RBrace;
+        }
+    }
+
+    private Expr ParseStructLiteral()
+    {
+        var startToken = Current;
+        var path = new List<string>
+        {
+            Expect(TokenType.Identifier, "Expected struct type name.").Value
+        };
+
+        while (Match(TokenType.Dot))
+            path.Add(Expect(TokenType.Identifier, "Expected identifier after '.' in struct literal type.").Value);
+
+        var name = path[^1];
+        path.RemoveAt(path.Count - 1);
+
+        Expect(TokenType.LBrace, "Expected '{' to start struct literal.");
+        var fields = new List<StructLiteralField>();
+        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.Eof)
+        {
+            var fieldName = Expect(TokenType.Identifier, "Expected struct field name in literal.").Value;
+            Expect(TokenType.Colon, $"Expected ':' after struct literal field '{fieldName}'.");
+            fields.Add(new StructLiteralField
+            {
+                Name = fieldName,
+                Value = ParseExpression()
+            });
+
+            if (Current.Type == TokenType.Comma)
+            {
+                Advance();
+                if (Current.Type == TokenType.RBrace)
+                    break;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        Expect(TokenType.RBrace, "Expected '}' to close struct literal.");
+        var expr = new StructLiteralExpr
+        {
+            TypeName = new TypeNode
+            {
+                Name = name,
+                NamespacePath = path
+            },
+            Fields = fields
+        };
+        StampNode(expr, startToken);
+        return expr;
+    }
+
+    private Expr ParseArrayLiteral()
+    {
+        var startToken = Current;
+        var typeName = ParseType();
+        if (typeName.ArraySize == null)
+            ErrorReporter.Error("Array literals must use an array type like '[4]u8'.", startToken.Line, startToken.Column, _fileName);
+
+        Expect(TokenType.LBrace, "Expected '{' to start array literal.");
+        var elements = new List<Expr>();
+        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.Eof)
+        {
+            elements.Add(ParseExpression());
+            if (Current.Type == TokenType.Comma)
+            {
+                Advance();
+                if (Current.Type == TokenType.RBrace)
+                    break;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        Expect(TokenType.RBrace, "Expected '}' to close array literal.");
+        var expr = new ArrayLiteralExpr
+        {
+            TypeName = typeName,
+            Elements = elements
+        };
+        StampNode(expr, startToken);
         return expr;
     }
 
@@ -1102,6 +1291,12 @@ public List<Node> ParseProgram()
             return strExpr;
         }
 
+        if (Current.Type == TokenType.LBracket)
+            return ParseArrayLiteral();
+
+        if (IsStructLiteralStart())
+            return ParseStructLiteral();
+
         if (Current.Type == TokenType.Identifier)
         {
             var startToken = Current;
@@ -1128,16 +1323,18 @@ public List<Node> ParseProgram()
 
     private int GetPrecedence(TokenType type) => type switch
     {
-        TokenType.Star or TokenType.Slash or TokenType.Percent => 7,
-        TokenType.Plus or TokenType.Minus => 6,
-        TokenType.LShift or TokenType.RShift => 5,
-        TokenType.Amp => 4,
-        TokenType.Caret => 3,
-        TokenType.Pipe => 2,
+        TokenType.Star or TokenType.Slash or TokenType.Percent => 9,
+        TokenType.Plus or TokenType.Minus => 8,
+        TokenType.LShift or TokenType.RShift => 7,
+        TokenType.Amp => 6,
+        TokenType.Caret => 5,
+        TokenType.Pipe => 4,
 
         TokenType.Greater or TokenType.Less
         or TokenType.GreaterEqual or TokenType.LessEqual
-        or TokenType.EqualEqual or TokenType.BangEqual => 1,
+        or TokenType.EqualEqual or TokenType.BangEqual => 3,
+        TokenType.AndAnd => 2,
+        TokenType.OrOr => 1,
 
         _ => 0
     };
@@ -1150,7 +1347,9 @@ public List<Node> ParseProgram()
         TokenType.Slash => "/",
         TokenType.Percent => "%",
         TokenType.Amp => "&",
+        TokenType.AndAnd => "&&",
         TokenType.Pipe => "|",
+        TokenType.OrOr => "||",
         TokenType.Caret => "^",
         TokenType.LShift => "<<",
         TokenType.RShift => ">>",

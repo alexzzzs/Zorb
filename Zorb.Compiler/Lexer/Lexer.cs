@@ -234,6 +234,14 @@ namespace Zorb.Compiler.Lexer;
 
             if (c == '&')
             {
+                if (PeekChar(1) == '&')
+                {
+                    tokens.Add(new Token(TokenType.AndAnd, "", loc.Item1, loc.Item2));
+                    _pos += 2;
+                    _column += 2;
+                    continue;
+                }
+
                 tokens.Add(new Token(TokenType.Amp, "", loc.Item1, loc.Item2));
                 Advance();
                 continue;
@@ -241,6 +249,14 @@ namespace Zorb.Compiler.Lexer;
 
             if (c == '|')
             {
+                if (PeekChar(1) == '|')
+                {
+                    tokens.Add(new Token(TokenType.OrOr, "", loc.Item1, loc.Item2));
+                    _pos += 2;
+                    _column += 2;
+                    continue;
+                }
+
                 tokens.Add(new Token(TokenType.Pipe, "", loc.Item1, loc.Item2));
                 Advance();
                 continue;
