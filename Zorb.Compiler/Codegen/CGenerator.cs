@@ -383,6 +383,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             "u16" => "uint16_t",
             "u32" => "uint32_t",
             "u64" => "uint64_t",
+            "bool" => "int32_t",
             "string" => "char*",
             "void" => "void",
             "char" => "char",

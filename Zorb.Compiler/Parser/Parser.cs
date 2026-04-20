@@ -401,6 +401,16 @@ public List<Node> ParseProgram()
         var name = path.Last();
         path.RemoveAt(path.Count - 1);
 
+        if (Current.Type == TokenType.LBracket && Peek(1).Type == TokenType.Number)
+        {
+            ErrorReporter.Error(
+                "Array types must be written as '[N]T', not 'T[N]'. For example, use '[4]u8' instead of 'u8[4]'.",
+                Current.Line,
+                Current.Column,
+                _fileName);
+            throw new ZorbCompilerException("Invalid postfix array type syntax.");
+        }
+
         var typeNode = new TypeNode
         {
             Name = name,

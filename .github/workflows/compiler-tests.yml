@@ -68,7 +68,7 @@ jobs:
 
           foreach ($fixture in $fixtures) {
             $exePath = Join-Path $outDir "$fixture.exe"
-            dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj --configuration Release -- build "Zorb.Compiler.Tests/fixtures/$fixture/main.zorb" -o $exePath
+            dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj --configuration Release --no-build -- build "Zorb.Compiler.Tests/fixtures/$fixture/main.zorb" -o $exePath
             if (-not (Test-Path $exePath)) {
               throw "Expected built executable at $exePath"
             }
@@ -117,6 +117,7 @@ jobs:
               "run",
               "--project", "Zorb.Compiler/Zorb.Compiler.csproj",
               "--configuration", "Release",
+              "--no-build",
               "--",
               "run",
               "$fixtureDir/main.zorb"
