@@ -34,7 +34,7 @@ public class BinaryExpr : Expr
     public Expr Right { get; set; } = null!;
 }
 
-public class StructLiteralField
+public class StructLiteralField : Node
 {
     public string Name { get; set; } = null!;
     public Expr Value { get; set; } = null!;

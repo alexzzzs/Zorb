@@ -1,0 +1,1 @@
+main.zorb:7:33: error: Struct 'Pair' does not have a field named 'wrong'.

@@ -852,20 +852,20 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                     var logicalResult = NewTemp("logical");
                     var logicalPrelude = new StringBuilder();
                     logicalPrelude.Append(generatedLogicalLeft.Prelude);
-                    logicalPrelude.AppendLine($"int32_t {logicalResult} = {generatedLogicalLeft.Code};");
+                    logicalPrelude.AppendLine($"int32_t {logicalResult} = !!({generatedLogicalLeft.Code});");
 
                     if (bin.Operator == "&&")
                     {
                         logicalPrelude.AppendLine($"if ({logicalResult}) {{");
                         AppendIndentedBlock(logicalPrelude, generatedLogicalRight.Prelude, "    ");
-                        logicalPrelude.AppendLine($"    {logicalResult} = {generatedLogicalRight.Code};");
+                        logicalPrelude.AppendLine($"    {logicalResult} = !!({generatedLogicalRight.Code});");
                         logicalPrelude.AppendLine("}");
                     }
                     else
                     {
                         logicalPrelude.AppendLine($"if (!({logicalResult})) {{");
                         AppendIndentedBlock(logicalPrelude, generatedLogicalRight.Prelude, "    ");
-                        logicalPrelude.AppendLine($"    {logicalResult} = {generatedLogicalRight.Code};");
+                        logicalPrelude.AppendLine($"    {logicalResult} = !!({generatedLogicalRight.Code});");
                         logicalPrelude.AppendLine("}");
                     }
 
@@ -880,12 +880,12 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                     GetExprType(expr));
             case StructLiteralExpr structLiteral:
                 var generatedFields = structLiteral.Fields
-                    .Select(field => (field.Name, Generated: GenerateExpressionWithPrelude(field.Value)))
+                    .Select(field => (Field: field, FieldType: GetStructFieldType(structLiteral.TypeName, field.Name), Generated: GenerateExpressionWithPrelude(field.Value)))
                     .ToList();
 
-                if (generatedFields.All(field => string.IsNullOrEmpty(field.Generated.Prelude)))
+                if (generatedFields.All(field => CanInlineStructLiteralField(field.Field, field.FieldType, field.Generated)))
                 {
-                    var fieldInitializers = string.Join(", ", generatedFields.Select(field => $".{field.Name} = {field.Generated.Code}"));
+                    var fieldInitializers = string.Join(", ", generatedFields.Select(field => GenerateInlineStructLiteralFieldInitializer(field.Field, field.FieldType, field.Generated)));
                     return new GeneratedExpression(
                         "",
                         $"({MapType(structLiteral.TypeName)}){{ {fieldInitializers} }}",
@@ -898,7 +898,14 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 foreach (var field in generatedFields)
                 {
                     structPrelude.Append(field.Generated.Prelude);
-                    structPrelude.AppendLine($"{structTemp}.{field.Name} = {field.Generated.Code};");
+                    if (field.FieldType?.ArraySize is int fieldLength)
+                    {
+                        for (int i = 0; i < fieldLength; i++)
+                            structPrelude.AppendLine($"{structTemp}.{field.Field.Name}[{i}] = {field.Generated.Code}[{i}];");
+                        continue;
+                    }
+
+                    structPrelude.AppendLine($"{structTemp}.{field.Field.Name} = {field.Generated.Code};");
                 }
                 return new GeneratedExpression(structPrelude.ToString(), structTemp, GetExprType(expr));
             case ArrayLiteralExpr arrayLiteral:
@@ -1246,6 +1253,19 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
     private TypeNode? GetStructFieldType(TypeNode structType, string fieldName)
     {
+        var fullName = structType.NamespacePath.Any()
+            ? string.Join(".", structType.NamespacePath) + "." + structType.Name
+            : structType.Name;
+
+        if (_symbolTable.TryLookupStruct(fullName, out var fields))
+        {
+            foreach (var field in fields!)
+            {
+                if (field.Name == fieldName)
+                    return field.Type.Clone();
+            }
+        }
+
         foreach (var s in _structs)
         {
             // Match both name and namespace path
@@ -1258,6 +1278,28 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             }
         }
         return null;
+    }
+
+    private static bool CanInlineStructLiteralField(StructLiteralField field, TypeNode? fieldType, GeneratedExpression generated)
+    {
+        if (!string.IsNullOrEmpty(generated.Prelude))
+            return false;
+
+        if (fieldType?.ArraySize == null)
+            return true;
+
+        return field.Value is ArrayLiteralExpr;
+    }
+
+    private string GenerateInlineStructLiteralFieldInitializer(StructLiteralField field, TypeNode? fieldType, GeneratedExpression generated)
+    {
+        if (fieldType?.ArraySize == null)
+            return $".{field.Name} = {generated.Code}";
+
+        var arrayLiteral = (ArrayLiteralExpr)field.Value;
+        var generatedElements = arrayLiteral.Elements.Select(GenerateExpressionWithPrelude).ToList();
+        var elementCodes = string.Join(", ", generatedElements.Select(element => element.Code));
+        return $".{field.Name} = {{ {elementCodes} }}";
     }
 
     private Dictionary<string, TypeNode> CloneLocalVars()
