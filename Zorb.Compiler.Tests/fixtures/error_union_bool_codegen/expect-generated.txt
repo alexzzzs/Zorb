@@ -1,0 +1,2 @@
+struct Result_bool {
+int32_t value;

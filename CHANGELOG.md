@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - Semantic validation that rejects `catch` expressions inside global initializers before code generation.
 - Regression coverage for rejected global-initializer `catch` expressions.
-- Expanded Windows hosted CI smoke coverage across multiple runtime fixtures.
+- Expanded Windows-hosted CI smoke coverage across multiple runtime fixtures.
 - Additional checked-in examples for import aliasing, error handling, and cross-platform stdlib usage.
 - Automated compilation coverage for checked-in examples in the fixture harness.
 - Unary boolean negation with `!`.
@@ -25,7 +25,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - The advanced threads example now uses the current array type spelling and current pointer-cast and inline-asm operand rules.
-- The Windows hosted smoke workflow avoids redundant compiler rebuilds during repeated `dotnet run` steps.
+- The Windows-hosted smoke workflow avoids redundant compiler rebuilds during repeated `dotnet run` steps.
 
 ### Fixed
 

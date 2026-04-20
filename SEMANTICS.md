@@ -332,6 +332,7 @@ There is no dedicated block statement syntax beyond the bodies of `if`, `else`, 
 - parenthesized expression
 - unary `&expr`
 - unary `-expr`
+- unary `!expr`
 - `cast(Type, expr)`
 - boolean literals `true` and `false`
 - builtins `Builtin.IsLinux` and `Builtin.IsWindows`
@@ -367,7 +368,7 @@ The parser supports these binary operators:
 From highest to lowest:
 
 1. postfix: call, field access, indexing
-2. unary: `&`, unary `-`
+2. unary: `&`, unary `-`, unary `!`
 3. `*` `/` `%`
 4. `+` `-`
 5. `<<` `>>`
@@ -396,7 +397,7 @@ Meaning:
 - The catch body is parsed as a list of statements.
 - The error variable is introduced inside the catch body as an `i32`.
 - Inside function bodies, catch expressions may appear in general expression position.
-- Global initializers still do not support catch expressions that require statement-level control-flow lowering.
+- Global initializers may not contain `catch` expressions.
 
 ## Builtins
 

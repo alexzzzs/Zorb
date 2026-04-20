@@ -1,0 +1,9 @@
+error Fail = 1
+
+fn parse(flag: i64) !bool {
+    if flag != 0 {
+        return error.Fail
+    }
+
+    return true
+}
