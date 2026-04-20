@@ -525,6 +525,26 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             if (vd.TypeName.ArraySize != null)
             {
                 var cTypeArray = isFuncPtr ? MapType(vd.TypeName, safeName) : MapType(vd.TypeName);
+                if (vd.Value is ArrayLiteralExpr arrayLiteral)
+                {
+                    var generatedElements = arrayLiteral.Elements.Select(GenerateExpressionWithPrelude).ToList();
+                    if (generatedElements.All(generatedElement => string.IsNullOrEmpty(generatedElement.Prelude)))
+                    {
+                        var initializer = string.Join(", ", generatedElements.Select(generatedElement => generatedElement.Code));
+                        return $"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}] = {{ {initializer} }}{alignment};";
+                    }
+
+                    var sb = new StringBuilder();
+                    sb.AppendLine($"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}]{alignment};");
+                    for (int i = 0; i < generatedElements.Count; i++)
+                    {
+                        if (!string.IsNullOrEmpty(generatedElements[i].Prelude))
+                            sb.Append(generatedElements[i].Prelude);
+                        sb.AppendLine($"{safeName}[{i}] = {generatedElements[i].Code};");
+                    }
+                    return sb.ToString().TrimEnd();
+                }
+
                 if (vd.Value != null)
                     return $"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}] = {GenerateExpression(vd.Value)}{alignment};";
                 return $"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}]{alignment};";
@@ -723,6 +743,18 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             }
         }
 
+        if (expr is BinaryExpr binary && (binary.Operator == "&&" || binary.Operator == "||"))
+        {
+            if (TryGetPlatformPreprocessorCondition(binary.Left, out var leftCondition)
+                && TryGetPlatformPreprocessorCondition(binary.Right, out var rightCondition))
+            {
+                condition = binary.Operator == "&&"
+                    ? $"({leftCondition}) && ({rightCondition})"
+                    : $"({leftCondition}) || ({rightCondition})";
+                return true;
+            }
+        }
+
         condition = string.Empty;
         return false;
     }
@@ -804,12 +836,94 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
                 return new GeneratedExpression("", ident.Name, GetExprType(expr));
             case BinaryExpr bin:
+                if (bin.Operator is "&&" or "||")
+                {
+                    var generatedLogicalLeft = GenerateExpressionWithPrelude(bin.Left);
+                    var generatedLogicalRight = GenerateExpressionWithPrelude(bin.Right);
+
+                    if (string.IsNullOrEmpty(generatedLogicalLeft.Prelude) && string.IsNullOrEmpty(generatedLogicalRight.Prelude))
+                    {
+                        return new GeneratedExpression(
+                            "",
+                            $"({generatedLogicalLeft.Code} {bin.Operator} {generatedLogicalRight.Code})",
+                            new TypeNode { Name = "bool" });
+                    }
+
+                    var logicalResult = NewTemp("logical");
+                    var logicalPrelude = new StringBuilder();
+                    logicalPrelude.Append(generatedLogicalLeft.Prelude);
+                    logicalPrelude.AppendLine($"int32_t {logicalResult} = {generatedLogicalLeft.Code};");
+
+                    if (bin.Operator == "&&")
+                    {
+                        logicalPrelude.AppendLine($"if ({logicalResult}) {{");
+                        AppendIndentedBlock(logicalPrelude, generatedLogicalRight.Prelude, "    ");
+                        logicalPrelude.AppendLine($"    {logicalResult} = {generatedLogicalRight.Code};");
+                        logicalPrelude.AppendLine("}");
+                    }
+                    else
+                    {
+                        logicalPrelude.AppendLine($"if (!({logicalResult})) {{");
+                        AppendIndentedBlock(logicalPrelude, generatedLogicalRight.Prelude, "    ");
+                        logicalPrelude.AppendLine($"    {logicalResult} = {generatedLogicalRight.Code};");
+                        logicalPrelude.AppendLine("}");
+                    }
+
+                    return new GeneratedExpression(logicalPrelude.ToString(), logicalResult, new TypeNode { Name = "bool" });
+                }
+
                 var generatedLeft = GenerateExpressionWithPrelude(bin.Left);
                 var generatedRight = GenerateExpressionWithPrelude(bin.Right);
                 return new GeneratedExpression(
                     generatedLeft.Prelude + generatedRight.Prelude,
                     $"({generatedLeft.Code} {bin.Operator} {generatedRight.Code})",
                     GetExprType(expr));
+            case StructLiteralExpr structLiteral:
+                var generatedFields = structLiteral.Fields
+                    .Select(field => (field.Name, Generated: GenerateExpressionWithPrelude(field.Value)))
+                    .ToList();
+
+                if (generatedFields.All(field => string.IsNullOrEmpty(field.Generated.Prelude)))
+                {
+                    var fieldInitializers = string.Join(", ", generatedFields.Select(field => $".{field.Name} = {field.Generated.Code}"));
+                    return new GeneratedExpression(
+                        "",
+                        $"({MapType(structLiteral.TypeName)}){{ {fieldInitializers} }}",
+                        GetExprType(expr));
+                }
+
+                var structTemp = NewTemp("struct_literal");
+                var structPrelude = new StringBuilder();
+                structPrelude.AppendLine($"{MapType(structLiteral.TypeName)} {structTemp};");
+                foreach (var field in generatedFields)
+                {
+                    structPrelude.Append(field.Generated.Prelude);
+                    structPrelude.AppendLine($"{structTemp}.{field.Name} = {field.Generated.Code};");
+                }
+                return new GeneratedExpression(structPrelude.ToString(), structTemp, GetExprType(expr));
+            case ArrayLiteralExpr arrayLiteral:
+                var generatedElements = arrayLiteral.Elements.Select(GenerateExpressionWithPrelude).ToList();
+                var arrayType = MapTypeForSizeof(arrayLiteral.TypeName);
+                if (generatedElements.All(generatedElement => string.IsNullOrEmpty(generatedElement.Prelude)))
+                {
+                    var elementCodes = string.Join(", ", generatedElements.Select(generatedElement => generatedElement.Code));
+                    return new GeneratedExpression(
+                        "",
+                        $"({arrayType}){{ {elementCodes} }}",
+                        GetExprType(expr));
+                }
+
+                var arrayElementType = arrayLiteral.TypeName.Clone();
+                arrayElementType.ArraySize = null;
+                var arrayTemp = NewTemp("array_literal");
+                var arrayPrelude = new StringBuilder();
+                arrayPrelude.AppendLine($"{MapType(arrayElementType)} {arrayTemp}[{arrayLiteral.TypeName.ArraySize}];");
+                for (int i = 0; i < generatedElements.Count; i++)
+                {
+                    arrayPrelude.Append(generatedElements[i].Prelude);
+                    arrayPrelude.AppendLine($"{arrayTemp}[{i}] = {generatedElements[i].Code};");
+                }
+                return new GeneratedExpression(arrayPrelude.ToString(), arrayTemp, GetExprType(expr));
             case IndexExpr idx:
                 var generatedTargetExpr = GenerateExpressionWithPrelude(idx.Target);
                 var generatedIndex = GenerateExpressionWithPrelude(idx.Index);
@@ -952,7 +1066,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 if (targetType == null) return null;
                 return GetStructFieldType(targetType, field.Field);
             case BinaryExpr bin:
-                if (bin.Operator is "==" or "!=" or ">" or "<" or ">=" or "<=")
+                if (bin.Operator is "==" or "!=" or ">" or "<" or ">=" or "<=" or "&&" or "||")
                     return new TypeNode { Name = "bool" };
                 return GetExprType(bin.Left);
             case CallExpr call:
@@ -993,6 +1107,10 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 return null;
             case CastExpr cast:
                 return cast.TargetType.Clone();
+            case StructLiteralExpr structLiteral:
+                return structLiteral.TypeName.Clone();
+            case ArrayLiteralExpr arrayLiteral:
+                return arrayLiteral.TypeName.Clone();
             case CatchExpr catchExpr:
                 var catchLeftType = GetExprType(catchExpr.Left);
                 if (catchLeftType == null || !catchLeftType.IsErrorUnion)

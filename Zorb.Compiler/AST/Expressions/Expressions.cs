@@ -34,6 +34,24 @@ public class BinaryExpr : Expr
     public Expr Right { get; set; } = null!;
 }
 
+public class StructLiteralField
+{
+    public string Name { get; set; } = null!;
+    public Expr Value { get; set; } = null!;
+}
+
+public class StructLiteralExpr : Expr
+{
+    public TypeNode TypeName { get; set; } = null!;
+    public List<StructLiteralField> Fields { get; set; } = new();
+}
+
+public class ArrayLiteralExpr : Expr
+{
+    public TypeNode TypeName { get; set; } = null!;
+    public List<Expr> Elements { get; set; } = new();
+}
+
 public class IndexExpr : Expr
 {
     public Expr Target { get; set; } = null!;
