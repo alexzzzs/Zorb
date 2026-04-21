@@ -41,7 +41,7 @@ Publish a standalone compiler binary:
 Publish a version-stamped standalone Linux compiler build:
 
 ```bash
-VERSION=0.1.3-dev.42 INFORMATIONAL_VERSION=0.1.3-dev.42+abcdef12 ./scripts/publish-compiler-linux.sh
+VERSION=0.1.3 INFORMATIONAL_VERSION=0.1.3 ./scripts/publish-compiler-linux.sh
 ```
 
 On Windows PowerShell:
@@ -53,8 +53,8 @@ On Windows PowerShell:
 Publish a version-stamped standalone Windows compiler build:
 
 ```powershell
-$env:VERSION="0.1.3-dev.42"
-$env:INFORMATIONAL_VERSION="0.1.3-dev.42+abcdef12"
+$env:VERSION="0.1.3"
+$env:INFORMATIONAL_VERSION="0.1.3"
 ./scripts/publish-compiler-windows.ps1
 ```
 

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-04-21
+
 ### Added
 
 - Local fixed-size array value copies in declarations and assignments when source and target types match exactly.
