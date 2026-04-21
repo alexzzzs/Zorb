@@ -8,6 +8,62 @@ import c "windows.h"
 extern fn ExitProcess(uExitCode: u32) -> i32
 extern fn VirtualAlloc(addr: *u8, size: i64, type: u32, protect: u32) -> *u8
 
+export fn std.os.is_linux() -> bool {
+    if Builtin.IsLinux {
+        return true
+    }
+
+    return false
+}
+
+export fn std.os.is_windows() -> bool {
+    if Builtin.IsWindows {
+        return true
+    }
+
+    return false
+}
+
+export fn std.os.is_x86_64() -> bool {
+    if Builtin.IsX86_64 {
+        return true
+    }
+
+    return false
+}
+
+export fn std.os.is_aarch64() -> bool {
+    if Builtin.IsAArch64 {
+        return true
+    }
+
+    return false
+}
+
+export fn std.os.platform_name() -> string {
+    if Builtin.IsLinux {
+        return "linux"
+    }
+
+    if Builtin.IsWindows {
+        return "windows"
+    }
+
+    return "unknown"
+}
+
+export fn std.os.arch_name() -> string {
+    if Builtin.IsX86_64 {
+        return "x86_64"
+    }
+
+    if Builtin.IsAArch64 {
+        return "aarch64"
+    }
+
+    return "unknown"
+}
+
 export fn std.os.exit(code: i32) {
     if Builtin.IsLinux {
         if Builtin.IsX86_64 {
@@ -25,10 +81,10 @@ export fn std.os.exit(code: i32) {
 }
 
 export fn std.os.get_type() -> i32 {
-    if Builtin.IsLinux {
+    if std.os.is_linux() {
         return 1
     }
-    if Builtin.IsWindows {
+    if std.os.is_windows() {
         return 2
     }
     return 0

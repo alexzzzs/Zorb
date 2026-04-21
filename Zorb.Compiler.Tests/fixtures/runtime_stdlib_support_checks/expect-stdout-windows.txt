@@ -1,0 +1,3 @@
+windows x86_64
+task unsupported
+async unsupported

@@ -137,7 +137,9 @@ static CliWorkflowCase[] GetCliWorkflowCases()
             new CliWorkflowCase("runtime_host_platform_catch", "host-windows"),
             new CliWorkflowCase("runtime_host_import_alias", "host-windows"),
             new CliWorkflowCase("runtime_host_stderr_write", "host-windows"),
-            new CliWorkflowCase("runtime_host_nonzero_exit", "host-windows")
+            new CliWorkflowCase("runtime_host_nonzero_exit", "host-windows"),
+            new CliWorkflowCase("runtime_stdlib_cross_platform", "host-windows"),
+            new CliWorkflowCase("runtime_stdlib_support_checks", "host-windows")
         ];
     }
 
@@ -150,7 +152,9 @@ static CliWorkflowCase[] GetCliWorkflowCases()
             new CliWorkflowCase("runtime_host_platform_catch", "host-linux"),
             new CliWorkflowCase("runtime_host_import_alias", "host-linux"),
             new CliWorkflowCase("runtime_host_stderr_write", "host-linux"),
-            new CliWorkflowCase("runtime_host_nonzero_exit", "host-linux")
+            new CliWorkflowCase("runtime_host_nonzero_exit", "host-linux"),
+            new CliWorkflowCase("runtime_stdlib_cross_platform", "host-linux"),
+            new CliWorkflowCase("runtime_stdlib_support_checks", "host-linux")
         ];
     }
 
