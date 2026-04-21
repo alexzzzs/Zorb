@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Hosted Windows runtime fixture coverage for platform-branching, catch flows, imported-module execution, stderr writes, and nonzero exits.
+- New hosted-runtime fixtures for `runtime_host_platform_branch`, `runtime_host_platform_catch`, `runtime_host_import_alias`, `runtime_host_stderr_write`, and `runtime_host_nonzero_exit`.
+
+### Changed
+
+- The compiler fixture runner now supports Windows-specific runtime expectation files, stderr assertions, and target-aware runtime compilation for hosted Windows versus freestanding Linux paths.
+- Windows CLI workflow coverage now includes the hosted platform-branching, catch, import, stderr, and nonzero-exit fixtures in addition to the existing smoke fixtures.
+- Windows CI now runs the normal fixture suite instead of a separate smoke script, keeping Linux and Windows fixture coverage aligned.
+
 ## [0.1.3] - 2026-04-21
 
 ### Added

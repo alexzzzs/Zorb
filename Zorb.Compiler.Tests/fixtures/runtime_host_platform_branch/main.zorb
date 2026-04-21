@@ -1,0 +1,19 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn _start() {
+    if Builtin.IsWindows {
+        std.io.print("windows-host\n")
+        std.os.exit(0)
+        return
+    }
+
+    if Builtin.IsLinux {
+        std.io.print("linux-host\n")
+        std.os.exit(0)
+        return
+    }
+
+    std.io.print("unknown-host\n")
+    std.os.exit(1)
+}
