@@ -17,10 +17,9 @@ fn _start() {
 
     if std.async.is_supported() {
         std.io.print("async supported\n")
-        std.os.exit(0)
-        return
+    } else {
+        std.io.print("async unsupported\n")
     }
 
-    std.io.print("async unsupported\n")
     std.os.exit(0)
 }
