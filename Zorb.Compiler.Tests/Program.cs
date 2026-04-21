@@ -88,22 +88,22 @@ return 0;
 
 static void RunCliWorkflowTests(string fixtureRoot)
 {
-    if (!OperatingSystem.IsLinux())
-        throw new Exception("CLI workflow tests currently require a Linux host.");
-
-    EnsureToolAvailable("timeout");
-    EnsureToolAvailable("gcc");
-
-    var fixtureDir = Path.Combine(fixtureRoot, "runtime_hello_world");
-    var mainPath = Path.Combine(fixtureDir, "main.zorb");
-    var expectedStdOut = NormalizeNewlines(File.ReadAllText(Path.Combine(fixtureDir, "expect-stdout.txt"), Encoding.UTF8));
-    var expectedExit = int.Parse(File.ReadAllText(Path.Combine(fixtureDir, "expect-exit.txt"), Encoding.UTF8).Trim());
+    if (OperatingSystem.IsLinux())
+    {
+        EnsureToolAvailable("timeout");
+        EnsureToolAvailable("gcc");
+    }
+    else if (OperatingSystem.IsWindows())
+    {
+        EnsureToolAvailable("clang-cl", "cl");
+    }
+    else
+    {
+        throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
+    }
 
     var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    var configurationDir = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
-        ?? throw new Exception("Unable to determine test output configuration.");
-    var targetFrameworkDir = new DirectoryInfo(AppContext.BaseDirectory).Name;
-    var compilerExecutable = Path.Combine(projectRoot, "Zorb.Compiler", "bin", configurationDir, targetFrameworkDir, "Zorb.Compiler");
+    var compilerExecutable = GetCompilerExecutablePath(projectRoot);
     if (!File.Exists(compilerExecutable))
         throw new Exception($"Compiler executable was not found at '{compilerExecutable}'.");
 
@@ -112,48 +112,101 @@ static void RunCliWorkflowTests(string fixtureRoot)
 
     try
     {
-        var builtBinaryPath = Path.Combine(tempDir, "hello-world");
-        var keptCPath = Path.Combine(tempDir, "hello-world.c");
-
-        var build = RunProcess(
-            compilerExecutable,
-            $"build \"{mainPath}\" -o \"{builtBinaryPath}\" --keep-c \"{keptCPath}\"",
-            projectRoot);
-
-        if (build.ExitCode != 0)
-            throw new Exception($"CLI build failed with exit code {build.ExitCode}.{Environment.NewLine}{build.StdErr}{build.StdOut}".Trim());
-
-        if (!File.Exists(builtBinaryPath))
-            throw new Exception("CLI build did not produce the requested binary.");
-
-        if (!File.Exists(keptCPath))
-            throw new Exception("CLI build did not keep the requested C output.");
-
-        var builtExecution = RunProcess("timeout", $"30s \"{builtBinaryPath}\"", tempDir);
-        if (builtExecution.ExitCode != expectedExit)
-            throw new Exception($"Built binary exit code mismatch. Expected {expectedExit}, got {builtExecution.ExitCode}.");
-
-        var actualBuiltStdOut = NormalizeNewlines(builtExecution.StdOut);
-        if (!string.Equals(actualBuiltStdOut, expectedStdOut, StringComparison.Ordinal))
-            throw new Exception($"Built binary stdout mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdOut}{Environment.NewLine}Actual:{Environment.NewLine}{actualBuiltStdOut}");
-
-        var run = RunProcess(
-            compilerExecutable,
-            $"run \"{mainPath}\"",
-            projectRoot);
-
-        if (run.ExitCode != expectedExit)
-            throw new Exception($"CLI run exit code mismatch. Expected {expectedExit}, got {run.ExitCode}.{Environment.NewLine}{run.StdErr}{run.StdOut}".Trim());
-
-        var actualRunStdOut = NormalizeNewlines(run.StdOut);
-        if (!string.Equals(actualRunStdOut, expectedStdOut, StringComparison.Ordinal))
-            throw new Exception($"CLI run stdout mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdOut}{Environment.NewLine}Actual:{Environment.NewLine}{actualRunStdOut}");
+        foreach (var fixtureName in GetCliWorkflowFixtureNames())
+            RunCliWorkflowFixture(compilerExecutable, projectRoot, fixtureRoot, tempDir, fixtureName);
     }
     finally
     {
         if (Directory.Exists(tempDir))
             Directory.Delete(tempDir, recursive: true);
     }
+}
+
+static string[] GetCliWorkflowFixtureNames()
+{
+    if (OperatingSystem.IsWindows())
+    {
+        return
+        [
+            "runtime_hello_world",
+            "runtime_string_escapes",
+            "runtime_condition_catch"
+        ];
+    }
+
+    if (OperatingSystem.IsLinux())
+        return ["runtime_hello_world"];
+
+    throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
+}
+
+static void RunCliWorkflowFixture(string compilerExecutable, string projectRoot, string fixtureRoot, string tempDir, string fixtureName)
+{
+    var fixtureDir = Path.Combine(fixtureRoot, fixtureName);
+    var mainPath = Path.Combine(fixtureDir, "main.zorb");
+    var expectedStdOut = NormalizeNewlines(File.ReadAllText(Path.Combine(fixtureDir, "expect-stdout.txt"), Encoding.UTF8));
+    var expectedExit = int.Parse(File.ReadAllText(Path.Combine(fixtureDir, "expect-exit.txt"), Encoding.UTF8).Trim());
+
+    var fixtureTempDir = Path.Combine(tempDir, fixtureName);
+    Directory.CreateDirectory(fixtureTempDir);
+
+    var outputFileName = OperatingSystem.IsWindows() ? $"{fixtureName}.exe" : fixtureName;
+    var builtBinaryPath = Path.Combine(fixtureTempDir, outputFileName);
+    var keptCPath = Path.Combine(fixtureTempDir, $"{fixtureName}.c");
+
+    var build = RunProcess(
+        compilerExecutable,
+        $"build \"{mainPath}\" -o \"{builtBinaryPath}\" --keep-c \"{keptCPath}\"",
+        projectRoot);
+
+    if (build.ExitCode != 0)
+        throw new Exception($"CLI build failed for fixture '{fixtureName}' with exit code {build.ExitCode}.{Environment.NewLine}{build.StdErr}{build.StdOut}".Trim());
+
+    if (!File.Exists(builtBinaryPath))
+        throw new Exception($"CLI build for fixture '{fixtureName}' did not produce the requested binary.");
+
+    if (!File.Exists(keptCPath))
+        throw new Exception($"CLI build for fixture '{fixtureName}' did not keep the requested C output.");
+
+    var builtExecution = RunBuiltCliBinary(builtBinaryPath, fixtureTempDir);
+    if (builtExecution.ExitCode != expectedExit)
+        throw new Exception($"Built fixture '{fixtureName}' exit code mismatch. Expected {expectedExit}, got {builtExecution.ExitCode}.");
+
+    var actualBuiltStdOut = NormalizeNewlines(builtExecution.StdOut);
+    if (!string.Equals(actualBuiltStdOut, expectedStdOut, StringComparison.Ordinal))
+        throw new Exception($"Built fixture '{fixtureName}' stdout mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdOut}{Environment.NewLine}Actual:{Environment.NewLine}{actualBuiltStdOut}");
+
+    var run = RunProcess(
+        compilerExecutable,
+        $"run \"{mainPath}\"",
+        projectRoot);
+
+    if (run.ExitCode != expectedExit)
+        throw new Exception($"CLI run for fixture '{fixtureName}' exit code mismatch. Expected {expectedExit}, got {run.ExitCode}.{Environment.NewLine}{run.StdErr}{run.StdOut}".Trim());
+
+    var actualRunStdOut = NormalizeNewlines(run.StdOut);
+    if (!string.Equals(actualRunStdOut, expectedStdOut, StringComparison.Ordinal))
+        throw new Exception($"CLI run for fixture '{fixtureName}' stdout mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdOut}{Environment.NewLine}Actual:{Environment.NewLine}{actualRunStdOut}");
+}
+
+static ProcessResult RunBuiltCliBinary(string builtBinaryPath, string workingDirectory)
+{
+    if (OperatingSystem.IsLinux())
+        return RunProcess("timeout", $"30s \"{builtBinaryPath}\"", workingDirectory);
+
+    if (OperatingSystem.IsWindows())
+        return RunProcess(builtBinaryPath, "", workingDirectory);
+
+    throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
+}
+
+static string GetCompilerExecutablePath(string projectRoot)
+{
+    var configurationDir = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
+        ?? throw new Exception("Unable to determine test output configuration.");
+    var targetFrameworkDir = new DirectoryInfo(AppContext.BaseDirectory).Name;
+    var executableName = OperatingSystem.IsWindows() ? "Zorb.Compiler.exe" : "Zorb.Compiler";
+    return Path.Combine(projectRoot, "Zorb.Compiler", "bin", configurationDir, targetFrameworkDir, executableName);
 }
 
 static void RunExampleCompilationTest(string examplePath)
@@ -518,11 +571,23 @@ static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeEx
     }
 }
 
-static void EnsureToolAvailable(string toolName)
+static string EnsureToolAvailable(params string[] toolNames)
 {
-    var check = RunProcess("which", toolName, Directory.GetCurrentDirectory());
-    if (check.ExitCode != 0 || string.IsNullOrWhiteSpace(check.StdOut))
-        throw new Exception($"Required runtime tool '{toolName}' was not found in PATH.");
+    if (toolNames.Length == 0)
+        throw new ArgumentException("At least one tool name must be provided.", nameof(toolNames));
+
+    var locator = OperatingSystem.IsWindows() ? "where" : "which";
+    foreach (var toolName in toolNames)
+    {
+        var check = RunProcess(locator, toolName, Directory.GetCurrentDirectory());
+        if (check.ExitCode == 0 && !string.IsNullOrWhiteSpace(check.StdOut))
+            return toolName;
+    }
+
+    if (toolNames.Length == 1)
+        throw new Exception($"Required runtime tool '{toolNames[0]}' was not found in PATH.");
+
+    throw new Exception($"Required runtime tools were not found in PATH. Install one of: {string.Join(", ", toolNames)}.");
 }
 
 static ProcessResult RunProcess(string fileName, string arguments, string workingDirectory)
