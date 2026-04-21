@@ -26,6 +26,13 @@ The compiler supports a focused language subset:
 
 The current semantic source of truth is [SEMANTICS.md](./SEMANTICS.md).
 
+Cross-platform stdlib helpers currently include:
+
+- `std.os.is_linux()`, `std.os.is_windows()`, `std.os.platform_name()`
+- `std.os.is_x86_64()`, `std.os.is_aarch64()`, `std.os.arch_name()`
+- `std.io.print(...)`, `std.io.println(...)`, `std.io.eprint(...)`, `std.io.eprintln(...)`
+- `std.task.is_supported()` and `std.async.is_supported()` for checking runtime capability before using task or async features
+
 ## Build
 
 ```bash
@@ -223,7 +230,7 @@ Current checked-in examples:
 
 - [`examples/basics/import_alias/main.zorb`](./examples/basics/import_alias/main.zorb): import aliasing with a sibling module.
 - [`examples/basics/error_catch.zorb`](./examples/basics/error_catch.zorb): error unions with `catch`, `std.io`, and `std.os`.
-- [`examples/basics/platform_info.zorb`](./examples/basics/platform_info.zorb): portable stdlib output that branches on the active host platform.
+- [`examples/basics/platform_info.zorb`](./examples/basics/platform_info.zorb): cross-platform stdlib helpers for platform detection, stdout, and stderr.
 - [`examples/basics/literals.zorb`](./examples/basics/literals.zorb): typed struct and array literals combined with logical operators.
 - [`examples/advanced/threads.zorb`](./examples/advanced/threads.zorb): lower-level task/thread setup using inline assembly and Linux syscalls.
 

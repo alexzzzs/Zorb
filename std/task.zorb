@@ -18,6 +18,22 @@ export scheduler_sp: *u8 = cast(*u8, 0)
 // The fix: track active fibers
 export active_fibers: i64 = 0
 
+export fn std.task.is_supported() -> bool {
+    if Builtin.IsX86_64 {
+        if !Builtin.IsWindows {
+            return true
+        }
+
+        return false
+    }
+
+    if Builtin.IsAArch64 {
+        return true
+    }
+
+    return false
+}
+
 fn std.task.context_switch_barrier() {
     if Builtin.IsX86_64 {
         asm {
@@ -156,6 +172,10 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
 }
 
 export fn std.task.yield() {
+    if !std.task.is_supported() {
+        return
+    }
+
     std.task.enqueue(current_fiber)
     std.task.yield_to_scheduler()
 }
