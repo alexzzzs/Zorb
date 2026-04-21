@@ -1,0 +1,7 @@
+import "../../../std/os.zorb"
+import "lib.zorb"
+
+fn _start() {
+    host.print_host_banner()
+    std.os.exit(host.exit_code())
+}
