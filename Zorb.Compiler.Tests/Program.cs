@@ -9,7 +9,8 @@ using Zorb.Compiler.Parsing;
 using Zorb.Compiler.Semantic;
 using Zorb.Compiler.Utils;
 
-var fixtureRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "fixtures"));
+var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
+var fixtureRoot = Path.Combine(testProjectRoot, "fixtures");
 var fixtureDirs = Directory.GetDirectories(fixtureRoot).OrderBy(path => path, StringComparer.Ordinal).ToList();
 var failures = new List<string>();
 var updateSnapshots = args.Contains("--update-snapshots", StringComparer.Ordinal);
@@ -41,7 +42,8 @@ catch (Exception ex)
     Console.WriteLine("FAIL cli_workflow");
 }
 
-var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
+    ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
 var examplesRoot = Path.Combine(projectRoot, "examples");
 var examplePaths = Directory.EnumerateFiles(examplesRoot, "*.zorb", SearchOption.AllDirectories)
     .Where(path =>
@@ -102,10 +104,10 @@ static void RunCliWorkflowTests(string fixtureRoot)
         throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
     }
 
-    var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    var compilerExecutable = GetCompilerExecutablePath(projectRoot);
-    if (!File.Exists(compilerExecutable))
-        throw new Exception($"Compiler executable was not found at '{compilerExecutable}'.");
+    var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
+    var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
+        ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
+    var compilerInvocation = GetCompilerInvocation(projectRoot);
 
     var tempDir = Path.Combine(Path.GetTempPath(), "zorb-cli-tests", Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(tempDir);
@@ -113,7 +115,7 @@ static void RunCliWorkflowTests(string fixtureRoot)
     try
     {
         foreach (var fixtureName in GetCliWorkflowFixtureNames())
-            RunCliWorkflowFixture(compilerExecutable, projectRoot, fixtureRoot, tempDir, fixtureName);
+            RunCliWorkflowFixture(compilerInvocation, projectRoot, fixtureRoot, tempDir, fixtureName);
     }
     finally
     {
@@ -130,7 +132,12 @@ static string[] GetCliWorkflowFixtureNames()
         [
             "runtime_hello_world",
             "runtime_string_escapes",
-            "runtime_condition_catch"
+            "runtime_condition_catch",
+            "runtime_host_platform_branch",
+            "runtime_host_platform_catch",
+            "runtime_host_import_alias",
+            "runtime_host_stderr_write",
+            "runtime_host_nonzero_exit"
         ];
     }
 
@@ -140,12 +147,15 @@ static string[] GetCliWorkflowFixtureNames()
     throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
 }
 
-static void RunCliWorkflowFixture(string compilerExecutable, string projectRoot, string fixtureRoot, string tempDir, string fixtureName)
+static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string projectRoot, string fixtureRoot, string tempDir, string fixtureName)
 {
     var fixtureDir = Path.Combine(fixtureRoot, fixtureName);
     var mainPath = Path.Combine(fixtureDir, "main.zorb");
-    var expectedStdOut = NormalizeNewlines(File.ReadAllText(Path.Combine(fixtureDir, "expect-stdout.txt"), Encoding.UTF8));
-    var expectedExit = int.Parse(File.ReadAllText(Path.Combine(fixtureDir, "expect-exit.txt"), Encoding.UTF8).Trim());
+    var cliTargetName = OperatingSystem.IsWindows() ? "host-windows" : "host-linux";
+    var cliExpectation = ReadCliWorkflowExpectation(fixtureDir, cliTargetName);
+    var expectedStdOut = cliExpectation.ExpectedStdOut ?? "";
+    var expectedStdErr = cliExpectation.ExpectedStdErr ?? "";
+    var expectedExit = cliExpectation.ExpectedExit;
 
     var fixtureTempDir = Path.Combine(tempDir, fixtureName);
     Directory.CreateDirectory(fixtureTempDir);
@@ -155,8 +165,8 @@ static void RunCliWorkflowFixture(string compilerExecutable, string projectRoot,
     var keptCPath = Path.Combine(fixtureTempDir, $"{fixtureName}.c");
 
     var build = RunProcessWithTimeout(
-        compilerExecutable,
-        $"build \"{mainPath}\" -o \"{builtBinaryPath}\" --keep-c \"{keptCPath}\"",
+        compilerInvocation.FileName,
+        CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"build \"{mainPath}\" -o \"{builtBinaryPath}\" --keep-c \"{keptCPath}\""),
         projectRoot,
         TimeSpan.FromSeconds(30));
 
@@ -174,12 +184,15 @@ static void RunCliWorkflowFixture(string compilerExecutable, string projectRoot,
         throw new Exception($"Built fixture '{fixtureName}' exit code mismatch. Expected {expectedExit}, got {builtExecution.ExitCode}.");
 
     var actualBuiltStdOut = NormalizeNewlines(builtExecution.StdOut);
+    var actualBuiltStdErr = NormalizeNewlines(builtExecution.StdErr);
     if (!string.Equals(actualBuiltStdOut, expectedStdOut, StringComparison.Ordinal))
         throw new Exception($"Built fixture '{fixtureName}' stdout mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdOut}{Environment.NewLine}Actual:{Environment.NewLine}{actualBuiltStdOut}");
+    if (!string.Equals(actualBuiltStdErr, expectedStdErr, StringComparison.Ordinal))
+        throw new Exception($"Built fixture '{fixtureName}' stderr mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdErr}{Environment.NewLine}Actual:{Environment.NewLine}{actualBuiltStdErr}");
 
     var run = RunProcessWithTimeout(
-        compilerExecutable,
-        $"run \"{mainPath}\"",
+        compilerInvocation.FileName,
+        CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"run \"{mainPath}\""),
         projectRoot,
         TimeSpan.FromSeconds(30));
 
@@ -187,8 +200,11 @@ static void RunCliWorkflowFixture(string compilerExecutable, string projectRoot,
         throw new Exception($"CLI run for fixture '{fixtureName}' exit code mismatch. Expected {expectedExit}, got {run.ExitCode}.{Environment.NewLine}{run.StdErr}{run.StdOut}".Trim());
 
     var actualRunStdOut = NormalizeNewlines(run.StdOut);
+    var actualRunStdErr = NormalizeNewlines(run.StdErr);
     if (!string.Equals(actualRunStdOut, expectedStdOut, StringComparison.Ordinal))
         throw new Exception($"CLI run for fixture '{fixtureName}' stdout mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdOut}{Environment.NewLine}Actual:{Environment.NewLine}{actualRunStdOut}");
+    if (!string.Equals(actualRunStdErr, expectedStdErr, StringComparison.Ordinal))
+        throw new Exception($"CLI run for fixture '{fixtureName}' stderr mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdErr}{Environment.NewLine}Actual:{Environment.NewLine}{actualRunStdErr}");
 }
 
 static ProcessResult RunBuiltCliBinary(string builtBinaryPath, string workingDirectory)
@@ -202,13 +218,42 @@ static ProcessResult RunBuiltCliBinary(string builtBinaryPath, string workingDir
     throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
 }
 
-static string GetCompilerExecutablePath(string projectRoot)
+static CompilerInvocation GetCompilerInvocation(string projectRoot)
 {
     var configurationDir = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
         ?? throw new Exception("Unable to determine test output configuration.");
     var targetFrameworkDir = new DirectoryInfo(AppContext.BaseDirectory).Name;
+    var outputDir = Path.Combine(projectRoot, "Zorb.Compiler", "bin", configurationDir, targetFrameworkDir);
+    foreach (var invocation in GetCandidateCompilerInvocations(AppContext.BaseDirectory))
+    {
+        if (CompilerInvocationExists(invocation))
+            return invocation;
+    }
+
+    foreach (var invocation in GetCandidateCompilerInvocations(outputDir))
+    {
+        if (CompilerInvocationExists(invocation))
+            return invocation;
+    }
+
+    throw new Exception(
+        $"Compiler executable was not found in either '{AppContext.BaseDirectory}' or '{outputDir}'.");
+}
+
+static IEnumerable<CompilerInvocation> GetCandidateCompilerInvocations(string directory)
+{
     var executableName = OperatingSystem.IsWindows() ? "Zorb.Compiler.exe" : "Zorb.Compiler";
-    return Path.Combine(projectRoot, "Zorb.Compiler", "bin", configurationDir, targetFrameworkDir, executableName);
+    yield return new CompilerInvocation(Path.Combine(directory, executableName), "");
+    yield return new CompilerInvocation("dotnet", $"\"{Path.Combine(directory, "Zorb.Compiler.dll")}\"");
+}
+
+static bool CompilerInvocationExists(CompilerInvocation invocation)
+{
+    if (!string.Equals(invocation.FileName, "dotnet", StringComparison.Ordinal))
+        return File.Exists(invocation.FileName);
+
+    var dllPath = invocation.ArgumentsPrefix.Trim().Trim('"');
+    return File.Exists(dllPath);
 }
 
 static void RunExampleCompilationTest(string examplePath)
@@ -264,10 +309,10 @@ static void RunFixture(string fixtureDir, bool updateSnapshots)
 
     var generated = compilation.Result.Generated;
 
-    foreach (var expected in ReadExpectationLines(fixtureDir, "expect-generated.txt"))
+    foreach (var expected in ReadExpectationLinesForCurrentHost(fixtureDir, "expect-generated.txt"))
         AssertTextContains(generated, expected);
 
-    var snapshotPath = Path.Combine(fixtureDir, "expect-generated-full.c");
+    var snapshotPath = ResolveExpectationPathForCurrentHost(fixtureDir, "expect-generated-full.c");
     if (File.Exists(snapshotPath))
     {
         if (updateSnapshots)
@@ -282,7 +327,7 @@ static void RunFixture(string fixtureDir, bool updateSnapshots)
         }
     }
 
-    foreach (var line in ReadExpectationLines(fixtureDir, "expect-generated-counts.txt"))
+    foreach (var line in ReadExpectationLinesForCurrentHost(fixtureDir, "expect-generated-counts.txt"))
     {
         var separatorIndex = line.LastIndexOf("=>", StringComparison.Ordinal);
         if (separatorIndex < 0)
@@ -330,17 +375,30 @@ static void RunRuntimeExpectationsIfPresent(string fixtureDir, string mainPath)
     if (runtimeExpectations.Count == 0)
         return;
 
-    var runtimeCompilation = CompileRuntimeFixture(mainPath, fixtureDir);
-    AssertNoErrors(runtimeCompilation.ParseErrors);
-    AssertNoErrors(runtimeCompilation.Checker.Errors.Errors);
+    var runnableExpectations = runtimeExpectations
+        .Where(IsRuntimeExpectationRunnableOnCurrentHost)
+        .ToList();
+    if (runnableExpectations.Count == 0)
+        return;
 
-    foreach (var runtimeExpectation in runtimeExpectations)
+    var runtimeCompilations = new Dictionary<(bool PreserveStart, bool NoStdLib), FixtureCompilation>();
+
+    foreach (var runtimeExpectation in runnableExpectations)
     {
+        var compilationKey = GetRuntimeCompilationOptions(runtimeExpectation.TargetName);
+        if (!runtimeCompilations.TryGetValue(compilationKey, out var runtimeCompilation))
+        {
+            runtimeCompilation = CompileRuntimeFixture(mainPath, fixtureDir, compilationKey.PreserveStart, compilationKey.NoStdLib);
+            AssertNoErrors(runtimeCompilation.ParseErrors);
+            AssertNoErrors(runtimeCompilation.Checker.Errors.Errors);
+            runtimeCompilations[compilationKey] = runtimeCompilation;
+        }
+
         RunRuntimeExpectation(fixtureDir, runtimeCompilation.Generated, runtimeExpectation);
     }
 }
 
-static FixtureCompilation CompileRuntimeFixture(string mainPath, string fixtureDir)
+static FixtureCompilation CompileRuntimeFixture(string mainPath, string fixtureDir, bool preserveStart, bool noStdLib)
 {
     var ast = ParseFile(mainPath, out var parseErrors);
     if (parseErrors.Count > 0)
@@ -355,8 +413,8 @@ static FixtureCompilation CompileRuntimeFixture(string mainPath, string fixtureD
     {
         var generator = new CGenerator(fixtureDir, checker.SymbolTable)
         {
-            PreserveStart = true,
-            NoStdLib = true
+            PreserveStart = preserveStart,
+            NoStdLib = noStdLib
         };
         var generated = generator.Generate(ast);
         return new FixtureCompilation(ast, parseErrors, checker, generated, FixturePhase.Success, null);
@@ -384,6 +442,27 @@ static List<string> ReadExpectationLines(string fixtureDir, string fileName)
         .Select(line => line.Trim())
         .Where(line => line.Length > 0 && !line.StartsWith("#", StringComparison.Ordinal))
         .ToList();
+}
+
+static List<string> ReadExpectationLinesForCurrentHost(string fixtureDir, string fileName)
+{
+    var path = ResolveExpectationPathForCurrentHost(fixtureDir, fileName);
+    if (!File.Exists(path))
+        return new List<string>();
+
+    return File.ReadAllLines(path, Encoding.UTF8)
+        .Select(line => line.Trim())
+        .Where(line => line.Length > 0 && !line.StartsWith("#", StringComparison.Ordinal))
+        .ToList();
+}
+
+static string ResolveExpectationPathForCurrentHost(string fixtureDir, string fileName)
+{
+    var genericPath = Path.Combine(fixtureDir, fileName);
+    var hostSuffix = OperatingSystem.IsWindows() ? "-windows" : "-linux";
+    var hostSpecificFileName = Path.GetFileNameWithoutExtension(fileName) + hostSuffix + Path.GetExtension(fileName);
+    var hostSpecificPath = Path.Combine(fixtureDir, hostSpecificFileName);
+    return File.Exists(hostSpecificPath) ? hostSpecificPath : genericPath;
 }
 
 static void AssertNoErrors(List<string> errors)
@@ -474,33 +553,90 @@ static List<RuntimeExpectation> ReadRuntimeExpectations(string fixtureDir)
 {
     var expectations = new List<RuntimeExpectation>();
     var hostStdOutPath = Path.Combine(fixtureDir, "expect-stdout.txt");
+    var hostStdErrPath = Path.Combine(fixtureDir, "expect-stderr.txt");
     var hostExitPath = Path.Combine(fixtureDir, "expect-exit.txt");
-    if (File.Exists(hostStdOutPath) || File.Exists(hostExitPath))
+    if (File.Exists(hostStdOutPath) || File.Exists(hostStdErrPath) || File.Exists(hostExitPath))
     {
         expectations.Add(new RuntimeExpectation(
             "host-linux",
             File.Exists(hostStdOutPath) ? NormalizeNewlines(File.ReadAllText(hostStdOutPath, Encoding.UTF8)) : null,
+            File.Exists(hostStdErrPath) ? NormalizeNewlines(File.ReadAllText(hostStdErrPath, Encoding.UTF8)) : null,
             File.Exists(hostExitPath) ? int.Parse(File.ReadAllText(hostExitPath, Encoding.UTF8).Trim()) : 0));
     }
 
+    var windowsStdOutPath = Path.Combine(fixtureDir, "expect-stdout-windows.txt");
+    var windowsStdErrPath = Path.Combine(fixtureDir, "expect-stderr-windows.txt");
+    var windowsExitPath = Path.Combine(fixtureDir, "expect-exit-windows.txt");
+    if (File.Exists(windowsStdOutPath) || File.Exists(windowsStdErrPath) || File.Exists(windowsExitPath))
+    {
+        expectations.Add(new RuntimeExpectation(
+            "host-windows",
+            File.Exists(windowsStdOutPath)
+                ? NormalizeNewlines(File.ReadAllText(windowsStdOutPath, Encoding.UTF8))
+                : (File.Exists(hostStdOutPath) ? NormalizeNewlines(File.ReadAllText(hostStdOutPath, Encoding.UTF8)) : null),
+            File.Exists(windowsStdErrPath)
+                ? NormalizeNewlines(File.ReadAllText(windowsStdErrPath, Encoding.UTF8))
+                : (File.Exists(hostStdErrPath) ? NormalizeNewlines(File.ReadAllText(hostStdErrPath, Encoding.UTF8)) : null),
+            File.Exists(windowsExitPath)
+                ? int.Parse(File.ReadAllText(windowsExitPath, Encoding.UTF8).Trim())
+                : (File.Exists(hostExitPath) ? int.Parse(File.ReadAllText(hostExitPath, Encoding.UTF8).Trim()) : 0)));
+    }
+
     var aarch64StdOutPath = Path.Combine(fixtureDir, "expect-stdout-aarch64.txt");
+    var aarch64StdErrPath = Path.Combine(fixtureDir, "expect-stderr-aarch64.txt");
     var aarch64ExitPath = Path.Combine(fixtureDir, "expect-exit-aarch64.txt");
-    if (File.Exists(aarch64StdOutPath) || File.Exists(aarch64ExitPath))
+    if (File.Exists(aarch64StdOutPath) || File.Exists(aarch64StdErrPath) || File.Exists(aarch64ExitPath))
     {
         expectations.Add(new RuntimeExpectation(
             "linux-aarch64",
             File.Exists(aarch64StdOutPath) ? NormalizeNewlines(File.ReadAllText(aarch64StdOutPath, Encoding.UTF8)) : null,
+            File.Exists(aarch64StdErrPath) ? NormalizeNewlines(File.ReadAllText(aarch64StdErrPath, Encoding.UTF8)) : null,
             File.Exists(aarch64ExitPath) ? int.Parse(File.ReadAllText(aarch64ExitPath, Encoding.UTF8).Trim()) : 0));
     }
 
     return expectations;
 }
 
+static RuntimeExpectation ReadCliWorkflowExpectation(string fixtureDir, string targetName)
+{
+    var expectations = ReadRuntimeExpectations(fixtureDir);
+    var expectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, targetName, StringComparison.Ordinal));
+    if (expectation != null)
+        return expectation;
+
+    if (string.Equals(targetName, "host-windows", StringComparison.Ordinal))
+    {
+        var hostLinuxExpectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "host-linux", StringComparison.Ordinal));
+        if (hostLinuxExpectation != null)
+            return hostLinuxExpectation;
+    }
+
+    throw new Exception($"Fixture '{Path.GetFileName(fixtureDir)}' is missing runtime expectations for CLI target '{targetName}'.");
+}
+
+static bool IsRuntimeExpectationRunnableOnCurrentHost(RuntimeExpectation runtimeExpectation)
+{
+    return runtimeExpectation.TargetName switch
+    {
+        "host-linux" or "linux-aarch64" => OperatingSystem.IsLinux(),
+        "host-windows" => OperatingSystem.IsWindows(),
+        _ => false
+    };
+}
+
+static (bool PreserveStart, bool NoStdLib) GetRuntimeCompilationOptions(string targetName)
+{
+    return targetName switch
+    {
+        "host-linux" => (PreserveStart: true, NoStdLib: true),
+        "linux-aarch64" => (PreserveStart: true, NoStdLib: true),
+        "host-windows" => (PreserveStart: false, NoStdLib: false),
+        _ => throw new Exception($"Unknown runtime target '{targetName}'.")
+    };
+}
+
 static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeExpectation runtimeExpectation)
 {
-    if (!OperatingSystem.IsLinux())
-        throw new Exception($"Runtime fixture execution for target '{runtimeExpectation.TargetName}' is currently supported only on Linux hosts.");
-
     var tempDir = Path.Combine(
         Path.GetTempPath(),
         "zorb-runtime-fixtures",
@@ -546,12 +682,28 @@ static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeEx
 
             execution = RunProcess("timeout", $"30s qemu-aarch64 \"{binaryPath}\"", tempDir);
         }
+        else if (runtimeExpectation.TargetName == "host-windows")
+        {
+            var compiler = EnsureToolAvailable("clang-cl", "cl");
+
+            var binaryPath = Path.Combine(tempDir, "out.exe");
+            compile = RunProcess(
+                compiler,
+                GetWindowsCompileArguments(compiler, sourcePath, binaryPath),
+                tempDir);
+
+            if (compile.ExitCode != 0)
+                throw new Exception($"Runtime Windows compile failed with exit code {compile.ExitCode}.{Environment.NewLine}{compile.StdErr}{compile.StdOut}".Trim());
+
+            execution = RunProcessWithTimeout(binaryPath, "", tempDir, TimeSpan.FromSeconds(30));
+        }
         else
         {
             throw new Exception($"Unknown runtime target '{runtimeExpectation.TargetName}'.");
         }
 
         var actualStdOut = NormalizeNewlines(execution.StdOut);
+        var actualStdErr = NormalizeNewlines(execution.StdErr);
 
         if (execution.ExitCode != runtimeExpectation.ExpectedExit)
         {
@@ -564,6 +716,13 @@ static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeEx
         {
             throw new Exception(
                 $"Target '{runtimeExpectation.TargetName}' runtime stdout did not match expectation.{Environment.NewLine}Expected:{Environment.NewLine}{runtimeExpectation.ExpectedStdOut}{Environment.NewLine}Actual:{Environment.NewLine}{actualStdOut}");
+        }
+
+        if (runtimeExpectation.ExpectedStdErr != null &&
+            !string.Equals(actualStdErr, runtimeExpectation.ExpectedStdErr, StringComparison.Ordinal))
+        {
+            throw new Exception(
+                $"Target '{runtimeExpectation.TargetName}' runtime stderr did not match expectation.{Environment.NewLine}Expected:{Environment.NewLine}{runtimeExpectation.ExpectedStdErr}{Environment.NewLine}Actual:{Environment.NewLine}{actualStdErr}");
         }
     }
     finally
@@ -590,6 +749,31 @@ static string EnsureToolAvailable(params string[] toolNames)
         throw new Exception($"Required runtime tool '{toolNames[0]}' was not found in PATH.");
 
     throw new Exception($"Required runtime tools were not found in PATH. Install one of: {string.Join(", ", toolNames)}.");
+}
+
+static string FindAncestorContainingFile(string startPath, string fileName)
+{
+    var current = new DirectoryInfo(Path.GetFullPath(startPath));
+    while (current != null)
+    {
+        var candidate = Path.Combine(current.FullName, fileName);
+        if (File.Exists(candidate))
+            return current.FullName;
+
+        current = current.Parent;
+    }
+
+    throw new Exception($"Unable to locate '{fileName}' from '{startPath}'.");
+}
+
+static string GetWindowsCompileArguments(string compiler, string cSourcePath, string outputPath)
+{
+    return compiler switch
+    {
+        "clang-cl" => $"/nologo /TC /O2 \"{cSourcePath}\" /Fe:\"{outputPath}\" /link kernel32.lib",
+        "cl" => $"/nologo /TC /O2 \"{cSourcePath}\" /Fe:\"{outputPath}\" /link kernel32.lib",
+        _ => throw new Exception($"Unsupported Windows compiler '{compiler}'.")
+    };
 }
 
 static ProcessResult RunProcess(string fileName, string arguments, string workingDirectory)
@@ -638,6 +822,17 @@ static ProcessResult RunProcessCore(string fileName, string arguments, string wo
     return new ProcessResult(process.ExitCode, stdOutTask.Result, stdErrTask.Result);
 }
 
+static string CombineCommandArguments(string prefix, string arguments)
+{
+    if (string.IsNullOrEmpty(prefix))
+        return arguments;
+
+    if (string.IsNullOrEmpty(arguments))
+        return prefix;
+
+    return prefix + " " + arguments;
+}
+
 enum FixturePhase
 {
     Success,
@@ -658,4 +853,6 @@ sealed record CapturedCompilation(FixtureCompilation Result, string StdOut, stri
 
 sealed record ProcessResult(int ExitCode, string StdOut, string StdErr);
 
-sealed record RuntimeExpectation(string TargetName, string? ExpectedStdOut, int ExpectedExit);
+sealed record RuntimeExpectation(string TargetName, string? ExpectedStdOut, string? ExpectedStdErr, int ExpectedExit);
+
+sealed record CompilerInvocation(string FileName, string ArgumentsPrefix);

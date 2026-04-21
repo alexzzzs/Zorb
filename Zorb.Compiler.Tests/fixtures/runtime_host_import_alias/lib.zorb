@@ -1,0 +1,21 @@
+import "../../../std/io.zorb"
+
+export struct host {}
+
+export fn host.print_host_banner() {
+    if Builtin.IsWindows {
+        std.io.print("imports windows\n")
+        return
+    }
+
+    if Builtin.IsLinux {
+        std.io.print("imports linux\n")
+        return
+    }
+
+    std.io.print("imports unknown\n")
+}
+
+export fn host.exit_code() -> i32 {
+    return 0
+}
