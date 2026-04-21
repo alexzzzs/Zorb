@@ -727,12 +727,13 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         elementType.ArraySize = null;
 
         var elementPointerType = AddressOfType(elementType);
+        var restrictedElementPointerType = $"{MapType(elementPointerType)} restrict";
         var targetTemp = NewTemp("array_copy_target");
         var sourceTemp = NewTemp("array_copy_source");
         var indexTemp = NewTemp("array_copy_index");
 
-        sb.AppendLine($"{MapType(elementPointerType, targetTemp)} = {targetCode};");
-        sb.AppendLine($"{MapType(elementPointerType, sourceTemp)} = {sourceCode};");
+        sb.AppendLine($"{restrictedElementPointerType} {targetTemp} = {targetCode};");
+        sb.AppendLine($"{restrictedElementPointerType} {sourceTemp} = {sourceCode};");
         sb.AppendLine($"for (int {indexTemp} = 0; {indexTemp} < {arrayLength}; {indexTemp}++) {{");
         sb.AppendLine($"    {targetTemp}[{indexTemp}] = {sourceTemp}[{indexTemp}];");
         sb.Append("}");

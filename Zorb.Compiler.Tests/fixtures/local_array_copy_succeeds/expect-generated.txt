@@ -1,0 +1,6 @@
+uint8_t copy[4];
+uint8_t* restrict __zorb_array_copy_target_0 = copy;
+uint8_t* restrict __zorb_array_copy_source_1 = source;
+for (int __zorb_array_copy_index_2 = 0; __zorb_array_copy_index_2 < 4; __zorb_array_copy_index_2++) {
+__zorb_array_copy_target_0[__zorb_array_copy_index_2] = __zorb_array_copy_source_1[__zorb_array_copy_index_2];
+}

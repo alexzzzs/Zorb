@@ -1,1 +1,0 @@
-# Array copy from another local value is now supported.
