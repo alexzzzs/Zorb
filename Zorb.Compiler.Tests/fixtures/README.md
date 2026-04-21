@@ -14,8 +14,13 @@ Optional files control what the test expects:
 - `expect-generated-counts.txt`
 - `expect-generated-full.c`
 - `expect-stdout.txt`
+- `expect-stderr.txt`
 - `expect-exit.txt`
+- `expect-stdout-windows.txt`
+- `expect-stderr-windows.txt`
+- `expect-exit-windows.txt`
 - `expect-stdout-aarch64.txt`
+- `expect-stderr-aarch64.txt`
 - `expect-exit-aarch64.txt`
 
 ## Default Behavior
@@ -104,7 +109,7 @@ The runner compares the generated text to this file exactly, after newline norma
 
 ## Runtime Expectations
 
-If either runtime expectation file is present, the runner also:
+If either Linux host runtime expectation file is present, the runner also:
 
 1. regenerates the fixture with `_start` preserved and `-nostdlib` semantics enabled
 2. compiles the generated C with:
@@ -119,11 +124,37 @@ gcc -O2 -nostdlib -fno-pie -no-pie -z execstack -fno-builtin out.c -o out
 
 This file is matched against the program's stdout exactly after newline normalization.
 
+### `expect-stderr.txt`
+
+This file is matched against the program's stderr exactly after newline normalization.
+
 ### `expect-exit.txt`
 
 This file contains the expected integer process exit code.
 
 If `expect-exit.txt` is omitted but runtime expectations are enabled, the runner assumes exit code `0`.
+
+### `expect-stdout-windows.txt`
+
+This enables an additional hosted Windows runtime pass for the fixture when the suite is run on a Windows host.
+
+The runner will:
+
+1. regenerate the fixture with hosted output enabled
+2. compile the generated C with `clang-cl` or `cl`
+3. execute the resulting `.exe`
+
+Stdout is matched exactly after newline normalization.
+
+### `expect-stderr-windows.txt`
+
+This file is matched against the hosted Windows runtime pass stderr exactly after newline normalization.
+
+### `expect-exit-windows.txt`
+
+This contains the expected integer process exit code for the hosted Windows runtime pass.
+
+If `expect-exit-windows.txt` is omitted but hosted Windows runtime expectations are enabled, the runner falls back to `expect-exit.txt` when present, otherwise it assumes exit code `0`.
 
 ### `expect-stdout-aarch64.txt`
 
@@ -144,6 +175,10 @@ qemu-aarch64 ./out-aarch64
 ```
 
 Stdout is matched exactly after newline normalization.
+
+### `expect-stderr-aarch64.txt`
+
+This file is matched against the Linux AArch64 runtime pass stderr exactly after newline normalization.
 
 ### `expect-exit-aarch64.txt`
 
