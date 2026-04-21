@@ -501,6 +501,8 @@ When a variable has an initializer:
 
 - the initializer expression is checked
 - the initializer type must be assignable to the declared type
+- local fixed-size arrays may be initialized from another value of the same array type
+- global fixed-size arrays currently require array-literal initializers so code generation can emit static C initializers
 
 ### Numeric Conversions
 
@@ -521,6 +523,7 @@ For `target = value`:
 - both sides are checked
 - `value` must be assignable to `target`
 - assigning a non-error-union value to an error-union target is rejected with a dedicated diagnostic
+- fixed-size arrays assign by value when the source and target have the same array type
 
 ### Returns
 
@@ -535,7 +538,7 @@ The current assignability relation is:
 
 1. `null` source type is treated as assignable to anything for error-recovery purposes.
 2. A source error union is not assignable to a non-error-union target.
-3. Exact same types are assignable.
+3. Same types are assignable.
 4. Any pointer source is assignable to `*void`.
 5. A non-pointer numeric source is assignable to a non-pointer numeric target only when the conversion is an allowed implicit numeric conversion.
 6. Two non-numeric, non-pointer, non-built-in nominal types are assignable only if name and namespace path match.
@@ -572,7 +575,8 @@ Important consequence:
 ### Declaration
 
 - Arrays are declared with `[N]T`.
-- Arrays may be initialized in generated C if the initializer expression can be emitted directly.
+- Local arrays may be initialized from array literals or copied from another value of the same array type.
+- Global arrays currently require array-literal initializers.
 
 ### Indexing
 
@@ -593,6 +597,12 @@ Important consequence:
 - The literal must contain exactly `N` elements.
 - Each element must be assignable to `T`.
 - In declaration initializers, array literals lower to C array initializer lists.
+
+### Copy Semantics
+
+- Arrays assign by value only when source and target types match exactly, including length and element type.
+- Array copies lower to explicit element-by-element C loops rather than raw C array assignment.
+- Copying an array does not create an alias to the original storage.
 
 ## Strings
 

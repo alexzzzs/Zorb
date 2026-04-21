@@ -1,0 +1,16 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn _start() {
+    source: [4]u8 = [4]u8{ 72, 105, 33, 10 }
+    init_copy: [4]u8 = source
+    source[0] = 66
+
+    assigned_copy: [4]u8
+    assigned_copy = source
+    source[1] = 111
+
+    std.io.write(1, &init_copy, 4)
+    std.io.write(1, &assigned_copy, 4)
+    std.os.exit(0)
+}

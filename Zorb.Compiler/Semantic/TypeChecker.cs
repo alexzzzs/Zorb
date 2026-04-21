@@ -718,12 +718,6 @@ public class TypeChecker
         if (targetType == null || valueType == null)
             return;
 
-        if (targetType.ArraySize != null)
-        {
-            _errors.Error(assign, "Array assignment is not supported. Assign individual elements instead.");
-            return;
-        }
-
         if (!IsAssignableTo(targetType, assign.Value, valueType))
         {
             if (targetType.IsErrorUnion && valueType != null && !valueType.IsErrorUnion)
@@ -908,9 +902,10 @@ public class TypeChecker
         }
 
         CheckExpression(varDecl.Value);
-        if (varDecl.TypeName.ArraySize != null && varDecl.Value is not ArrayLiteralExpr)
+
+        if (_currentFunction == null && varDecl.TypeName.ArraySize != null && varDecl.Value is not ArrayLiteralExpr)
         {
-            _errors.Error(varDecl, "Array assignment is not supported. Assign individual elements instead.");
+            _errors.Error(varDecl, "Global array initializers must use array literals.");
             return;
         }
 
