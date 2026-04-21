@@ -224,16 +224,36 @@ static CompilerInvocation GetCompilerInvocation(string projectRoot)
         ?? throw new Exception("Unable to determine test output configuration.");
     var targetFrameworkDir = new DirectoryInfo(AppContext.BaseDirectory).Name;
     var outputDir = Path.Combine(projectRoot, "Zorb.Compiler", "bin", configurationDir, targetFrameworkDir);
+    foreach (var invocation in GetCandidateCompilerInvocations(AppContext.BaseDirectory))
+    {
+        if (CompilerInvocationExists(invocation))
+            return invocation;
+    }
+
+    foreach (var invocation in GetCandidateCompilerInvocations(outputDir))
+    {
+        if (CompilerInvocationExists(invocation))
+            return invocation;
+    }
+
+    throw new Exception(
+        $"Compiler executable was not found in either '{AppContext.BaseDirectory}' or '{outputDir}'.");
+}
+
+static IEnumerable<CompilerInvocation> GetCandidateCompilerInvocations(string directory)
+{
     var executableName = OperatingSystem.IsWindows() ? "Zorb.Compiler.exe" : "Zorb.Compiler";
-    var executablePath = Path.Combine(outputDir, executableName);
-    if (File.Exists(executablePath))
-        return new CompilerInvocation(executablePath, "");
+    yield return new CompilerInvocation(Path.Combine(directory, executableName), "");
+    yield return new CompilerInvocation("dotnet", $"\"{Path.Combine(directory, "Zorb.Compiler.dll")}\"");
+}
 
-    var dllPath = Path.Combine(outputDir, "Zorb.Compiler.dll");
-    if (File.Exists(dllPath))
-        return new CompilerInvocation("dotnet", $"\"{dllPath}\"");
+static bool CompilerInvocationExists(CompilerInvocation invocation)
+{
+    if (!string.Equals(invocation.FileName, "dotnet", StringComparison.Ordinal))
+        return File.Exists(invocation.FileName);
 
-    throw new Exception($"Compiler executable was not found at '{executablePath}', and fallback DLL was not found at '{dllPath}'.");
+    var dllPath = invocation.ArgumentsPrefix.Trim().Trim('"');
+    return File.Exists(dllPath);
 }
 
 static void RunExampleCompilationTest(string examplePath)
