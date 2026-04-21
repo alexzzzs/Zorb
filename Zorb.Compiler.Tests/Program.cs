@@ -114,8 +114,8 @@ static void RunCliWorkflowTests(string fixtureRoot)
 
     try
     {
-        foreach (var fixtureName in GetCliWorkflowFixtureNames())
-            RunCliWorkflowFixture(compilerInvocation, projectRoot, fixtureRoot, tempDir, fixtureName);
+        foreach (var workflowCase in GetCliWorkflowCases())
+            RunCliWorkflowFixture(compilerInvocation, projectRoot, fixtureRoot, tempDir, workflowCase);
     }
     finally
     {
@@ -124,34 +124,45 @@ static void RunCliWorkflowTests(string fixtureRoot)
     }
 }
 
-static string[] GetCliWorkflowFixtureNames()
+static CliWorkflowCase[] GetCliWorkflowCases()
 {
     if (OperatingSystem.IsWindows())
     {
         return
         [
-            "runtime_hello_world",
-            "runtime_string_escapes",
-            "runtime_condition_catch",
-            "runtime_host_platform_branch",
-            "runtime_host_platform_catch",
-            "runtime_host_import_alias",
-            "runtime_host_stderr_write",
-            "runtime_host_nonzero_exit"
+            new CliWorkflowCase("runtime_hello_world", "host-windows"),
+            new CliWorkflowCase("runtime_string_escapes", "host-windows"),
+            new CliWorkflowCase("runtime_condition_catch", "host-windows"),
+            new CliWorkflowCase("runtime_host_platform_branch", "host-windows"),
+            new CliWorkflowCase("runtime_host_platform_catch", "host-windows"),
+            new CliWorkflowCase("runtime_host_import_alias", "host-windows"),
+            new CliWorkflowCase("runtime_host_stderr_write", "host-windows"),
+            new CliWorkflowCase("runtime_host_nonzero_exit", "host-windows")
         ];
     }
 
     if (OperatingSystem.IsLinux())
-        return ["runtime_hello_world"];
+    {
+        return
+        [
+            new CliWorkflowCase("runtime_hello_world", "freestanding-linux"),
+            new CliWorkflowCase("runtime_host_platform_branch", "host-linux"),
+            new CliWorkflowCase("runtime_host_platform_catch", "host-linux"),
+            new CliWorkflowCase("runtime_host_import_alias", "host-linux"),
+            new CliWorkflowCase("runtime_host_stderr_write", "host-linux"),
+            new CliWorkflowCase("runtime_host_nonzero_exit", "host-linux")
+        ];
+    }
 
     throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
 }
 
-static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string projectRoot, string fixtureRoot, string tempDir, string fixtureName)
+static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string projectRoot, string fixtureRoot, string tempDir, CliWorkflowCase workflowCase)
 {
+    var fixtureName = workflowCase.FixtureName;
     var fixtureDir = Path.Combine(fixtureRoot, fixtureName);
     var mainPath = Path.Combine(fixtureDir, "main.zorb");
-    var cliTargetName = OperatingSystem.IsWindows() ? "host-windows" : "host-linux";
+    var cliTargetName = workflowCase.TargetName;
     var cliExpectation = ReadCliWorkflowExpectation(fixtureDir, cliTargetName);
     var expectedStdOut = cliExpectation.ExpectedStdOut ?? "";
     var expectedStdErr = cliExpectation.ExpectedStdErr ?? "";
@@ -166,7 +177,7 @@ static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string 
 
     var build = RunProcessWithTimeout(
         compilerInvocation.FileName,
-        CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"build \"{mainPath}\" -o \"{builtBinaryPath}\" --keep-c \"{keptCPath}\""),
+        CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"build \"{mainPath}\" --target {cliTargetName} -o \"{builtBinaryPath}\" --keep-c \"{keptCPath}\""),
         projectRoot,
         TimeSpan.FromSeconds(30));
 
@@ -192,7 +203,7 @@ static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string 
 
     var run = RunProcessWithTimeout(
         compilerInvocation.FileName,
-        CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"run \"{mainPath}\""),
+        CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"run \"{mainPath}\" --target {cliTargetName}"),
         projectRoot,
         TimeSpan.FromSeconds(30));
 
@@ -604,6 +615,13 @@ static RuntimeExpectation ReadCliWorkflowExpectation(string fixtureDir, string t
     if (expectation != null)
         return expectation;
 
+    if (string.Equals(targetName, "freestanding-linux", StringComparison.Ordinal))
+    {
+        var hostLinuxExpectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "host-linux", StringComparison.Ordinal));
+        if (hostLinuxExpectation != null)
+            return hostLinuxExpectation;
+    }
+
     if (string.Equals(targetName, "host-windows", StringComparison.Ordinal))
     {
         var hostLinuxExpectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "host-linux", StringComparison.Ordinal));
@@ -856,3 +874,5 @@ sealed record ProcessResult(int ExitCode, string StdOut, string StdErr);
 sealed record RuntimeExpectation(string TargetName, string? ExpectedStdOut, string? ExpectedStdErr, int ExpectedExit);
 
 sealed record CompilerInvocation(string FileName, string ArgumentsPrefix);
+
+sealed record CliWorkflowCase(string FixtureName, string TargetName);

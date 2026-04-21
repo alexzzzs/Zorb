@@ -6,11 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Explicit `--target` CLI selection for compiler output modes, with `host-linux`, `freestanding-linux`, and `host-windows` targets.
 - Hosted Windows runtime fixture coverage for platform-branching, catch flows, imported-module execution, stderr writes, and nonzero exits.
 - New hosted-runtime fixtures for `runtime_host_platform_branch`, `runtime_host_platform_catch`, `runtime_host_import_alias`, `runtime_host_stderr_write`, and `runtime_host_nonzero_exit`.
 
 ### Changed
 
+- `build` and `run` now resolve through explicit compilation targets instead of host-only implicit mode selection, while preserving `-nostdlib` as legacy shorthand for `--target freestanding-linux`.
+- CLI workflow tests now pass explicit `--target` values and cover freestanding Linux plus hosted Linux and Windows build-run paths.
 - The compiler fixture runner now supports Windows-specific runtime expectation files, stderr assertions, and target-aware runtime compilation for hosted Windows versus freestanding Linux paths.
 - Windows CLI workflow coverage now includes the hosted platform-branching, catch, import, stderr, and nonzero-exit fixtures in addition to the existing smoke fixtures.
 - Windows CI now runs the normal fixture suite instead of a separate smoke script, keeping Linux and Windows fixture coverage aligned.

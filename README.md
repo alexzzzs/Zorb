@@ -99,13 +99,22 @@ Compile and run a program on the current host:
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- run main.zorb
 ```
 
+Select an explicit build target:
+
+```bash
+dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target host-linux -o out
+```
+
 Keep the generated C while building or running:
 
 ```bash
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb -o out --keep-c out.c
 ```
 
-On Linux, `build` and `run` default to freestanding output and preserve `_start`.
+Supported `--target` values are `host-linux`, `freestanding-linux`, and `host-windows`.
+On Linux, `build` and `run` default to `freestanding-linux`, which preserves `_start`.
+The legacy `-nostdlib` flag remains available as shorthand for `--target freestanding-linux`.
+
 For freestanding output, compile the generated C with the required Linux x86_64 flags:
 
 ```bash
@@ -131,9 +140,15 @@ Compile and run a program on the current Windows host:
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- run main.zorb
 ```
 
+Select the hosted Windows target explicitly:
+
+```powershell
+dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target host-windows -o out.exe
+```
+
 Notes:
 
-- Windows `build` and `run` currently use hosted output and map `_start` to `main`.
+- Windows `build` and `run` default to `host-windows` and map `_start` to `main`.
 - `-nostdlib` build and run remain Linux-oriented and are not currently supported on Windows hosts.
 - `clang-cl` is the recommended Windows toolchain.
 - `cl.exe` may also work, but `clang-cl` is the preferred default.
