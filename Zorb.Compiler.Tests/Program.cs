@@ -154,10 +154,11 @@ static void RunCliWorkflowFixture(string compilerExecutable, string projectRoot,
     var builtBinaryPath = Path.Combine(fixtureTempDir, outputFileName);
     var keptCPath = Path.Combine(fixtureTempDir, $"{fixtureName}.c");
 
-    var build = RunProcess(
+    var build = RunProcessWithTimeout(
         compilerExecutable,
         $"build \"{mainPath}\" -o \"{builtBinaryPath}\" --keep-c \"{keptCPath}\"",
-        projectRoot);
+        projectRoot,
+        TimeSpan.FromSeconds(30));
 
     if (build.ExitCode != 0)
         throw new Exception($"CLI build failed for fixture '{fixtureName}' with exit code {build.ExitCode}.{Environment.NewLine}{build.StdErr}{build.StdOut}".Trim());
@@ -176,10 +177,11 @@ static void RunCliWorkflowFixture(string compilerExecutable, string projectRoot,
     if (!string.Equals(actualBuiltStdOut, expectedStdOut, StringComparison.Ordinal))
         throw new Exception($"Built fixture '{fixtureName}' stdout mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdOut}{Environment.NewLine}Actual:{Environment.NewLine}{actualBuiltStdOut}");
 
-    var run = RunProcess(
+    var run = RunProcessWithTimeout(
         compilerExecutable,
         $"run \"{mainPath}\"",
-        projectRoot);
+        projectRoot,
+        TimeSpan.FromSeconds(30));
 
     if (run.ExitCode != expectedExit)
         throw new Exception($"CLI run for fixture '{fixtureName}' exit code mismatch. Expected {expectedExit}, got {run.ExitCode}.{Environment.NewLine}{run.StdErr}{run.StdOut}".Trim());
@@ -192,10 +194,10 @@ static void RunCliWorkflowFixture(string compilerExecutable, string projectRoot,
 static ProcessResult RunBuiltCliBinary(string builtBinaryPath, string workingDirectory)
 {
     if (OperatingSystem.IsLinux())
-        return RunProcess("timeout", $"30s \"{builtBinaryPath}\"", workingDirectory);
+        return RunProcessWithTimeout("timeout", $"30s \"{builtBinaryPath}\"", workingDirectory, TimeSpan.FromSeconds(30));
 
     if (OperatingSystem.IsWindows())
-        return RunProcess(builtBinaryPath, "", workingDirectory);
+        return RunProcessWithTimeout(builtBinaryPath, "", workingDirectory, TimeSpan.FromSeconds(30));
 
     throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
 }
@@ -592,6 +594,16 @@ static string EnsureToolAvailable(params string[] toolNames)
 
 static ProcessResult RunProcess(string fileName, string arguments, string workingDirectory)
 {
+    return RunProcessCore(fileName, arguments, workingDirectory, timeout: null);
+}
+
+static ProcessResult RunProcessWithTimeout(string fileName, string arguments, string workingDirectory, TimeSpan timeout)
+{
+    return RunProcessCore(fileName, arguments, workingDirectory, timeout);
+}
+
+static ProcessResult RunProcessCore(string fileName, string arguments, string workingDirectory, TimeSpan? timeout)
+{
     var startInfo = new ProcessStartInfo
     {
         FileName = fileName,
@@ -603,10 +615,27 @@ static ProcessResult RunProcess(string fileName, string arguments, string workin
     };
 
     using var process = Process.Start(startInfo) ?? throw new Exception($"Failed to start process '{fileName}'.");
-    var stdOut = process.StandardOutput.ReadToEnd();
-    var stdErr = process.StandardError.ReadToEnd();
+    var stdOutTask = process.StandardOutput.ReadToEndAsync();
+    var stdErrTask = process.StandardError.ReadToEndAsync();
+
+    if (timeout.HasValue && !process.WaitForExit((int)timeout.Value.TotalMilliseconds))
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        process.WaitForExit();
+        Task.WaitAll(stdOutTask, stdErrTask);
+        throw new Exception($"Process '{fileName}' timed out after {timeout.Value.TotalSeconds:0} seconds.");
+    }
+
     process.WaitForExit();
-    return new ProcessResult(process.ExitCode, stdOut, stdErr);
+    Task.WaitAll(stdOutTask, stdErrTask);
+    return new ProcessResult(process.ExitCode, stdOutTask.Result, stdErrTask.Result);
 }
 
 enum FixturePhase
