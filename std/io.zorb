@@ -8,57 +8,42 @@ import c "windows.h"
 extern fn GetStdHandle(nStdHandle: i32) -> i64
 extern fn WriteFile(h: i64, buf: *i8, len: u32, written: *u32, overlapped: i64) -> i32
 
+fn std.io.stdout_fd() -> i32 {
+    return 1
+}
+
+fn std.io.stderr_fd() -> i32 {
+    return 2
+}
+
 export fn std.io.print(msg: string) {
-    if Builtin.IsLinux {
-        length: i64 = std.str.len(msg)
-        write_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            write_nr = 1
-        }
-        if Builtin.IsAArch64 {
-            write_nr = 64
-        }
-        if write_nr != 0 {
-            syscall(write_nr, 1, cast(i64, msg), length)
-        }
-    }
-    
-    if Builtin.IsWindows {
-        handle: i64 = GetStdHandle(-11) // STD_OUTPUT_HANDLE
-        length: u32 = cast(u32, std.str.len(msg))
-        written: u32 = 0
-        WriteFile(handle, cast(*i8, msg), length, &written, 0)
-    }
+    std.io.write(std.io.stdout_fd(), cast(*u8, msg), std.str.len(msg))
+}
+
+export fn std.io.eprint(msg: string) {
+    std.io.write(std.io.stderr_fd(), cast(*u8, msg), std.str.len(msg))
 }
 
 export fn std.io.println(msg: string) {
     std.io.print(msg)
-    
-    if Builtin.IsLinux {
-        write_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            write_nr = 1
-        }
-        if Builtin.IsAArch64 {
-            write_nr = 64
-        }
-        if write_nr != 0 {
-            syscall(write_nr, 1, cast(i64, "\n"), 1)
-        }
-    }
-    
-    if Builtin.IsWindows {
-        handle: i64 = GetStdHandle(-11)
-        written: u32 = 0
-        WriteFile(handle, cast(*i8, "\n"), 1, &written, 0)
-    }
+    std.io.write(std.io.stdout_fd(), cast(*u8, "\n"), 1)
+}
+
+export fn std.io.eprintln(msg: string) {
+    std.io.eprint(msg)
+    std.io.write(std.io.stderr_fd(), cast(*u8, "\n"), 1)
 }
 
 export fn std.io.print_i64(val: i64) {
-    
     buf: [32]u8
     len: i64 = std.str.from_i64(val, &buf)
-    std.io.write(1, &buf, len)
+    std.io.write(std.io.stdout_fd(), &buf, len)
+}
+
+export fn std.io.eprint_i64(val: i64) {
+    buf: [32]u8
+    len: i64 = std.str.from_i64(val, &buf)
+    std.io.write(std.io.stderr_fd(), &buf, len)
 }
 
 export fn std.io.write(fd: i32, buf: *u8, len: i64) {
@@ -77,10 +62,10 @@ export fn std.io.write(fd: i32, buf: *u8, len: i64) {
 
     if Builtin.IsWindows {
         handle: i64 = 0
-        if fd == 1 {
+        if fd == std.io.stdout_fd() {
             handle = GetStdHandle(-11)
         }
-        if fd == 2 {
+        if fd == std.io.stderr_fd() {
             handle = GetStdHandle(-12)
         }
         if handle != 0 {

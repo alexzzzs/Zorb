@@ -1,0 +1,26 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+import "../../../std/task.zorb"
+import "../../../std/async.zorb"
+
+fn _start() {
+    std.io.print(std.os.platform_name())
+    std.io.print(" ")
+    std.io.print(std.os.arch_name())
+    std.io.print("\n")
+
+    if std.task.is_supported() {
+        std.io.print("task supported\n")
+    } else {
+        std.io.print("task unsupported\n")
+    }
+
+    if std.async.is_supported() {
+        std.io.print("async supported\n")
+        std.os.exit(0)
+        return
+    }
+
+    std.io.print("async unsupported\n")
+    std.os.exit(0)
+}

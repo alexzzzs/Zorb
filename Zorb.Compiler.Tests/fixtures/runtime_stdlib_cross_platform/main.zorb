@@ -1,0 +1,17 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn _start() {
+    if std.os.is_linux() || std.os.is_windows() {
+        std.io.print("stdout ")
+        std.io.println(std.os.platform_name())
+        std.io.eprint("stderr ")
+        std.io.eprintln(std.os.platform_name())
+        std.os.exit(0)
+        return
+    }
+
+    std.io.println("stdout unknown")
+    std.io.eprintln("stderr unknown")
+    std.os.exit(1)
+}
