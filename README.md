@@ -17,7 +17,9 @@ The compiler supports a focused language subset:
 - `struct` types
 - globals and `const` globals
 - `if`, `else`, `while`, `continue`, `break`, and `return`
+- logical `&&`, `||`, and unary `!` on `bool`
 - pointers, fixed-size arrays, function types, and error unions
+- typed struct literals and typed array literals
 - imports, including `import "file.zorb" as alias`
 - inline assembly
 - builtins such as `Builtin.IsLinux`, `Builtin.IsWindows`, and `Builtin.sizeof(...)`
@@ -39,7 +41,7 @@ Publish a standalone compiler binary:
 Publish a version-stamped standalone Linux compiler build:
 
 ```bash
-VERSION=0.1.1-dev.42 INFORMATIONAL_VERSION=0.1.1-dev.42+abcdef12 ./scripts/publish-compiler-linux.sh
+VERSION=0.1.3-dev.42 INFORMATIONAL_VERSION=0.1.3-dev.42+abcdef12 ./scripts/publish-compiler-linux.sh
 ```
 
 On Windows PowerShell:
@@ -51,8 +53,8 @@ On Windows PowerShell:
 Publish a version-stamped standalone Windows compiler build:
 
 ```powershell
-$env:VERSION="0.1.1-dev.42"
-$env:INFORMATIONAL_VERSION="0.1.1-dev.42+abcdef12"
+$env:VERSION="0.1.3-dev.42"
+$env:INFORMATIONAL_VERSION="0.1.3-dev.42+abcdef12"
 ./scripts/publish-compiler-windows.ps1
 ```
 
@@ -184,6 +186,21 @@ fn demo(value: i64) {
 }
 ```
 
+Typed literals and logical operators:
+
+```zorb
+struct Pair {
+    left: i32,
+    right: i32
+}
+
+fn main() {
+    pair: Pair = Pair{ left: 1, right: 2 }
+    mask: [4]u8 = [4]u8{ 1, 1, 0, 0 }
+    ready: bool = (pair.left == 1 && mask[0] == 1) || false
+}
+```
+
 Representative larger examples live in [`examples/`](./examples) and the executable fixture corpus under [`Zorb.Compiler.Tests/fixtures/`](./Zorb.Compiler.Tests/fixtures).
 
 Current checked-in examples:
@@ -191,6 +208,7 @@ Current checked-in examples:
 - [`examples/basics/import_alias/main.zorb`](./examples/basics/import_alias/main.zorb): import aliasing with a sibling module.
 - [`examples/basics/error_catch.zorb`](./examples/basics/error_catch.zorb): error unions with `catch`, `std.io`, and `std.os`.
 - [`examples/basics/platform_info.zorb`](./examples/basics/platform_info.zorb): portable stdlib output that branches on the active host platform.
+- [`examples/basics/literals.zorb`](./examples/basics/literals.zorb): typed struct and array literals combined with logical operators.
 - [`examples/advanced/threads.zorb`](./examples/advanced/threads.zorb): lower-level task/thread setup using inline assembly and Linux syscalls.
 
 ## Project Shape

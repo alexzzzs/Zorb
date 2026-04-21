@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Short-circuit logical `&&` and `||` operators with semantic `bool`-only checking and dedicated regression coverage.
+- Typed struct literals such as `Pair{ left: 1, right: 2 }`.
+- Typed array literals such as `[4]u8{ 1, 2, 3, 4 }`.
+- Regression coverage for struct-literal field validation and array-literal element-count validation.
 - Semantic validation that rejects `catch` expressions inside global initializers before code generation.
 - Regression coverage for rejected global-initializer `catch` expressions.
 - Expanded Windows-hosted CI smoke coverage across multiple runtime fixtures.
@@ -29,6 +33,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Version metadata and release workflow defaults now advance from the released `0.1.2` line to the `0.1.3-dev` line consistently.
 - Parser diagnostics for invalid postfix array type syntax now explain that arrays must be written as `[N]T`, for example `[4]u8`.
 - Declared `bool` types are treated consistently as built-in types during semantic validation and C code generation.
 

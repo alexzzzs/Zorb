@@ -46,6 +46,11 @@ public class TypeChecker
         ">", "<", ">=", "<=", "==", "!="
     };
 
+    private static readonly HashSet<string> LogicalOperators = new()
+    {
+        "&&", "||"
+    };
+
     private void MakeVisible(string name)
     {
         if (_fileScopes.Count > 0)
@@ -175,6 +180,18 @@ public class TypeChecker
 
             case SizeofExpr sizeofExpr:
                 return sizeofExpr;
+
+            case StructLiteralExpr structLiteral:
+                NormalizeTypeReferenceInPlace(structLiteral.TypeName);
+                for (int i = 0; i < structLiteral.Fields.Count; i++)
+                    structLiteral.Fields[i].Value = NormalizeAliasReferences(structLiteral.Fields[i].Value);
+                return structLiteral;
+
+            case ArrayLiteralExpr arrayLiteral:
+                NormalizeTypeReferenceInPlace(arrayLiteral.TypeName);
+                for (int i = 0; i < arrayLiteral.Elements.Count; i++)
+                    arrayLiteral.Elements[i] = NormalizeAliasReferences(arrayLiteral.Elements[i]);
+                return arrayLiteral;
 
             case CatchExpr catchExpr:
                 catchExpr.Left = NormalizeAliasReferences(catchExpr.Left);
@@ -701,6 +718,12 @@ public class TypeChecker
         if (targetType == null || valueType == null)
             return;
 
+        if (targetType.ArraySize != null)
+        {
+            _errors.Error(assign, "Array assignment is not supported. Assign individual elements instead.");
+            return;
+        }
+
         if (!IsAssignableTo(targetType, assign.Value, valueType))
         {
             if (targetType.IsErrorUnion && valueType != null && !valueType.IsErrorUnion)
@@ -770,6 +793,14 @@ public class TypeChecker
                 {
                     _errors.Error(cast, "Cannot cast Error Union to non-pointer type. Use .value field to unwrap.");
                 }
+                break;
+
+            case StructLiteralExpr structLiteral:
+                CheckStructLiteralExpression(structLiteral);
+                break;
+
+            case ArrayLiteralExpr arrayLiteral:
+                CheckArrayLiteralExpression(arrayLiteral);
                 break;
 
             case CatchExpr catchExpr:
@@ -854,6 +885,10 @@ public class TypeChecker
                 return ContainsCatchExpression(unary.Operand);
             case CastExpr cast:
                 return ContainsCatchExpression(cast.Expr);
+            case StructLiteralExpr structLiteral:
+                return structLiteral.Fields.Any(field => ContainsCatchExpression(field.Value));
+            case ArrayLiteralExpr arrayLiteral:
+                return arrayLiteral.Elements.Any(ContainsCatchExpression);
             default:
                 return false;
         }
@@ -873,6 +908,12 @@ public class TypeChecker
         }
 
         CheckExpression(varDecl.Value);
+        if (varDecl.TypeName.ArraySize != null && varDecl.Value is not ArrayLiteralExpr)
+        {
+            _errors.Error(varDecl, "Array assignment is not supported. Assign individual elements instead.");
+            return;
+        }
+
         var exprType = GetExpressionType(varDecl.Value);
         if (!IsAssignableTo(varDecl.TypeName, varDecl.Value, exprType))
         {
@@ -965,6 +1006,17 @@ public class TypeChecker
         if (leftType == null || rightType == null)
             return;
 
+        if (LogicalOperators.Contains(bin.Operator))
+        {
+            if (!IsBoolType(leftType))
+                _errors.Error(bin.Left, $"Left operand of '{bin.Operator}' must have type 'bool', got '{FormatType(leftType)}'.");
+
+            if (!IsBoolType(rightType))
+                _errors.Error(bin.Right, $"Right operand of '{bin.Operator}' must have type 'bool', got '{FormatType(rightType)}'.");
+
+            return;
+        }
+
         if (NumericOperators.Contains(bin.Operator))
         {
             if (!IsNumericType(leftType))
@@ -1003,6 +1055,74 @@ public class TypeChecker
                 return;
 
             _errors.Error($"Operator '{bin.Operator}' requires numeric operands, bool operands, matching pointer types, or two strings");
+        }
+    }
+
+    private void CheckStructLiteralExpression(StructLiteralExpr structLiteral)
+    {
+        ValidateTypeReference(structLiteral.TypeName, structLiteral);
+
+        var fullName = structLiteral.TypeName.NamespacePath.Any()
+            ? string.Join(".", structLiteral.TypeName.NamespacePath) + "." + structLiteral.TypeName.Name
+            : structLiteral.TypeName.Name;
+
+        if (!_symbolTable.TryLookupStruct(fullName, out var structFields))
+            return;
+
+        var fieldMap = structFields!.ToDictionary(field => field.Name, field => field.Type, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var field in structLiteral.Fields)
+        {
+            CheckExpression(field.Value);
+
+            if (!seen.Add(field.Name))
+            {
+                _errors.Error(field, $"Struct literal for '{fullName}' initializes field '{field.Name}' more than once.");
+                continue;
+            }
+
+            if (!fieldMap.TryGetValue(field.Name, out var fieldType))
+            {
+                _errors.Error(field, $"Struct '{fullName}' does not have a field named '{field.Name}'.");
+                continue;
+            }
+
+            var valueType = GetExpressionType(field.Value);
+            if (!IsAssignableTo(fieldType, field.Value, valueType))
+                _errors.Error(field, $"Cannot assign expression of type '{FormatType(valueType)}' to field '{field.Name}' of type '{FormatType(fieldType)}'.");
+        }
+
+        foreach (var field in structFields!)
+        {
+            if (!seen.Contains(field.Name))
+                _errors.Error(structLiteral, $"Struct literal for '{fullName}' is missing required field '{field.Name}'.");
+        }
+    }
+
+    private void CheckArrayLiteralExpression(ArrayLiteralExpr arrayLiteral)
+    {
+        ValidateTypeReference(arrayLiteral.TypeName, arrayLiteral);
+
+        if (arrayLiteral.TypeName.ArraySize == null)
+        {
+            _errors.Error(arrayLiteral, "Array literals must use an array type like '[4]u8'.");
+            return;
+        }
+
+        var expectedCount = arrayLiteral.TypeName.ArraySize.Value;
+        if (arrayLiteral.Elements.Count != expectedCount)
+            _errors.Error(arrayLiteral, $"Array literal for type '{FormatType(arrayLiteral.TypeName)}' must contain exactly {expectedCount} element(s), got {arrayLiteral.Elements.Count}.");
+
+        var elementType = arrayLiteral.TypeName.Clone();
+        elementType.ArraySize = null;
+
+        foreach (var element in arrayLiteral.Elements)
+        {
+            CheckExpression(element);
+            var elementValueType = GetExpressionType(element);
+            if (!IsAssignableTo(elementType, element, elementValueType))
+                _errors.Error(arrayLiteral, $"Cannot assign expression of type '{FormatType(elementValueType)}' to array element type '{FormatType(elementType)}'.");
         }
     }
 
@@ -1173,7 +1293,7 @@ public class TypeChecker
                 return info?.Type;
 
             case BinaryExpr bin:
-                if (ComparisonOperators.Contains(bin.Operator))
+                if (ComparisonOperators.Contains(bin.Operator) || LogicalOperators.Contains(bin.Operator))
                     return new TypeNode { Name = "bool" };
                 return GetExpressionType(bin.Left, reportErrors);
 
@@ -1343,6 +1463,12 @@ public class TypeChecker
                     return GetExpressionType(un.Operand, reportErrors);
                 }
                 return new TypeNode { Name = "i32" };
+
+            case StructLiteralExpr structLiteral:
+                return structLiteral.TypeName.Clone();
+
+            case ArrayLiteralExpr arrayLiteral:
+                return arrayLiteral.TypeName.Clone();
 
             case BuiltinExpr builtin:
                 return builtin.Name switch

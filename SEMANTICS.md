@@ -75,6 +75,7 @@ The lexer recognizes:
 - Separators: `,` `:` `;` `.`
 - Assignment: `=`
 - Arithmetic and bitwise operators: `+` `-` `*` `/` `%` `&` `|` `^`
+- Logical operators: `&&` `||`
 - Shifts: `<<` `>>`
 - Comparisons: `>` `<` `>=` `<=` `==` `!=`
 - Type arrow: `->`
@@ -335,6 +336,8 @@ There is no dedicated block statement syntax beyond the bodies of `if`, `else`, 
 - unary `!expr`
 - `cast(Type, expr)`
 - boolean literals `true` and `false`
+- typed struct literals `Type{ field: expr, ... }`
+- typed array literals `[N]T{ expr, ... }`
 - builtins `Builtin.IsLinux` and `Builtin.IsWindows`
 - error literals `error.Name`
 
@@ -362,6 +365,8 @@ The parser supports these binary operators:
 - bitwise-xor: `^`
 - bitwise-or: `|`
 - comparisons: `>` `<` `>=` `<=` `==` `!=`
+- logical-and: `&&`
+- logical-or: `||`
 
 ### Operator Precedence
 
@@ -376,7 +381,9 @@ From highest to lowest:
 7. `^`
 8. `|`
 9. comparisons and equality: `>` `<` `>=` `<=` `==` `!=`
-10. postfix `catch`
+10. logical-and: `&&`
+11. logical-or: `||`
+12. postfix `catch`
 
 Parsing notes:
 
@@ -468,6 +475,11 @@ Notes:
 For arithmetic and bitwise operators:
 
 - both operands must be numeric types
+
+For logical operators:
+
+- `&&` and `||` require `bool` on both sides
+- code generation preserves short-circuit evaluation order
 
 For relational comparisons:
 
@@ -574,6 +586,13 @@ Important consequence:
 - That decay applies only when the parameter type is exactly `*T` for the array element type `T`.
 - Arrays do not decay to `*void` implicitly.
 - Outside call position, arrays remain arrays unless explicitly addressed or indexed.
+
+### Literals
+
+- An array literal is written as `[N]T{ expr, ... }`.
+- The literal must contain exactly `N` elements.
+- Each element must be assignable to `T`.
+- In declaration initializers, array literals lower to C array initializer lists.
 
 ## Strings
 

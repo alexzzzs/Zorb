@@ -1,0 +1,31 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+calls: i64 = 0
+
+fn mark_true() -> bool {
+    calls = calls + 1
+    return true
+}
+
+fn mark_false() -> bool {
+    calls = calls + 1
+    return false
+}
+
+fn _start() {
+    if mark_false() && mark_true() {
+        std.io.println("unexpected-and")
+    }
+
+    if mark_true() || mark_true() {
+    }
+
+    if calls == 2 {
+        std.io.println("short-circuit-ok")
+    } else {
+        std.io.println("short-circuit-failed")
+    }
+
+    std.os.exit(0)
+}

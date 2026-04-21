@@ -56,5 +56,7 @@ public enum TokenType
     Continue,
     Break,
     True,
-    False
+    False,
+    AndAnd,
+    OrOr
 }
