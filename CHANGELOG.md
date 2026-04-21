@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Local fixed-size array value copies in declarations and assignments when source and target types match exactly.
+- Regression coverage for local array-copy code generation and runtime non-aliasing behavior.
 - Short-circuit logical `&&` and `||` operators with semantic `bool`-only checking and dedicated regression coverage.
 - Typed struct literals such as `Pair{ left: 1, right: 2 }`.
 - Typed array literals such as `[4]u8{ 1, 2, 3, 4 }`.
@@ -28,6 +30,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- The language docs and checked-in literals example now describe and demonstrate local array value-copy semantics.
 - The advanced threads example now uses the current array type spelling and current pointer-cast and inline-asm operand rules.
 - The Windows-hosted smoke workflow avoids redundant compiler rebuilds during repeated `dotnet run` steps.
 

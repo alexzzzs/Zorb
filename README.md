@@ -19,7 +19,7 @@ The compiler supports a focused language subset:
 - `if`, `else`, `while`, `continue`, `break`, and `return`
 - logical `&&`, `||`, and unary `!` on `bool`
 - pointers, fixed-size arrays, function types, and error unions
-- typed struct literals and typed array literals
+- typed struct literals, typed array literals, and local array value copies
 - imports, including `import "file.zorb" as alias`
 - inline assembly
 - builtins such as `Builtin.IsLinux`, `Builtin.IsWindows`, and `Builtin.sizeof(...)`
@@ -197,7 +197,8 @@ struct Pair {
 fn main() {
     pair: Pair = Pair{ left: 1, right: 2 }
     mask: [4]u8 = [4]u8{ 1, 1, 0, 0 }
-    ready: bool = (pair.left == 1 && mask[0] == 1) || false
+    copy: [4]u8 = mask
+    ready: bool = (pair.left == 1 && copy[0] == 1) || false
 }
 ```
 
