@@ -9,11 +9,15 @@ All notable changes to this project will be documented in this file.
 - Explicit `--target` CLI selection for compiler output modes, with `host-linux`, `freestanding-linux`, and `host-windows` targets.
 - Hosted Windows runtime fixture coverage for platform-branching, catch flows, imported-module execution, stderr writes, and nonzero exits.
 - New hosted-runtime fixtures for `runtime_host_platform_branch`, `runtime_host_platform_catch`, `runtime_host_import_alias`, `runtime_host_stderr_write`, and `runtime_host_nonzero_exit`.
+- Cross-platform stdlib helpers including `std.io.eprint`, `std.io.eprintln`, `std.io.eprint_i64`, `std.os.is_linux`, `std.os.is_windows`, and `std.os.platform_name`.
+- Additional stdlib capability helpers including `std.os.is_x86_64`, `std.os.is_aarch64`, `std.os.arch_name`, `std.task.is_supported`, and `std.async.is_supported`.
 
 ### Changed
 
 - `build` and `run` now resolve through explicit compilation targets instead of host-only implicit mode selection, while preserving `-nostdlib` as legacy shorthand for `--target freestanding-linux`.
 - CLI workflow tests now pass explicit `--target` values and cover freestanding Linux plus hosted Linux and Windows build-run paths.
+- `std.io` now routes `print` and `println` through a shared cross-platform write path, and the platform example now uses stdlib helpers instead of raw builtins.
+- `std.async` now exposes an explicit support check and exits early on unsupported targets, and `std.task` now exposes a matching support query for fiber-based scheduling.
 - The compiler fixture runner now supports Windows-specific runtime expectation files, stderr assertions, and target-aware runtime compilation for hosted Windows versus freestanding Linux paths.
 - Windows CLI workflow coverage now includes the hosted platform-branching, catch, import, stderr, and nonzero-exit fixtures in addition to the existing smoke fixtures.
 - Windows CI now runs the normal fixture suite instead of a separate smoke script, keeping Linux and Windows fixture coverage aligned.
