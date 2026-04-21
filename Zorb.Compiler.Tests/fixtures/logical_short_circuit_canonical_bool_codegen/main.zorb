@@ -1,0 +1,15 @@
+error Fail = 1
+
+fn weird(flag: i64) !bool {
+    if flag != 0 {
+        return error.Fail
+    }
+
+    return cast(bool, 42)
+}
+
+fn main() -> bool {
+    return weird(0) catch |err| {
+        return false
+    } && true
+}

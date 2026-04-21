@@ -1,0 +1,3 @@
+struct Holder __zorb_struct_literal_
+.arr[0] = src[0];
+.arr[1] = src[1];
