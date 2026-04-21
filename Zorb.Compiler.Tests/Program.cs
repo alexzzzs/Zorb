@@ -107,9 +107,7 @@ static void RunCliWorkflowTests(string fixtureRoot)
     var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
     var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
         ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
-    var compilerExecutable = GetCompilerExecutablePath(projectRoot);
-    if (!File.Exists(compilerExecutable))
-        throw new Exception($"Compiler executable was not found at '{compilerExecutable}'.");
+    var compilerInvocation = GetCompilerInvocation(projectRoot);
 
     var tempDir = Path.Combine(Path.GetTempPath(), "zorb-cli-tests", Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(tempDir);
@@ -117,7 +115,7 @@ static void RunCliWorkflowTests(string fixtureRoot)
     try
     {
         foreach (var fixtureName in GetCliWorkflowFixtureNames())
-            RunCliWorkflowFixture(compilerExecutable, projectRoot, fixtureRoot, tempDir, fixtureName);
+            RunCliWorkflowFixture(compilerInvocation, projectRoot, fixtureRoot, tempDir, fixtureName);
     }
     finally
     {
@@ -149,7 +147,7 @@ static string[] GetCliWorkflowFixtureNames()
     throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
 }
 
-static void RunCliWorkflowFixture(string compilerExecutable, string projectRoot, string fixtureRoot, string tempDir, string fixtureName)
+static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string projectRoot, string fixtureRoot, string tempDir, string fixtureName)
 {
     var fixtureDir = Path.Combine(fixtureRoot, fixtureName);
     var mainPath = Path.Combine(fixtureDir, "main.zorb");
@@ -167,8 +165,8 @@ static void RunCliWorkflowFixture(string compilerExecutable, string projectRoot,
     var keptCPath = Path.Combine(fixtureTempDir, $"{fixtureName}.c");
 
     var build = RunProcessWithTimeout(
-        compilerExecutable,
-        $"build \"{mainPath}\" -o \"{builtBinaryPath}\" --keep-c \"{keptCPath}\"",
+        compilerInvocation.FileName,
+        CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"build \"{mainPath}\" -o \"{builtBinaryPath}\" --keep-c \"{keptCPath}\""),
         projectRoot,
         TimeSpan.FromSeconds(30));
 
@@ -193,8 +191,8 @@ static void RunCliWorkflowFixture(string compilerExecutable, string projectRoot,
         throw new Exception($"Built fixture '{fixtureName}' stderr mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdErr}{Environment.NewLine}Actual:{Environment.NewLine}{actualBuiltStdErr}");
 
     var run = RunProcessWithTimeout(
-        compilerExecutable,
-        $"run \"{mainPath}\"",
+        compilerInvocation.FileName,
+        CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"run \"{mainPath}\""),
         projectRoot,
         TimeSpan.FromSeconds(30));
 
@@ -220,13 +218,22 @@ static ProcessResult RunBuiltCliBinary(string builtBinaryPath, string workingDir
     throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
 }
 
-static string GetCompilerExecutablePath(string projectRoot)
+static CompilerInvocation GetCompilerInvocation(string projectRoot)
 {
     var configurationDir = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
         ?? throw new Exception("Unable to determine test output configuration.");
     var targetFrameworkDir = new DirectoryInfo(AppContext.BaseDirectory).Name;
+    var outputDir = Path.Combine(projectRoot, "Zorb.Compiler", "bin", configurationDir, targetFrameworkDir);
     var executableName = OperatingSystem.IsWindows() ? "Zorb.Compiler.exe" : "Zorb.Compiler";
-    return Path.Combine(projectRoot, "Zorb.Compiler", "bin", configurationDir, targetFrameworkDir, executableName);
+    var executablePath = Path.Combine(outputDir, executableName);
+    if (File.Exists(executablePath))
+        return new CompilerInvocation(executablePath, "");
+
+    var dllPath = Path.Combine(outputDir, "Zorb.Compiler.dll");
+    if (File.Exists(dllPath))
+        return new CompilerInvocation("dotnet", $"\"{dllPath}\"");
+
+    throw new Exception($"Compiler executable was not found at '{executablePath}', and fallback DLL was not found at '{dllPath}'.");
 }
 
 static void RunExampleCompilationTest(string examplePath)
@@ -282,10 +289,10 @@ static void RunFixture(string fixtureDir, bool updateSnapshots)
 
     var generated = compilation.Result.Generated;
 
-    foreach (var expected in ReadExpectationLines(fixtureDir, "expect-generated.txt"))
+    foreach (var expected in ReadExpectationLinesForCurrentHost(fixtureDir, "expect-generated.txt"))
         AssertTextContains(generated, expected);
 
-    var snapshotPath = Path.Combine(fixtureDir, "expect-generated-full.c");
+    var snapshotPath = ResolveExpectationPathForCurrentHost(fixtureDir, "expect-generated-full.c");
     if (File.Exists(snapshotPath))
     {
         if (updateSnapshots)
@@ -300,7 +307,7 @@ static void RunFixture(string fixtureDir, bool updateSnapshots)
         }
     }
 
-    foreach (var line in ReadExpectationLines(fixtureDir, "expect-generated-counts.txt"))
+    foreach (var line in ReadExpectationLinesForCurrentHost(fixtureDir, "expect-generated-counts.txt"))
     {
         var separatorIndex = line.LastIndexOf("=>", StringComparison.Ordinal);
         if (separatorIndex < 0)
@@ -415,6 +422,27 @@ static List<string> ReadExpectationLines(string fixtureDir, string fileName)
         .Select(line => line.Trim())
         .Where(line => line.Length > 0 && !line.StartsWith("#", StringComparison.Ordinal))
         .ToList();
+}
+
+static List<string> ReadExpectationLinesForCurrentHost(string fixtureDir, string fileName)
+{
+    var path = ResolveExpectationPathForCurrentHost(fixtureDir, fileName);
+    if (!File.Exists(path))
+        return new List<string>();
+
+    return File.ReadAllLines(path, Encoding.UTF8)
+        .Select(line => line.Trim())
+        .Where(line => line.Length > 0 && !line.StartsWith("#", StringComparison.Ordinal))
+        .ToList();
+}
+
+static string ResolveExpectationPathForCurrentHost(string fixtureDir, string fileName)
+{
+    var genericPath = Path.Combine(fixtureDir, fileName);
+    var hostSuffix = OperatingSystem.IsWindows() ? "-windows" : "-linux";
+    var hostSpecificFileName = Path.GetFileNameWithoutExtension(fileName) + hostSuffix + Path.GetExtension(fileName);
+    var hostSpecificPath = Path.Combine(fixtureDir, hostSpecificFileName);
+    return File.Exists(hostSpecificPath) ? hostSpecificPath : genericPath;
 }
 
 static void AssertNoErrors(List<string> errors)
@@ -774,6 +802,17 @@ static ProcessResult RunProcessCore(string fileName, string arguments, string wo
     return new ProcessResult(process.ExitCode, stdOutTask.Result, stdErrTask.Result);
 }
 
+static string CombineCommandArguments(string prefix, string arguments)
+{
+    if (string.IsNullOrEmpty(prefix))
+        return arguments;
+
+    if (string.IsNullOrEmpty(arguments))
+        return prefix;
+
+    return prefix + " " + arguments;
+}
+
 enum FixturePhase
 {
     Success,
@@ -795,3 +834,5 @@ sealed record CapturedCompilation(FixtureCompilation Result, string StdOut, stri
 sealed record ProcessResult(int ExitCode, string StdOut, string StdErr);
 
 sealed record RuntimeExpectation(string TargetName, string? ExpectedStdOut, string? ExpectedStdErr, int ExpectedExit);
+
+sealed record CompilerInvocation(string FileName, string ArgumentsPrefix);

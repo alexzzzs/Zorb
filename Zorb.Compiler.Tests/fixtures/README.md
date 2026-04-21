@@ -11,8 +11,11 @@ Optional files control what the test expects:
 - `expect-phase.txt`
 - `expect-errors.txt`
 - `expect-generated.txt`
+- `expect-generated-windows.txt`
 - `expect-generated-counts.txt`
+- `expect-generated-counts-windows.txt`
 - `expect-generated-full.c`
+- `expect-generated-full-windows.c`
 - `expect-stdout.txt`
 - `expect-stderr.txt`
 - `expect-exit.txt`
@@ -83,6 +86,12 @@ uint8_t buf[4];
 buf[1] = item;
 ```
 
+### `expect-generated-windows.txt`
+
+If present and the suite is running on a Windows host, this file overrides `expect-generated.txt`.
+
+Use it when generated C intentionally differs between Windows-hosted and Linux-hosted output, for example when a GCC-only attribute is omitted on Windows.
+
 ## `expect-generated-counts.txt`
 
 This file asserts that a generated substring appears an exact number of times.
@@ -99,6 +108,10 @@ Example:
 int64_t util_answer() => 2
 ```
 
+### `expect-generated-counts-windows.txt`
+
+If present and the suite is running on a Windows host, this file overrides `expect-generated-counts.txt`.
+
 ## `expect-generated-full.c`
 
 This file is a full snapshot of the generated C output.
@@ -106,6 +119,10 @@ This file is a full snapshot of the generated C output.
 Use this for representative programs where exact output stability matters.
 
 The runner compares the generated text to this file exactly, after newline normalization.
+
+### `expect-generated-full-windows.c`
+
+If present and the suite is running on a Windows host, this file overrides `expect-generated-full.c`.
 
 ## Runtime Expectations
 
