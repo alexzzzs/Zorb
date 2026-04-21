@@ -22,17 +22,24 @@ class Program
         Run
     }
 
+    private enum CompilationTarget
+    {
+        HostLinux,
+        FreestandingLinux,
+        HostWindows
+    }
+
     private sealed class Options
     {
         public CommandMode Mode { get; set; } = CommandMode.EmitC;
+        public CompilationTarget? Target { get; set; }
         public string InputPath { get; set; } = "";
         public string OutputPath { get; set; } = "out.c";
         public string? KeepCPath { get; set; }
         public bool CheckOnly { get; set; }
         public bool EmitC { get; set; } = true;
         public bool DumpTokens { get; set; }
-        public bool NoStdLib { get; set; }
-        public bool NoStdLibExplicitlySet { get; set; }
+        public bool LegacyNoStdLib { get; set; }
         public bool ShowHelp { get; set; }
         public bool ShowVersion { get; set; }
         public bool OutputPathExplicitlySet { get; set; }
@@ -58,9 +65,11 @@ class Program
                 return 0;
             }
 
-            var effectiveNoStdLib = ResolveNoStdLib(options);
-            var outputPath = ResolveOutputPath(options);
-            var compilation = CompileInput(options, effectiveNoStdLib);
+            var target = ResolveCompilationTarget(options);
+            EnsureTargetSupportedForCurrentHost(options.Mode, target);
+
+            var outputPath = ResolveOutputPath(options, target);
+            var compilation = CompileInput(options, target);
             if (compilation == null)
                 return 1;
 
@@ -73,8 +82,8 @@ class Program
             return options.Mode switch
             {
                 CommandMode.EmitC => EmitCOutput(compilation.GeneratedCode, outputPath),
-                CommandMode.Build => BuildExecutable(compilation.InputPath, compilation.GeneratedCode, outputPath, options.KeepCPath, effectiveNoStdLib),
-                CommandMode.Run => RunExecutable(compilation.InputPath, compilation.GeneratedCode, options.KeepCPath, effectiveNoStdLib),
+                CommandMode.Build => BuildExecutable(compilation.InputPath, compilation.GeneratedCode, outputPath, options.KeepCPath, target),
+                CommandMode.Run => RunExecutable(compilation.InputPath, compilation.GeneratedCode, options.KeepCPath, target),
                 _ => 1
             };
         }
@@ -90,7 +99,7 @@ class Program
         }
     }
 
-    private static CompiledProgram? CompileInput(Options options, bool effectiveNoStdLib)
+    private static CompiledProgram? CompileInput(Options options, CompilationTarget target)
     {
         var inputPath = Path.GetFullPath(options.InputPath);
         var currentDir = Path.GetDirectoryName(inputPath) ?? ".";
@@ -122,8 +131,8 @@ class Program
         {
             var generator = new CGenerator(currentDir, typeChecker.SymbolTable)
             {
-                PreserveStart = effectiveNoStdLib,
-                NoStdLib = effectiveNoStdLib
+                PreserveStart = PreservesStart(target),
+                NoStdLib = UsesNoStdLib(target)
             };
 
             return new CompiledProgram(
@@ -157,25 +166,19 @@ class Program
         return 0;
     }
 
-    private static int BuildExecutable(string inputPath, string cCode, string outputPath, string? keepCPath, bool noStdLib)
+    private static int BuildExecutable(string inputPath, string cCode, string outputPath, string? keepCPath, CompilationTarget target)
     {
-        if (OperatingSystem.IsLinux())
+        if (target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux)
         {
-            return BuildExecutableOnLinux(cCode, outputPath, keepCPath, noStdLib);
+            return BuildExecutableOnLinux(cCode, outputPath, keepCPath, UsesNoStdLib(target));
         }
 
-        if (OperatingSystem.IsWindows())
+        if (target == CompilationTarget.HostWindows)
         {
-            if (noStdLib)
-            {
-                Console.Error.WriteLine("Windows build currently supports hosted output only. Omit -nostdlib.");
-                return 1;
-            }
-
             return BuildExecutableOnWindows(cCode, outputPath, keepCPath);
         }
 
-        Console.Error.WriteLine("Build currently supports Linux and Windows hosts only.");
+        Console.Error.WriteLine($"Build does not support target '{FormatTarget(target)}'.");
         return 1;
     }
 
@@ -247,25 +250,19 @@ class Program
         return 0;
     }
 
-    private static int RunExecutable(string inputPath, string cCode, string? keepCPath, bool noStdLib)
+    private static int RunExecutable(string inputPath, string cCode, string? keepCPath, CompilationTarget target)
     {
-        if (OperatingSystem.IsLinux())
+        if (target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux)
         {
-            return RunExecutableOnLinux(inputPath, cCode, keepCPath, noStdLib);
+            return RunExecutableOnLinux(inputPath, cCode, keepCPath, UsesNoStdLib(target));
         }
 
-        if (OperatingSystem.IsWindows())
+        if (target == CompilationTarget.HostWindows)
         {
-            if (noStdLib)
-            {
-                Console.Error.WriteLine("Windows run currently supports hosted output only. Omit -nostdlib.");
-                return 1;
-            }
-
             return RunExecutableOnWindows(inputPath, cCode, keepCPath);
         }
 
-        Console.Error.WriteLine("Run currently supports Linux and Windows hosts only.");
+        Console.Error.WriteLine($"Run does not support target '{FormatTarget(target)}'.");
         return 1;
     }
 
@@ -462,24 +459,56 @@ class Program
         return new ProcessResult(process.ExitCode, stdOut, stdErr);
     }
 
-    private static bool ResolveNoStdLib(Options options)
+    private static CompilationTarget ResolveCompilationTarget(Options options)
     {
-        if (options.NoStdLibExplicitlySet)
-            return options.NoStdLib;
+        if (options.Target.HasValue)
+        {
+            if (options.LegacyNoStdLib && options.Target.Value != CompilationTarget.FreestandingLinux)
+                throw new ZorbCompilerException($"Cannot combine -nostdlib with --target {FormatTarget(options.Target.Value)}. Use --target freestanding-linux or omit -nostdlib.");
+
+            return options.Target.Value;
+        }
+
+        if (options.LegacyNoStdLib)
+            return CompilationTarget.FreestandingLinux;
 
         return options.Mode switch
         {
-            CommandMode.Build or CommandMode.Run => OperatingSystem.IsLinux(),
-            _ => options.NoStdLib
+            CommandMode.Build or CommandMode.Run when OperatingSystem.IsLinux() => CompilationTarget.FreestandingLinux,
+            CommandMode.Build or CommandMode.Run when OperatingSystem.IsWindows() => CompilationTarget.HostWindows,
+            CommandMode.Build or CommandMode.Run => throw new ZorbCompilerException("Build and run currently support Linux and Windows hosts only."),
+            _ => CompilationTarget.HostLinux
         };
     }
 
-    private static string ResolveOutputPath(Options options)
+    private static void EnsureTargetSupportedForCurrentHost(CommandMode mode, CompilationTarget target)
+    {
+        if (mode != CommandMode.Build && mode != CommandMode.Run)
+            return;
+
+        if ((target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux) && !OperatingSystem.IsLinux())
+            throw new ZorbCompilerException($"Target '{FormatTarget(target)}' currently requires a Linux host for build and run.");
+
+        if (target == CompilationTarget.HostWindows && !OperatingSystem.IsWindows())
+            throw new ZorbCompilerException("Target 'host-windows' currently requires a Windows host for build and run.");
+    }
+
+    private static bool UsesNoStdLib(CompilationTarget target)
+    {
+        return target == CompilationTarget.FreestandingLinux;
+    }
+
+    private static bool PreservesStart(CompilationTarget target)
+    {
+        return target == CompilationTarget.FreestandingLinux;
+    }
+
+    private static string ResolveOutputPath(Options options, CompilationTarget target)
     {
         if (options.OutputPathExplicitlySet || options.Mode == CommandMode.EmitC)
             return options.OutputPath;
 
-        if ((options.Mode == CommandMode.Build || options.Mode == CommandMode.Run) && OperatingSystem.IsWindows())
+        if ((options.Mode == CommandMode.Build || options.Mode == CommandMode.Run) && target == CompilationTarget.HostWindows)
             return "out.exe";
 
         return options.OutputPath;
@@ -495,14 +524,12 @@ class Program
             if (string.Equals(args[0], "build", StringComparison.Ordinal))
             {
                 options.Mode = CommandMode.Build;
-                options.NoStdLib = true;
                 options.OutputPath = "out";
                 i = 1;
             }
             else if (string.Equals(args[0], "run", StringComparison.Ordinal))
             {
                 options.Mode = CommandMode.Run;
-                options.NoStdLib = true;
                 options.OutputPath = "out";
                 i = 1;
             }
@@ -523,8 +550,26 @@ class Program
                     return options;
 
                 case "-nostdlib":
-                    options.NoStdLib = true;
-                    options.NoStdLibExplicitlySet = true;
+                    options.LegacyNoStdLib = true;
+                    break;
+
+                case "--target":
+                    if (i + 1 >= args.Length)
+                    {
+                        Console.Error.WriteLine("Missing value for --target.");
+                        PrintUsage();
+                        return null;
+                    }
+
+                    var targetText = args[++i];
+                    if (!TryParseCompilationTarget(targetText, out var parsedTarget))
+                    {
+                        Console.Error.WriteLine($"Unknown target: {targetText}");
+                        PrintUsage();
+                        return null;
+                    }
+
+                    options.Target = parsedTarget;
                     break;
 
                 case "--check":
@@ -604,10 +649,42 @@ class Program
         Console.WriteLine("  --emit-c             Emit C output (default unless --check is used).");
         Console.WriteLine("  -o, --output <path>  Write generated C or built binary to the given path.");
         Console.WriteLine("  --keep-c <path>      Keep the generated C file when using build or run.");
-        Console.WriteLine("  -nostdlib            Preserve _start and generate no-stdlib output.");
-        Console.WriteLine("                      Build/run default to freestanding output on Linux and hosted output on Windows.");
+        Console.WriteLine("  --target <name>      Select the compilation target.");
+        Console.WriteLine("                      Supported targets: host-linux, freestanding-linux, host-windows.");
+        Console.WriteLine("                      Build/run default to freestanding-linux on Linux and host-windows on Windows.");
+        Console.WriteLine("  -nostdlib            Legacy shorthand for --target freestanding-linux.");
         Console.WriteLine("  -h, --help           Show this help text.");
         Console.WriteLine("  --version            Show the compiler version.");
+    }
+
+    private static bool TryParseCompilationTarget(string text, out CompilationTarget target)
+    {
+        switch (text)
+        {
+            case "host-linux":
+                target = CompilationTarget.HostLinux;
+                return true;
+            case "freestanding-linux":
+                target = CompilationTarget.FreestandingLinux;
+                return true;
+            case "host-windows":
+                target = CompilationTarget.HostWindows;
+                return true;
+            default:
+                target = default;
+                return false;
+        }
+    }
+
+    private static string FormatTarget(CompilationTarget target)
+    {
+        return target switch
+        {
+            CompilationTarget.HostLinux => "host-linux",
+            CompilationTarget.FreestandingLinux => "freestanding-linux",
+            CompilationTarget.HostWindows => "host-windows",
+            _ => throw new ArgumentOutOfRangeException(nameof(target), target, null)
+        };
     }
 
     private static void DumpTokens(List<Token> tokens)
