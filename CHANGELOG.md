@@ -4,41 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-04-21
+
 ### Added
 
-- Local fixed-size array value copies in declarations and assignments when source and target types match exactly.
-- Regression coverage for local array-copy code generation and runtime non-aliasing behavior.
-- Short-circuit logical `&&` and `||` operators with semantic `bool`-only checking and dedicated regression coverage.
-- Typed struct literals such as `Pair{ left: 1, right: 2 }`.
-- Typed array literals such as `[4]u8{ 1, 2, 3, 4 }`.
-- Regression coverage for struct-literal field validation and array-literal element-count validation.
-- Semantic validation that rejects `catch` expressions inside global initializers before code generation.
-- Regression coverage for rejected global-initializer `catch` expressions.
-- Expanded Windows-hosted CI smoke coverage across multiple runtime fixtures.
-- Additional checked-in examples for import aliasing, error handling, and cross-platform stdlib usage.
-- Automated compilation coverage for checked-in examples in the fixture harness.
-- Unary boolean negation with `!`.
-- Boolean equality and inequality comparisons with `==` and `!=`.
-- Regression coverage for assigning comparison results to declared `bool` variables.
-- `break` statement support for exiting the nearest enclosing `while` loop.
-- Semantic validation that rejects `break` outside loop bodies.
-- Regression coverage for valid loop-breaking runtime behavior and invalid out-of-loop `break` usage.
-- Windows host support for `build` and `run`, with hosted output that recommends `clang-cl` and can also use `cl.exe`.
-- CLI host defaults that keep Linux `build` and `run` freestanding while using hosted output on Windows.
-- Windows build guidance in the README, including toolchain and linker expectations for standard-library-based programs.
-- GitHub Actions Windows smoke coverage that builds and runs the hello-world fixture through the hosted Windows CLI path.
+- Typed struct literals and typed fixed-size array literals, with semantic validation for struct fields and array element counts.
+- Local fixed-size array value-copy semantics for declarations and assignments when types match exactly.
+- Boolean language features: unary `!`, `==`, `!=`, and short-circuit `&&` / `||` with `bool`-only checking.
+- `break` support for exiting the nearest enclosing `while` loop, with semantic rejection outside loop bodies.
+- Windows host support for `build` and `run` using hosted output, with `clang-cl` as the recommended toolchain.
 
 ### Changed
 
-- The language docs and checked-in literals example now describe and demonstrate local array value-copy semantics.
-- The advanced threads example now uses the current array type spelling and current pointer-cast and inline-asm operand rules.
-- The Windows-hosted smoke workflow avoids redundant compiler rebuilds during repeated `dotnet run` steps.
+- Linux `build` and `run` remain freestanding by default, while Windows `build` and `run` now default to hosted output.
+- The checked-in examples and language docs were expanded to better cover import aliasing, error handling, literals, cross-platform stdlib usage, and array value-copy semantics.
+- The advanced threads example now reflects the current array syntax and pointer-cast and inline-asm operand rules.
+- CI now includes broader Windows-hosted smoke coverage and compilation checks for checked-in examples.
 
 ### Fixed
 
-- Version metadata and release workflow defaults now advance from the released `0.1.2` line to the `0.1.3-dev` line consistently.
-- Parser diagnostics for invalid postfix array type syntax now explain that arrays must be written as `[N]T`, for example `[4]u8`.
+- `catch` expressions are now rejected in global initializers before code generation.
+- Invalid postfix array type syntax now reports that arrays must be written as `[N]T`, for example `[4]u8`.
 - Declared `bool` types are treated consistently as built-in types during semantic validation and C code generation.
+- Version metadata and release workflow defaults now advance from the released `0.1.2` line to the `0.1.3-dev` line consistently.
 
 ## [0.1.2] - 2026-04-13
 
