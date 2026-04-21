@@ -546,7 +546,17 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 }
 
                 if (vd.Value != null)
-                    return $"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}] = {GenerateExpression(vd.Value)}{alignment};";
+                {
+                    if (!_insideFunctionBody)
+                        return $"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}] = {GenerateExpression(vd.Value)}{alignment};";
+
+                    var generated = GenerateExpressionWithPrelude(vd.Value);
+                    var sb = new StringBuilder();
+                    sb.Append(generated.Prelude);
+                    sb.AppendLine($"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}]{alignment};");
+                    AppendArrayCopyStatements(sb, safeName, vd.TypeName, generated.Code);
+                    return sb.ToString().TrimEnd();
+                }
                 return $"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}]{alignment};";
             }
             if (vd.Value is StringExpr)
@@ -641,11 +651,12 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             return "break;";
         if (stmt is AssignStmt assign)
         {
+            var generatedTarget = GenerateExpressionWithPrelude(assign.Target);
             var targetType = GetExprType(assign.Target);
             var valueExpr = assign.Value;
-            var generated = GenerateExpressionWithPrelude(valueExpr);
-            var valueType = generated.Type ?? GetExprType(valueExpr);
-            var valueCode = generated.Code;
+            var generatedValue = GenerateExpressionWithPrelude(valueExpr);
+            var valueType = generatedValue.Type ?? GetExprType(valueExpr);
+            var valueCode = generatedValue.Code;
             
             if (valueType != null && valueType.IsErrorUnion && (targetType == null || !targetType.IsErrorUnion))
             {
@@ -655,11 +666,20 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 valueCode = $"({valueCode}).value";
             }
 
-            var assignment = $"{GenerateExpression(assign.Target)} = {valueCode};";
-            if (string.IsNullOrEmpty(generated.Prelude))
+            if (targetType?.ArraySize is not null)
+            {
+                var sb = new StringBuilder();
+                sb.Append(generatedTarget.Prelude);
+                sb.Append(generatedValue.Prelude);
+                AppendArrayCopyStatements(sb, generatedTarget.Code, targetType, valueCode);
+                return sb.ToString().TrimEnd();
+            }
+
+            var assignment = $"{generatedTarget.Code} = {valueCode};";
+            if (string.IsNullOrEmpty(generatedTarget.Prelude) && string.IsNullOrEmpty(generatedValue.Prelude))
                 return assignment;
 
-            return generated.Prelude + assignment;
+            return generatedTarget.Prelude + generatedValue.Prelude + assignment;
         }
         if (stmt is ReturnNode ret)
         {
@@ -696,6 +716,26 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             return $"__asm__ volatile ({quotedCode} : {outputs} : {inputs} : {clobbers});";
         }
         throw new System.Exception("Unknown statement type");
+    }
+
+    private void AppendArrayCopyStatements(StringBuilder sb, string targetCode, TypeNode arrayType, string sourceCode)
+    {
+        if (arrayType.ArraySize is not int arrayLength)
+            throw new Exception("Array copy lowering requires a fixed-size array type.");
+
+        var elementType = arrayType.Clone();
+        elementType.ArraySize = null;
+
+        var elementPointerType = AddressOfType(elementType);
+        var targetTemp = NewTemp("array_copy_target");
+        var sourceTemp = NewTemp("array_copy_source");
+        var indexTemp = NewTemp("array_copy_index");
+
+        sb.AppendLine($"{MapType(elementPointerType, targetTemp)} = {targetCode};");
+        sb.AppendLine($"{MapType(elementPointerType, sourceTemp)} = {sourceCode};");
+        sb.AppendLine($"for (int {indexTemp} = 0; {indexTemp} < {arrayLength}; {indexTemp}++) {{");
+        sb.AppendLine($"    {targetTemp}[{indexTemp}] = {sourceTemp}[{indexTemp}];");
+        sb.Append("}");
     }
 
     private string GenerateStatementBlock(List<Statement> statements)

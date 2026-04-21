@@ -1,0 +1,5 @@
+uint8_t copy[4];
+uint8_t* __zorb_array_copy_target_
+uint8_t* __zorb_array_copy_source_
+for (int __zorb_array_copy_index_
+] = __zorb_array_copy_source_
