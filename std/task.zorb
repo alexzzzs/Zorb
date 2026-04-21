@@ -20,7 +20,11 @@ export active_fibers: i64 = 0
 
 export fn std.task.is_supported() -> bool {
     if Builtin.IsX86_64 {
-        return true
+        if !Builtin.IsWindows {
+            return true
+        }
+
+        return false
     }
 
     if Builtin.IsAArch64 {
