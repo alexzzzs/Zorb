@@ -9,7 +9,8 @@ using Zorb.Compiler.Parsing;
 using Zorb.Compiler.Semantic;
 using Zorb.Compiler.Utils;
 
-var fixtureRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "fixtures"));
+var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
+var fixtureRoot = Path.Combine(testProjectRoot, "fixtures");
 var fixtureDirs = Directory.GetDirectories(fixtureRoot).OrderBy(path => path, StringComparer.Ordinal).ToList();
 var failures = new List<string>();
 var updateSnapshots = args.Contains("--update-snapshots", StringComparer.Ordinal);
@@ -41,7 +42,8 @@ catch (Exception ex)
     Console.WriteLine("FAIL cli_workflow");
 }
 
-var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
+    ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
 var examplesRoot = Path.Combine(projectRoot, "examples");
 var examplePaths = Directory.EnumerateFiles(examplesRoot, "*.zorb", SearchOption.AllDirectories)
     .Where(path =>
@@ -102,7 +104,9 @@ static void RunCliWorkflowTests(string fixtureRoot)
         throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
     }
 
-    var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
+    var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
+        ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
     var compilerExecutable = GetCompilerExecutablePath(projectRoot);
     if (!File.Exists(compilerExecutable))
         throw new Exception($"Compiler executable was not found at '{compilerExecutable}'.");
@@ -697,6 +701,21 @@ static string EnsureToolAvailable(params string[] toolNames)
         throw new Exception($"Required runtime tool '{toolNames[0]}' was not found in PATH.");
 
     throw new Exception($"Required runtime tools were not found in PATH. Install one of: {string.Join(", ", toolNames)}.");
+}
+
+static string FindAncestorContainingFile(string startPath, string fileName)
+{
+    var current = new DirectoryInfo(Path.GetFullPath(startPath));
+    while (current != null)
+    {
+        var candidate = Path.Combine(current.FullName, fileName);
+        if (File.Exists(candidate))
+            return current.FullName;
+
+        current = current.Parent;
+    }
+
+    throw new Exception($"Unable to locate '{fileName}' from '{startPath}'.");
 }
 
 static string GetWindowsCompileArguments(string compiler, string cSourcePath, string outputPath)
