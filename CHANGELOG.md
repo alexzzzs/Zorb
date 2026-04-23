@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - New hardening fixtures covering `continue`, local `const` declarations, and exported `const` globals.
-- Additional hardening fixtures covering imported exported errors, private imported errors, and unknown attributes.
+- Additional hardening fixtures covering imports of exported vs. private symbols, and unknown-attribute parsing.
 - Direct CLI argument-regression coverage for help/version paths plus invalid option combinations.
 
 ### Changed

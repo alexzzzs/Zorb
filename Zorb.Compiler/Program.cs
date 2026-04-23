@@ -641,6 +641,13 @@ class Program
             return null;
         }
 
+        if (options.CheckOnly && options.OutputPathExplicitlySet)
+        {
+            Console.Error.WriteLine("Option -o/--output is not valid with --check.");
+            PrintUsage();
+            return null;
+        }
+
         if (options.OutputPathExplicitlySet && options.Mode == CommandMode.Run)
         {
             Console.Error.WriteLine("Option -o/--output is not valid with run.");
