@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text;
 using System.IO;
@@ -6,6 +7,7 @@ using System.Linq;
 using Zorb.Compiler.AST;
 using Zorb.Compiler.AST.Expressions;
 using Zorb.Compiler.AST.Statements;
+using Zorb.Compiler.Layouts;
 using Zorb.Compiler.Lexer;
 using Zorb.Compiler.Semantic;
 using Zorb.Compiler.Utils;
@@ -29,9 +31,14 @@ public class CGenerator
     private List<Node> _allNodes = new();
     private int _tempCounter;
     private bool _insideFunctionBody;
-    private bool _currentFunctionLowersToHostedMain;
     public bool PreserveStart { get; set; }
     public bool NoStdLib { get; set; }
+    public bool? BuiltinIsLinux { get; set; }
+    public bool? BuiltinIsWindows { get; set; }
+    public bool BuiltinIsBareMetal { get; set; }
+    public bool? BuiltinIsX86_64 { get; set; }
+    public bool? BuiltinIsAArch64 { get; set; }
+    public bool EmitLinuxSyscallWrapper { get; set; } = true;
 
     private static string GetErrorSymbolName(string errorCode)
     {
@@ -114,7 +121,6 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         _allNodes = allNodes;
         _tempCounter = 0;
         _insideFunctionBody = false;
-        _currentFunctionLowersToHostedMain = false;
         _continueTargets.Clear();
         
         CollectNodes(nodes, allNodes, processed, emittedItems, _currentDir);
@@ -151,33 +157,20 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             emittedItems.Add(cName);
             funcsSb.AppendLine(GenerateFunction(fn, null));
         }
+        if (HasHostedStartShim())
+            funcsSb.AppendLine(GenerateHostedMainShim());
 
         // PASS 2: Assemble the final file
         var sb = new StringBuilder();
 
         // Standard headers
         sb.AppendLine("#include <stdint.h>");
-        
-        sb.AppendLine("#if defined(__linux__)");
-        sb.AppendLine("    #define __zorb_builtin_is_linux 1");
-        sb.AppendLine("#else");
-        sb.AppendLine("    #define __zorb_builtin_is_linux 0");
-        sb.AppendLine("#endif");
-        sb.AppendLine("#if defined(_WIN32)");
-        sb.AppendLine("    #define __zorb_builtin_is_windows 1");
-        sb.AppendLine("#else");
-        sb.AppendLine("    #define __zorb_builtin_is_windows 0");
-        sb.AppendLine("#endif");
-        sb.AppendLine("#if defined(__x86_64__) || defined(_M_X64)");
-        sb.AppendLine("    #define __zorb_builtin_is_x86_64 1");
-        sb.AppendLine("#else");
-        sb.AppendLine("    #define __zorb_builtin_is_x86_64 0");
-        sb.AppendLine("#endif");
-        sb.AppendLine("#if defined(__aarch64__) || defined(_M_ARM64)");
-        sb.AppendLine("    #define __zorb_builtin_is_aarch64 1");
-        sb.AppendLine("#else");
-        sb.AppendLine("    #define __zorb_builtin_is_aarch64 0");
-        sb.AppendLine("#endif");
+
+        AppendBuiltinDefine(sb, "__zorb_builtin_is_linux", BuiltinIsLinux, "defined(__linux__)");
+        AppendBuiltinDefine(sb, "__zorb_builtin_is_windows", BuiltinIsWindows, "defined(_WIN32)");
+        AppendBuiltinDefine(sb, "__zorb_builtin_is_bare_metal", BuiltinIsBareMetal ? "1" : "0");
+        AppendBuiltinDefine(sb, "__zorb_builtin_is_x86_64", BuiltinIsX86_64, "defined(__x86_64__) || defined(_M_X64)");
+        AppendBuiltinDefine(sb, "__zorb_builtin_is_aarch64", BuiltinIsAArch64, "defined(__aarch64__) || defined(_M_ARM64)");
         
         // User C headers
         foreach (var header in _includes)
@@ -192,8 +185,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         }
         sb.AppendLine();
 
-        // Syscall shim always exists so non-Linux branches still parse on other hosts.
-        sb.AppendLine(LinuxSyscallWrapper);
+        if (EmitLinuxSyscallWrapper)
+            sb.AppendLine(LinuxSyscallWrapper);
 
         // Emit AST structs first (must be before prototypes)
         var emittedStructs = new HashSet<string>();
@@ -216,14 +209,15 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         foreach (var fn in functions)
         {
             if (fn.IsExtern) continue;
-            var lowersToHostedMain = ShouldLowerToHostedMain(fn.NamespacePath, fn.Name);
-            var cReturnType = lowersToHostedMain ? "int" : MapType(fn.ReturnType);
+            var cReturnType = MapType(fn.ReturnType);
             var cName = GetFunctionCName(fn.NamespacePath, fn.Name, null);
             if (emittedPrototypes.Contains(cName)) continue;
             emittedPrototypes.Add(cName);
             var parameters = string.Join(", ", fn.Parameters.Select(p => MapType(p.TypeName, p.Name)));
             prototypesSb.AppendLine($"{cReturnType} {cName}({parameters});");
         }
+        if (HasHostedStartShim())
+            prototypesSb.AppendLine("int main();");
         sb.Append(prototypesSb.ToString());
         sb.AppendLine();
 
@@ -296,18 +290,66 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
     {
         var sb = new StringBuilder();
         var cName = FlattenName(s.NamespacePath, s.Name, prefix);
-        sb.AppendLine($"struct {cName} {{");
-        foreach (var f in s.Fields)
+        var needsComputedLayout = StructLayout.HasPackedAttribute(s) || StructLayout.GetAlignment(s.Attributes) is > 0;
+        if (!needsComputedLayout)
         {
-            var cType = f.Type.IsFunction ? MapType(f.Type, f.Name) : MapType(f.Type);
-            if (f.Type.ArraySize != null)
-                sb.AppendLine($"    {cType} {f.Name}[{f.Type.ArraySize}];");
-            else if (f.Type.IsFunction)
+            sb.AppendLine($"struct {cName} {{");
+            foreach (var field in s.Fields)
+            {
+                var cType = field.TypeName.IsFunction ? MapType(field.TypeName, field.Name) : MapType(field.TypeName);
+                if (field.TypeName.ArraySize != null)
+                    sb.AppendLine($"    {cType} {field.Name}[{field.TypeName.ArraySize}];");
+                else if (field.TypeName.IsFunction)
+                    sb.AppendLine($"    {cType};");
+                else
+                    sb.AppendLine($"    {cType} {field.Name};");
+            }
+            sb.AppendLine("};");
+            sb.AppendLine();
+            return sb.ToString();
+        }
+
+        var attrs = new List<string>();
+        if (StructLayout.HasPackedAttribute(s))
+            attrs.Add("packed");
+        var alignment = StructLayout.GetAlignment(s.Attributes);
+        if (alignment is > 0)
+            attrs.Add($"aligned({alignment.Value})");
+        var attrStr = attrs.Count > 0 ? $" __attribute__(({string.Join(", ", attrs)}))" : "";
+
+        if (!StructLayout.TryCompute(s, name => _symbolTable.LookupStructNode(name), out var layout, out var error))
+            throw new InvalidOperationException(error ?? $"Unable to compute layout for struct '{cName}'.");
+
+        sb.AppendLine($"struct{attrStr} {cName} {{");
+        var currentOffset = 0;
+        var padIndex = 0;
+        foreach (var layoutField in layout!.Fields)
+        {
+            if (layout.IsExplicit && layoutField.Offset > currentOffset)
+            {
+                var gap = layoutField.Offset - currentOffset;
+                sb.AppendLine($"    uint8_t __zorb_pad_{padIndex++}[{gap}];");
+                currentOffset = layoutField.Offset;
+            }
+
+            var field = layoutField.Field;
+            var cType = field.TypeName.IsFunction ? MapType(field.TypeName, field.Name) : MapType(field.TypeName);
+            if (field.TypeName.ArraySize != null)
+                sb.AppendLine($"    {cType} {field.Name}[{field.TypeName.ArraySize}];");
+            else if (field.TypeName.IsFunction)
                 sb.AppendLine($"    {cType};");
             else
-                sb.AppendLine($"    {cType} {f.Name};");
+                sb.AppendLine($"    {cType} {field.Name};");
+
+            currentOffset = layoutField.Offset + layoutField.Size;
         }
         sb.AppendLine("};");
+        if (layout.IsExplicit)
+        {
+            _includes.Add("stddef.h");
+            foreach (var layoutField in layout.Fields)
+                sb.AppendLine($"_Static_assert(offsetof(struct {cName}, {layoutField.Field.Name}) == {layoutField.Offset}, \"offset mismatch for {cName}.{layoutField.Field.Name}\");");
+        }
         sb.AppendLine();
         return sb.ToString();
     }
@@ -324,8 +366,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
         var rawName = fn.Name;
         var sb = new StringBuilder();
-        var lowersToHostedMain = ShouldLowerToHostedMain(fn.NamespacePath, rawName);
-        var cReturnType = lowersToHostedMain ? "int" : MapType(fn.ReturnType);
+        var cReturnType = MapType(fn.ReturnType);
         var parameters = string.Join(", ", fn.Parameters.Select(p => MapType(p.TypeName, p.Name)));
         var cName = GetFunctionCName(fn.NamespacePath, rawName, prefix);
 
@@ -336,6 +377,12 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 attrs.Add("noinline");
             else if (attr == "noclone" && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 attrs.Add("noclone");
+            else if (attr == "abi(sysv)")
+                attrs.Add("sysv_abi");
+            else if (attr == "abi(ms)")
+                attrs.Add("ms_abi");
+            else if (attr.StartsWith("section:", StringComparison.Ordinal))
+                attrs.Add($"section(\"{EscapeCString(attr.Substring(8))}\")");
             else if (attr.StartsWith("align(") && attr.EndsWith(")"))
                 attrs.Add($"aligned({attr.Substring(6, attr.Length - 7)})");
         }
@@ -349,15 +396,25 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
         sb.AppendLine($"{attrStr}{cReturnType} {cName}({parameters}) {{");
         _insideFunctionBody = true;
-        _currentFunctionLowersToHostedMain = lowersToHostedMain;
         foreach (var stmt in fn.Body)
             sb.AppendLine($"    {GenerateStatement(stmt)}");
-        if (lowersToHostedMain && fn.ReturnType.Name == "void" && !fn.ReturnType.IsPointer && !fn.ReturnType.IsErrorUnion)
-            sb.AppendLine("    return 0;");
         _insideFunctionBody = false;
-        _currentFunctionLowersToHostedMain = false;
         sb.AppendLine("}");
         return sb.ToString();
+    }
+
+    private string GetVariableAttributeSuffix(List<string> attributes)
+    {
+        var attrs = new List<string>();
+        foreach (var attr in attributes)
+        {
+            if (attr.StartsWith("align(") && attr.EndsWith(")"))
+                attrs.Add($"aligned({attr.Substring(6, attr.Length - 7)})");
+            else if (attr.StartsWith("section:", StringComparison.Ordinal))
+                attrs.Add($"section(\"{EscapeCString(attr.Substring(8))}\")");
+        }
+
+        return attrs.Count > 0 ? $" __attribute__(({string.Join(", ", attrs)}))" : "";
     }
 
     private string MapType(TypeNode type, string name = "")
@@ -406,6 +463,9 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             // If not a primitive, it's a struct - flatten name and prefix with 'struct'
             _ => "struct " + FlattenName(type.NamespacePath, type.Name)
         };
+
+        if (type.IsVolatile)
+            baseType = "volatile " + baseType;
 
         if (type.IsPointer && type.Name != "string")
         {
@@ -486,7 +546,15 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         
         _dynamicStructs.AppendLine(structCode);
         
-        _structs.Insert(0, new StructNode { Name = resultName, Fields = new List<(string, TypeNode)> { ("value", innerType), ("error", new TypeNode { Name = "i32" }) } });
+        _structs.Insert(0, new StructNode
+        {
+            Name = resultName,
+            Fields = new List<StructField>
+            {
+                new() { Name = "value", TypeName = innerType },
+                new() { Name = "error", TypeName = new TypeNode { Name = "i32" } }
+            }
+        });
     }
 
     private void GenerateSliceStruct(TypeNode sliceType, string sliceName)
@@ -517,15 +585,54 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         return string.Join("_", parts);
     }
 
-    private bool ShouldLowerToHostedMain(List<string> namespacePath, string name)
+    private bool HasHostedStartShim()
     {
-        return !PreserveStart && namespacePath.Count == 0 && name == "_start";
+        if (PreserveStart)
+            return false;
+
+        return _allNodes.OfType<FunctionDecl>().Any(fn => fn.NamespacePath.Count == 0 && fn.Name == "_start");
+    }
+
+    private FunctionDecl? GetHostedStartFunction()
+    {
+        if (!HasHostedStartShim())
+            return null;
+
+        return _allNodes.OfType<FunctionDecl>().FirstOrDefault(fn => fn.NamespacePath.Count == 0 && fn.Name == "_start");
+    }
+
+    private bool IsHostedStartFunction(List<string> namespacePath, string name)
+    {
+        return HasHostedStartShim() && namespacePath.Count == 0 && name == "_start";
+    }
+
+    private bool ShouldRenameHostedMain(List<string> namespacePath, string name)
+    {
+        return HasHostedStartShim() && namespacePath.Count == 0 && name == "main";
+    }
+
+    private string GenerateHostedMainShim()
+    {
+        var startFunction = GetHostedStartFunction();
+        if (startFunction == null)
+            return "";
+
+        var startName = GetFunctionCName(startFunction.NamespacePath, startFunction.Name, null);
+        var sb = new StringBuilder();
+        sb.AppendLine("int main() {");
+        sb.AppendLine($"    {startName}();");
+        sb.AppendLine("    return 0;");
+        sb.AppendLine("}");
+        return sb.ToString();
     }
 
     private string GetFunctionCName(List<string> namespacePath, string name, string? prefix = null)
     {
-        if (ShouldLowerToHostedMain(namespacePath, name))
-            return "main";
+        if (IsHostedStartFunction(namespacePath, name))
+            return "__zorb_user_start";
+
+        if (ShouldRenameHostedMain(namespacePath, name))
+            return "__zorb_user_main";
 
         return FlattenName(namespacePath, name, prefix);
     }
@@ -534,6 +641,11 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
     {
         if (stmt is ExpressionStatement es)
         {
+            if (es.Expression is BuiltinExpr { Name: "Builtin.CompileError" } compileErrorExpr)
+            {
+                return $"#error \"{EscapeCString(compileErrorExpr.Message ?? string.Empty)}\"";
+            }
+
             var generated = GenerateExpressionWithPrelude(es.Expression);
             if (string.IsNullOrEmpty(generated.Prelude))
                 return generated.Code + ";";
@@ -550,30 +662,26 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
             _localVars[vd.Name] = vd.TypeName; // Track the variable type
 
+            var declarationType = vd.TypeName.Clone();
+            if (vd.Attributes.Contains("volatile"))
+                declarationType.IsVolatile = true;
+
             var isFuncPtr = vd.TypeName.IsFunction;
-            var alignment = "";
-            foreach (var attr in vd.Attributes)
+            var attributeSuffix = GetVariableAttributeSuffix(vd.Attributes);
+            if (declarationType.ArraySize != null)
             {
-                if (attr.StartsWith("align(") && attr.EndsWith(")"))
-                {
-                    var alignNum = attr.Substring(6, attr.Length - 7);
-                    alignment = $" __attribute__((aligned(" + alignNum + ")))";
-                }
-            }
-            if (vd.TypeName.ArraySize != null)
-            {
-                var cTypeArray = isFuncPtr ? MapType(vd.TypeName, safeName) : MapType(vd.TypeName);
+                var cTypeArray = isFuncPtr ? MapType(declarationType, safeName) : MapType(declarationType);
                 if (vd.Value is ArrayLiteralExpr arrayLiteral)
                 {
                     var generatedElements = arrayLiteral.Elements.Select(GenerateExpressionWithPrelude).ToList();
                     if (generatedElements.All(generatedElement => string.IsNullOrEmpty(generatedElement.Prelude)))
                     {
                         var initializer = string.Join(", ", generatedElements.Select(generatedElement => generatedElement.Code));
-                        return $"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}] = {{ {initializer} }}{alignment};";
+                        return $"{cTypeArray} {safeName}[{declarationType.ArraySize}]{attributeSuffix} = {{ {initializer} }};";
                     }
 
                     var sb = new StringBuilder();
-                    sb.AppendLine($"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}]{alignment};");
+                    sb.AppendLine($"{cTypeArray} {safeName}[{declarationType.ArraySize}]{attributeSuffix};");
                     for (int i = 0; i < generatedElements.Count; i++)
                     {
                         if (!string.IsNullOrEmpty(generatedElements[i].Prelude))
@@ -586,31 +694,33 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 if (vd.Value != null)
                 {
                     if (!_insideFunctionBody)
-                        return $"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}] = {GenerateExpression(vd.Value)}{alignment};";
+                        return $"{cTypeArray} {safeName}[{declarationType.ArraySize}]{attributeSuffix} = {GenerateExpression(vd.Value)};";
 
                     var generated = GenerateExpressionWithPrelude(vd.Value);
                     var sb = new StringBuilder();
                     sb.Append(generated.Prelude);
-                    sb.AppendLine($"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}]{alignment};");
-                    AppendArrayCopyStatements(sb, safeName, vd.TypeName, generated.Code);
+                    sb.AppendLine($"{cTypeArray} {safeName}[{declarationType.ArraySize}]{attributeSuffix};");
+                    AppendArrayCopyStatements(sb, safeName, declarationType, generated.Code);
                     return sb.ToString().TrimEnd();
                 }
-                return $"{cTypeArray} {safeName}[{vd.TypeName.ArraySize}]{alignment};";
+                return $"{cTypeArray} {safeName}[{declarationType.ArraySize}]{attributeSuffix};";
             }
             if (vd.Value is StringExpr)
             {
-                var baseType = vd.TypeName.Name == "string" ? "char" : "uint8_t";
-                return $"{baseType} {safeName}[] = {GenerateExpression(vd.Value)}{alignment};";
+                var elementType = declarationType.Name == "string"
+                    ? new TypeNode { Name = "char", IsVolatile = declarationType.IsVolatile }
+                    : new TypeNode { Name = "u8", IsVolatile = declarationType.IsVolatile };
+                return $"{MapType(elementType)} {safeName}[]{attributeSuffix} = {GenerateExpression(vd.Value)};";
             }
-            var cType = isFuncPtr ? MapType(vd.TypeName, safeName) : MapType(vd.TypeName);
+            var cType = isFuncPtr ? MapType(declarationType, safeName) : MapType(declarationType);
             var constKeyword = vd.IsConst ? "const " : "";
             if (vd.Value != null)
             {
                 var generated = CoerceExpressionToTargetType(vd.TypeName, vd.Value, GenerateExpressionWithPrelude(vd.Value));
                 var valueCode = generated.Code;
                 var declaration = isFuncPtr
-                    ? $"{constKeyword}{cType} = {valueCode}{alignment};"
-                    : $"{constKeyword}{cType} {safeName} = {valueCode}{alignment};";
+                    ? $"{constKeyword}{cType}{attributeSuffix} = {valueCode};"
+                    : $"{constKeyword}{cType} {safeName}{attributeSuffix} = {valueCode};";
 
                 if (string.IsNullOrEmpty(generated.Prelude))
                     return declaration;
@@ -623,8 +733,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 return sb.ToString();
             }
             if (isFuncPtr)
-                return $"{constKeyword}{cType}{alignment};";
-            return $"{constKeyword}{cType} {safeName}{alignment};";
+                return $"{constKeyword}{cType}{attributeSuffix};";
+            return $"{constKeyword}{cType} {safeName}{attributeSuffix};";
         }
         if (stmt is IfStmt ifs)
         {
@@ -814,7 +924,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         if (stmt is ReturnNode ret)
         {
             if (ret.Value == null)
-                return _currentFunctionLowersToHostedMain ? "return 0;" : "return;";
+                return "return;";
 
             var fnReturnType = _localVars.TryGetValue("__return_type", out var rt) ? rt : null;
             var generated = CoerceExpressionToTargetType(fnReturnType, (Expr)ret.Value, GenerateExpressionWithPrelude((Expr)ret.Value));
@@ -899,16 +1009,19 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             switch (builtin.Name)
             {
                 case "Builtin.IsLinux":
-                    condition = "defined(__linux__)";
+                    condition = "__zorb_builtin_is_linux";
                     return true;
                 case "Builtin.IsWindows":
-                    condition = "defined(_WIN32)";
+                    condition = "__zorb_builtin_is_windows";
+                    return true;
+                case "Builtin.IsBareMetal":
+                    condition = "__zorb_builtin_is_bare_metal";
                     return true;
                 case "Builtin.IsX86_64":
-                    condition = "defined(__x86_64__) || defined(_M_X64)";
+                    condition = "__zorb_builtin_is_x86_64";
                     return true;
                 case "Builtin.IsAArch64":
-                    condition = "defined(__aarch64__) || defined(_M_ARM64)";
+                    condition = "__zorb_builtin_is_aarch64";
                     return true;
             }
         }
@@ -921,6 +1034,15 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 condition = binary.Operator == "&&"
                     ? $"({leftCondition}) && ({rightCondition})"
                     : $"({leftCondition}) || ({rightCondition})";
+                return true;
+            }
+        }
+
+        if (expr is UnaryExpr unary && unary.Operator == "!")
+        {
+            if (TryGetPlatformPreprocessorCondition(unary.Operand, out var operandCondition))
+            {
+                condition = $"!({operandCondition})";
                 return true;
             }
         }
@@ -1236,6 +1358,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 {
                     "Builtin.IsLinux" => "__zorb_builtin_is_linux",
                     "Builtin.IsWindows" => "__zorb_builtin_is_windows",
+                    "Builtin.IsBareMetal" => "__zorb_builtin_is_bare_metal",
                     "Builtin.IsX86_64" => "__zorb_builtin_is_x86_64",
                     "Builtin.IsAArch64" => "__zorb_builtin_is_aarch64",
                     "true" => "1",
@@ -1423,6 +1546,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             {
                 Name = operandType.Name,
                 NamespacePath = new List<string>(operandType.NamespacePath),
+                IsVolatile = operandType.IsVolatile,
                 IsPointer = true,
                 PointerLevel = 1
             };
@@ -1494,6 +1618,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             return left == right;
 
         if (left.Name != right.Name ||
+            left.IsVolatile != right.IsVolatile ||
             left.IsSlice != right.IsSlice ||
             left.IsPointer != right.IsPointer ||
             left.PointerLevel != right.PointerLevel ||
@@ -1636,7 +1761,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             {
                 foreach (var f in s.Fields)
                 {
-                    if (f.Name == fieldName) return f.Type.Clone();
+                    if (f.Name == fieldName) return f.TypeName.Clone();
                 }
             }
         }
@@ -1687,5 +1812,25 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 : null,
             _ => null
         };
+    }
+
+    private static void AppendBuiltinDefine(StringBuilder sb, string macroName, string value)
+    {
+        sb.AppendLine($"#define {macroName} {value}");
+    }
+
+    private static void AppendBuiltinDefine(StringBuilder sb, string macroName, bool? fixedValue, string condition)
+    {
+        if (fixedValue.HasValue)
+        {
+            AppendBuiltinDefine(sb, macroName, fixedValue.Value ? "1" : "0");
+            return;
+        }
+
+        sb.AppendLine($"#if {condition}");
+        sb.AppendLine($"    #define {macroName} 1");
+        sb.AppendLine("#else");
+        sb.AppendLine($"    #define {macroName} 0");
+        sb.AppendLine("#endif");
     }
 }

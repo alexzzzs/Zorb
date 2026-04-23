@@ -51,6 +51,24 @@ namespace Zorb.Compiler.Lexer;
             return _source[index];
         }
 
+        // Maps an identifier to its contextual keyword TokenType when in attribute context.
+        // Returns the mapped TokenType or null if the identifier is not a contextual keyword.
+        public static TokenType? MapContextualKeyword(string identifier)
+        {
+            return identifier switch
+            {
+                "abi" => TokenType.Abi,
+                "section" => TokenType.Section,
+                "packed" => TokenType.Packed,
+                "layout" => TokenType.Layout,
+                "offset" => TokenType.Offset,
+                "noinline" => TokenType.NoInline,
+                "noclone" => TokenType.NoClone,
+                "volatile" => TokenType.Volatile,
+                _ => null
+            };
+        }
+
         public List<Token> Tokenize()
     {
         var tokens = new List<Token>();
@@ -393,10 +411,6 @@ namespace Zorb.Compiler.Lexer;
                     tokens.Add(new Token(TokenType.Extern, "", loc.Item1, loc.Item2));
                 else if (text == "align")
                     tokens.Add(new Token(TokenType.Align, "", loc.Item1, loc.Item2));
-                else if (text == "noinline")
-                    tokens.Add(new Token(TokenType.NoInline, "", loc.Item1, loc.Item2));
-                else if (text == "noclone")
-                    tokens.Add(new Token(TokenType.NoClone, "", loc.Item1, loc.Item2));
                 else if (text == "catch")
                     tokens.Add(new Token(TokenType.Catch, "", loc.Item1, loc.Item2));
                 else if (text == "const")

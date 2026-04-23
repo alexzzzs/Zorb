@@ -22,7 +22,8 @@ The compiler supports a focused language subset:
 - typed struct literals, typed array literals, and local array value copies
 - imports, including `import "file.zorb" as alias`
 - inline assembly
-- builtins such as `Builtin.IsLinux`, `Builtin.IsWindows`, and `Builtin.sizeof(...)`
+- target-facing attributes such as `section("...")`, `packed`, `layout(explicit)`, `offset(N)`, `abi(...)`, and `volatile`
+- builtins such as `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`, and `Builtin.sizeof(...)`
 
 The current semantic source of truth is [SEMANTICS.md](./SEMANTICS.md).
 
@@ -118,17 +119,39 @@ Keep the generated C while building or running:
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb -o out --keep-c out.c
 ```
 
-Supported `--target` values are `host-linux`, `freestanding-linux`, and `host-windows`.
-On Linux, `build` and `run` default to `freestanding-linux`, which preserves `_start`.
+Supported `--target` values are `host-linux`, `freestanding-linux`, `bare-metal-x86_64`, and `host-windows`.
+On Linux, `build` and `run` default to `freestanding-linux`, which preserves `_start` and links a Linux executable without the usual C runtime startup files.
 The legacy `-nostdlib` flag remains available as shorthand for `--target freestanding-linux`.
 
-For freestanding output, compile the generated C with the required Linux x86_64 flags:
+Build a bare-metal x86_64 kernel ELF with the bundled linker script:
+
+```bash
+dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 -o kernel.elf --keep-c kernel.c
+```
+
+Use a custom linker script instead of the bundled one:
+
+```bash
+dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --linker-script kernel.ld -o kernel.elf
+```
+
+Emit the linker script used for the build so you can inspect or customize it:
+
+```bash
+dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --emit-linker-script kernel.ld -o kernel.elf
+```
+
+`bare-metal-x86_64` preserves `_start`, sets `Builtin.IsBareMetal`, routes `std.io.write(...)` to the x86_64 debug port `0xE9`, links a kernel ELF with either the bundled linker script or the script passed to `--linker-script`, and can write that exact script to disk with `--emit-linker-script`.
+`run` is intentionally unsupported for bare-metal output.
+
+For freestanding Linux output, compile the generated C with the required Linux x86_64 flags:
 
 ```bash
 gcc -O2 -nostdlib -fno-pie -no-pie -z execstack -fno-builtin out.c -o out
 ```
 
 Flag rationale is documented in [CFLAGS.md](./CFLAGS.md).
+Those flags are for Linux freestanding binaries, not for true bare-metal kernels.
 
 ## Windows Host Builds
 
@@ -155,7 +178,7 @@ dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --tar
 
 Notes:
 
-- Windows `build` and `run` default to `host-windows` and map `_start` to `main`.
+- Windows `build` and `run` default to `host-windows` and use a generated hosted `main` shim when source defines `_start`.
 - `-nostdlib` build and run remain Linux-oriented and are not currently supported on Windows hosts.
 - `clang-cl` is the recommended Windows toolchain.
 - `cl.exe` may also work, but `clang-cl` is the preferred default.

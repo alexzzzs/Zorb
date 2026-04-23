@@ -60,9 +60,30 @@ export fn std.io.eprint_i64(val: i64) {
     std.io.write(std.io.stderr_fd(), digits)
 }
 
+// Writes a buffer to the specified file descriptor.
+// On bare-metal targets, only x86_64 is supported (via port 0xE9 debug output).
+// Non-x86_64 bare-metal targets require platform-specific UART/MMIO wiring.
 export fn std.io.write(fd: i32, buf: []u8) {
     validated_len: i64 = buf.len
     if validated_len < 0 {
+        return
+    }
+
+    if Builtin.IsBareMetal {
+        if Builtin.IsX86_64 {
+            index: i64 = 0
+            while index < validated_len {
+                ch: u8 = buf[index]
+                asm {
+                    "outb %b0, $0xE9"
+                    : : "a"(ch) : "memory"
+                }
+                index = index + 1
+            }
+        }
+        if !Builtin.IsX86_64 {
+            Builtin.CompileError("Bare-metal output is only supported on x86_64. Non-x86_64 bare-metal targets require platform-specific UART/MMIO wiring.")
+        }
         return
     }
 

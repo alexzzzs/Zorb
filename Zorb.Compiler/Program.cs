@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Zorb.Compiler.AST;
 using Zorb.Compiler.Codegen;
 using Zorb.Compiler.Lexer;
@@ -11,9 +12,48 @@ using Zorb.Compiler.Utils;
 
 class Program
 {
+    private const string BareMetalX86_64ObjectCompileFlags = "-O2 -ffreestanding -fno-pie -no-pie -fno-builtin -fno-stack-protector -m64 -mno-red-zone -c";
     private const string HostLinuxFreestandingCompileFlags = "-O2 -nostdlib -fno-pie -no-pie -z execstack -fno-builtin";
     private const string HostLinuxHostedCompileFlags = "-O2";
     private const int RunTimeoutMilliseconds = 30_000;
+    private const string BareMetalX86_64DefaultLinkerScript = """
+OUTPUT_FORMAT(elf64-x86-64)
+OUTPUT_ARCH(i386:x86-64)
+ENTRY(_start)
+
+SECTIONS
+{
+    . = 1M;
+
+    .text ALIGN(4K) :
+    {
+        *(.text .text.*)
+    }
+
+    .rodata ALIGN(4K) :
+    {
+        *(.rodata .rodata.*)
+    }
+
+    .data ALIGN(4K) :
+    {
+        *(.data .data.*)
+    }
+
+    .bss ALIGN(4K) :
+    {
+        *(COMMON)
+        *(.bss .bss.*)
+    }
+
+    /DISCARD/ :
+    {
+        *(.comment)
+        *(.eh_frame)
+        *(.note .note.*)
+    }
+}
+""";
 
     private enum CommandMode
     {
@@ -26,6 +66,7 @@ class Program
     {
         HostLinux,
         FreestandingLinux,
+        BareMetalX86_64,
         HostWindows
     }
 
@@ -36,6 +77,8 @@ class Program
         public string InputPath { get; set; } = "";
         public string OutputPath { get; set; } = "out.c";
         public string? KeepCPath { get; set; }
+        public string? LinkerScriptPath { get; set; }
+        public string? EmitLinkerScriptPath { get; set; }
         public bool CheckOnly { get; set; }
         public bool EmitC { get; set; } = true;
         public bool DumpTokens { get; set; }
@@ -66,6 +109,8 @@ class Program
             }
 
             var target = ResolveCompilationTarget(options);
+            if (!ValidateTargetSpecificOptions(options, target))
+                return 1;
             EnsureTargetSupportedForCurrentHost(options.Mode, target);
 
             var outputPath = ResolveOutputPath(options, target);
@@ -82,7 +127,7 @@ class Program
             return options.Mode switch
             {
                 CommandMode.EmitC => EmitCOutput(compilation.GeneratedCode, outputPath),
-                CommandMode.Build => BuildExecutable(compilation.InputPath, compilation.GeneratedCode, outputPath, options.KeepCPath, target),
+                CommandMode.Build => BuildExecutable(compilation.InputPath, compilation.GeneratedCode, outputPath, options.KeepCPath, options.LinkerScriptPath, options.EmitLinkerScriptPath, target),
                 CommandMode.Run => RunExecutable(compilation.InputPath, compilation.GeneratedCode, options.KeepCPath, target),
                 _ => 1
             };
@@ -134,6 +179,7 @@ class Program
                 PreserveStart = PreservesStart(target),
                 NoStdLib = UsesNoStdLib(target)
             };
+            ConfigureGeneratorForTarget(generator, target);
 
             return new CompiledProgram(
                 inputPath,
@@ -166,11 +212,16 @@ class Program
         return 0;
     }
 
-    private static int BuildExecutable(string inputPath, string cCode, string outputPath, string? keepCPath, CompilationTarget target)
+    private static int BuildExecutable(string inputPath, string cCode, string outputPath, string? keepCPath, string? linkerScriptPath, string? emitLinkerScriptPath, CompilationTarget target)
     {
         if (target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux)
         {
             return BuildExecutableOnLinux(cCode, outputPath, keepCPath, UsesNoStdLib(target));
+        }
+
+        if (target == CompilationTarget.BareMetalX86_64)
+        {
+            return BuildBareMetalImageOnLinux(cCode, outputPath, keepCPath, linkerScriptPath, emitLinkerScriptPath);
         }
 
         if (target == CompilationTarget.HostWindows)
@@ -216,6 +267,103 @@ class Program
         return 0;
     }
 
+    private static int BuildBareMetalImageOnLinux(string cCode, string outputPath, string? keepCPath, string? linkerScriptPath, string? emitLinkerScriptPath)
+    {
+        EnsureToolAvailable("gcc");
+        EnsureToolAvailable("ld");
+
+        var fullOutputPath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory());
+
+        var cSourcePath = keepCPath != null
+            ? Path.GetFullPath(keepCPath)
+            : Path.Combine(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(fullOutputPath) + ".c");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
+        File.WriteAllText(cSourcePath, cCode);
+
+        var tempDir = Path.Combine(
+            Path.GetTempPath(),
+            "zorb-bare-metal-build",
+            Path.GetFileNameWithoutExtension(fullOutputPath) + "-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var objectPath = Path.Combine(tempDir, Path.GetFileNameWithoutExtension(fullOutputPath) + ".o");
+            var linkerScript = ResolveBareMetalLinkerScript(linkerScriptPath, tempDir);
+
+            if (emitLinkerScriptPath != null)
+                EmitBareMetalLinkerScript(linkerScript.Content, emitLinkerScriptPath);
+
+            var compile = RunProcess(
+                "gcc",
+                $"{BareMetalX86_64ObjectCompileFlags} \"{cSourcePath}\" -o \"{objectPath}\"",
+                Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
+
+            if (compile.ExitCode != 0)
+            {
+                Console.Error.WriteLine("Bare-metal object build failed.");
+                if (!string.IsNullOrWhiteSpace(compile.StdErr))
+                    Console.Error.Write(compile.StdErr);
+                if (!string.IsNullOrWhiteSpace(compile.StdOut))
+                    Console.Error.Write(compile.StdOut);
+                return compile.ExitCode;
+            }
+
+            var link = RunProcess(
+                "ld",
+                $"-m elf_x86_64 -T \"{linkerScript.Path}\" -z max-page-size=0x1000 -o \"{fullOutputPath}\" \"{objectPath}\"",
+                tempDir);
+
+            if (link.ExitCode != 0)
+            {
+                Console.Error.WriteLine("Bare-metal link failed.");
+                if (!string.IsNullOrWhiteSpace(link.StdErr))
+                    Console.Error.Write(link.StdErr);
+                if (!string.IsNullOrWhiteSpace(link.StdOut))
+                    Console.Error.Write(link.StdOut);
+                return link.ExitCode;
+            }
+
+            Console.WriteLine($"Bare-metal kernel image built at {fullOutputPath}");
+            Console.WriteLine($"Intermediate C written to {cSourcePath}");
+            Console.WriteLine(linkerScriptPath != null
+                ? $"Linker script: {Path.GetFullPath(linkerScriptPath)}"
+                : "Linker script: bundled bare-metal-x86_64 default");
+            if (emitLinkerScriptPath != null)
+                Console.WriteLine($"Emitted linker script to {Path.GetFullPath(emitLinkerScriptPath)}");
+            return 0;
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static ResolvedLinkerScript ResolveBareMetalLinkerScript(string? linkerScriptPath, string tempDir)
+    {
+        if (linkerScriptPath != null)
+        {
+            var fullLinkerScriptPath = Path.GetFullPath(linkerScriptPath);
+            if (!File.Exists(fullLinkerScriptPath))
+                throw new ZorbCompilerException($"Linker script '{fullLinkerScriptPath}' does not exist.");
+            return new ResolvedLinkerScript(fullLinkerScriptPath, File.ReadAllText(fullLinkerScriptPath));
+        }
+
+        var defaultLinkerScriptPath = Path.Combine(tempDir, "bare-metal-x86_64.ld");
+        File.WriteAllText(defaultLinkerScriptPath, BareMetalX86_64DefaultLinkerScript);
+        return new ResolvedLinkerScript(defaultLinkerScriptPath, BareMetalX86_64DefaultLinkerScript);
+    }
+
+    private static void EmitBareMetalLinkerScript(string linkerScriptContent, string emitLinkerScriptPath)
+    {
+        var fullEmitPath = Path.GetFullPath(emitLinkerScriptPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullEmitPath) ?? Directory.GetCurrentDirectory());
+        File.WriteAllText(fullEmitPath, linkerScriptContent);
+    }
+
     private static int BuildExecutableOnWindows(string cCode, string outputPath, string? keepCPath)
     {
         var compiler = EnsureToolAvailable("clang-cl", "cl");
@@ -255,6 +403,12 @@ class Program
         if (target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux)
         {
             return RunExecutableOnLinux(inputPath, cCode, keepCPath, UsesNoStdLib(target));
+        }
+
+        if (target == CompilationTarget.BareMetalX86_64)
+        {
+            Console.Error.WriteLine($"Run does not support target '{FormatTarget(target)}'. Build the object file and link it with your kernel or bootloader toolchain.");
+            return 1;
         }
 
         if (target == CompilationTarget.HostWindows)
@@ -489,6 +643,16 @@ class Program
         if ((target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux) && !OperatingSystem.IsLinux())
             throw new ZorbCompilerException($"Target '{FormatTarget(target)}' currently requires a Linux host for build and run.");
 
+        if (target == CompilationTarget.BareMetalX86_64)
+        {
+            if (mode == CommandMode.Run)
+                return;
+
+            if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
+                throw new ZorbCompilerException("Target 'bare-metal-x86_64' currently requires a Linux x86_64 host for build.");
+            return;
+        }
+
         if (target == CompilationTarget.HostWindows && !OperatingSystem.IsWindows())
             throw new ZorbCompilerException("Target 'host-windows' currently requires a Windows host for build and run.");
     }
@@ -500,7 +664,7 @@ class Program
 
     private static bool PreservesStart(CompilationTarget target)
     {
-        return target == CompilationTarget.FreestandingLinux;
+        return target == CompilationTarget.FreestandingLinux || target == CompilationTarget.BareMetalX86_64;
     }
 
     private static string ResolveOutputPath(Options options, CompilationTarget target)
@@ -511,7 +675,66 @@ class Program
         if ((options.Mode == CommandMode.Build || options.Mode == CommandMode.Run) && target == CompilationTarget.HostWindows)
             return "out.exe";
 
+        if (options.Mode == CommandMode.Build && target == CompilationTarget.BareMetalX86_64)
+            return "out.elf";
+
         return options.OutputPath;
+    }
+
+    private static bool ValidateTargetSpecificOptions(Options options, CompilationTarget target)
+    {
+        if (options.LinkerScriptPath == null && options.EmitLinkerScriptPath == null)
+            return true;
+
+        if (options.Mode != CommandMode.Build || target != CompilationTarget.BareMetalX86_64)
+        {
+            if (options.LinkerScriptPath != null)
+                Console.Error.WriteLine("Option --linker-script is only valid with build --target bare-metal-x86_64.");
+            else
+                Console.Error.WriteLine("Option --emit-linker-script is only valid with build --target bare-metal-x86_64.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void ConfigureGeneratorForTarget(CGenerator generator, CompilationTarget target)
+    {
+        switch (target)
+        {
+            case CompilationTarget.HostLinux:
+            case CompilationTarget.FreestandingLinux:
+                generator.BuiltinIsLinux = true;
+                generator.BuiltinIsWindows = false;
+                generator.BuiltinIsBareMetal = false;
+                generator.BuiltinIsX86_64 = null;
+                generator.BuiltinIsAArch64 = null;
+                generator.EmitLinuxSyscallWrapper = true;
+                break;
+
+            case CompilationTarget.BareMetalX86_64:
+                generator.BuiltinIsLinux = false;
+                generator.BuiltinIsWindows = false;
+                generator.BuiltinIsBareMetal = true;
+                generator.BuiltinIsX86_64 = true;
+                generator.BuiltinIsAArch64 = false;
+                generator.EmitLinuxSyscallWrapper = false;
+                break;
+
+            case CompilationTarget.HostWindows:
+                generator.BuiltinIsLinux = false;
+                generator.BuiltinIsWindows = true;
+                generator.BuiltinIsBareMetal = false;
+                generator.BuiltinIsX86_64 = null;
+                generator.BuiltinIsAArch64 = null;
+                // Keep the syscall compatibility macro available so dead Linux-only
+                // branches in shared stdlib code still parse on Windows hosts.
+                generator.EmitLinuxSyscallWrapper = true;
+                break;
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(target), target, null);
+        }
     }
 
     private static Options? ParseArgs(string[] args)
@@ -593,6 +816,26 @@ class Program
                         return null;
                     }
                     options.KeepCPath = args[++i];
+                    break;
+
+                case "--linker-script":
+                    if (i + 1 >= args.Length)
+                    {
+                        Console.Error.WriteLine("Missing value for --linker-script.");
+                        PrintUsage();
+                        return null;
+                    }
+                    options.LinkerScriptPath = args[++i];
+                    break;
+
+                case "--emit-linker-script":
+                    if (i + 1 >= args.Length)
+                    {
+                        Console.Error.WriteLine("Missing value for --emit-linker-script.");
+                        PrintUsage();
+                        return null;
+                    }
+                    options.EmitLinkerScriptPath = args[++i];
                     break;
 
                 case "-o":
@@ -677,9 +920,13 @@ class Program
         Console.WriteLine("  --emit-c             Emit C output (default unless --check is used).");
         Console.WriteLine("  -o, --output <path>  Write generated C or built binary to the given path.");
         Console.WriteLine("  --keep-c <path>      Keep the generated C file when using build or run.");
+        Console.WriteLine("  --linker-script <p>  Use a custom linker script for build --target bare-metal-x86_64.");
+        Console.WriteLine("  --emit-linker-script <p>");
+        Console.WriteLine("                      Write the linker script used by build --target bare-metal-x86_64 to the given path.");
         Console.WriteLine("  --target <name>      Select the compilation target.");
-        Console.WriteLine("                      Supported targets: host-linux, freestanding-linux, host-windows.");
+        Console.WriteLine("                      Supported targets: host-linux, freestanding-linux, bare-metal-x86_64, host-windows.");
         Console.WriteLine("                      Build/run default to freestanding-linux on Linux and host-windows on Windows.");
+        Console.WriteLine("                      bare-metal-x86_64 build links a kernel ELF with a bundled linker script unless overridden.");
         Console.WriteLine("  -nostdlib            Legacy shorthand for --target freestanding-linux.");
         Console.WriteLine("  -h, --help           Show this help text.");
         Console.WriteLine("  --version            Show the compiler version.");
@@ -694,6 +941,9 @@ class Program
                 return true;
             case "freestanding-linux":
                 target = CompilationTarget.FreestandingLinux;
+                return true;
+            case "bare-metal-x86_64":
+                target = CompilationTarget.BareMetalX86_64;
                 return true;
             case "host-windows":
                 target = CompilationTarget.HostWindows;
@@ -710,6 +960,7 @@ class Program
         {
             CompilationTarget.HostLinux => "host-linux",
             CompilationTarget.FreestandingLinux => "freestanding-linux",
+            CompilationTarget.BareMetalX86_64 => "bare-metal-x86_64",
             CompilationTarget.HostWindows => "host-windows",
             _ => throw new ArgumentOutOfRangeException(nameof(target), target, null)
         };
@@ -753,6 +1004,8 @@ class Program
         List<Node> Ast,
         TypeChecker TypeChecker,
         string GeneratedCode);
+
+    private sealed record ResolvedLinkerScript(string Path, string Content);
 
     private sealed record ProcessResult(int ExitCode, string StdOut, string StdErr);
 }

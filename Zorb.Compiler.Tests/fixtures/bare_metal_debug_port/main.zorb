@@ -1,0 +1,10 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn _start() {
+    std.io.print(std.os.platform_name())
+    std.io.print(" ")
+    std.io.print(std.os.arch_name())
+    std.io.print("\n")
+    std.os.exit(0)
+}

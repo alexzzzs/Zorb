@@ -80,6 +80,26 @@ public class Parser
         return false;
     }
 
+    // Checks if the current token is an identifier that matches a contextual keyword.
+    // If so, returns the corresponding TokenType; otherwise returns null.
+    private TokenType? GetContextualKeywordType()
+    {
+        if (Current.Type == TokenType.Identifier)
+            return Lexer.Lexer.MapContextualKeyword(Current.Value);
+        return null;
+    }
+
+    // Checks and consumes a contextual keyword if the current identifier matches.
+    private bool MatchContextualKeyword(string keyword, TokenType expectedType)
+    {
+        if (Current.Type == TokenType.Identifier && Current.Value == keyword)
+        {
+            Advance();
+            return true;
+        }
+        return false;
+    }
+
 private void Synchronize()
 {
     if (Current.Type != TokenType.Eof)
@@ -141,31 +161,21 @@ public List<Node> ParseProgram()
                 nodes.Add(ParseFunction());
             else if (Current.Type == TokenType.LBracket)
             {
-                int lookahead = 0;
-                int bracketDepth = 0;
-                while (_pos + lookahead < _tokens.Count)
-                {
-                    var t = Peek(lookahead).Type;
-                    if (t == TokenType.LBracket) bracketDepth++;
-                    else if (t == TokenType.RBracket) bracketDepth--;
-                
-                    lookahead++;
-                    if (bracketDepth == 0) break;
-                }
+                var tokenAfterAttributes = PeekDeclarationAfterAttributeLists();
 
-                var tokenAfterBracket = Peek(lookahead).Type;
-                bool isAttribute = tokenAfterBracket == TokenType.Fn || tokenAfterBracket == TokenType.Extern;
-                bool isArray = Peek(1).Type == TokenType.Number;
-                
-                if (isAttribute)
+                if (tokenAfterAttributes == TokenType.Fn || tokenAfterAttributes == TokenType.Extern)
                 {
                     nodes.Add(ParseFunction());
+                }
+                else if (tokenAfterAttributes == TokenType.Struct)
+                {
+                    nodes.Add(ParseStruct());
                 }
                 else
                 {
                     var attributes = ParseAttributes();
                     var varDecl = (VariableDeclarationNode)ParseVarDecl();
-                    varDecl.Attributes = attributes;
+                    ApplyVariableAttributes(varDecl, attributes);
                     nodes.Add(varDecl);
                 }
             }
@@ -226,29 +236,23 @@ public List<Node> ParseProgram()
 
         if (Current.Type == TokenType.LBracket)
         {
-            int lookahead = 0;
-            int bracketDepth = 0;
-            while (_pos + lookahead < _tokens.Count)
-            {
-                var t = Peek(lookahead).Type;
-                if (t == TokenType.LBracket) bracketDepth++;
-                else if (t == TokenType.RBracket) bracketDepth--;
-
-                lookahead++;
-                if (bracketDepth == 0) break;
-            }
-
-            var tokenAfterBracket = Peek(lookahead).Type;
-            if (tokenAfterBracket == TokenType.Fn || tokenAfterBracket == TokenType.Extern)
+            var tokenAfterAttributes = PeekDeclarationAfterAttributeLists();
+            if (tokenAfterAttributes == TokenType.Fn || tokenAfterAttributes == TokenType.Extern)
             {
                 var decl = ParseFunction();
+                decl.IsExported = true;
+                return decl;
+            }
+            if (tokenAfterAttributes == TokenType.Struct)
+            {
+                var decl = ParseStruct();
                 decl.IsExported = true;
                 return decl;
             }
 
             var attributes = ParseAttributes();
             var varDecl = (VariableDeclarationNode)ParseVarDecl();
-            varDecl.Attributes = attributes;
+            ApplyVariableAttributes(varDecl, attributes);
             varDecl.IsExported = true;
             return varDecl;
         }
@@ -294,8 +298,32 @@ public List<Node> ParseProgram()
         return new ImportNode { Path = pathToken.Value, Alias = alias };
     }
 
+    private TokenType PeekDeclarationAfterAttributeLists()
+    {
+        var lookahead = 0;
+        while (Peek(lookahead).Type == TokenType.LBracket)
+        {
+            var bracketDepth = 0;
+            while (_pos + lookahead < _tokens.Count)
+            {
+                var tokenType = Peek(lookahead).Type;
+                if (tokenType == TokenType.LBracket)
+                    bracketDepth++;
+                else if (tokenType == TokenType.RBracket)
+                    bracketDepth--;
+
+                lookahead++;
+                if (bracketDepth == 0)
+                    break;
+            }
+        }
+
+        return Peek(lookahead).Type;
+    }
+
     private StructNode ParseStruct()
     {
+        var attributes = ParseStructAttributes();
         Expect(TokenType.Struct);
 
         var path = new List<string>();
@@ -310,13 +338,22 @@ public List<Node> ParseProgram()
 
         Expect(TokenType.LBrace, "Expected '{' to start struct body.");
 
-        var fields = new List<(string, TypeNode)>();
+        var fields = new List<StructField>();
         while (Current.Type != TokenType.RBrace && Current.Type != TokenType.Eof)
         {
-            var fieldName = Expect(TokenType.Identifier, "Expected struct field name.").Value;
+            var fieldAttributes = ParseFieldAttributes();
+            var fieldNameToken = Expect(TokenType.Identifier, "Expected struct field name.");
+            var fieldName = fieldNameToken.Value;
             Expect(TokenType.Colon, $"Expected ':' after field name '{fieldName}'.");
             var fieldType = ParseType();
-            fields.Add((fieldName, fieldType));
+            var field = new StructField
+            {
+                Name = fieldName,
+                TypeName = fieldType,
+                Attributes = fieldAttributes
+            };
+            StampNode(field, fieldNameToken);
+            fields.Add(field);
 
             if (Current.Type == TokenType.Comma)
             {
@@ -327,7 +364,7 @@ public List<Node> ParseProgram()
 
         Expect(TokenType.RBrace, "Expected '}' to close struct body.");
 
-        return new StructNode { NamespacePath = path, Name = name, Fields = fields };
+        return new StructNode { NamespacePath = path, Name = name, Attributes = attributes, Fields = fields };
     }
 
     private VariableDeclarationNode ParseErrorDecl()
@@ -350,6 +387,7 @@ public List<Node> ParseProgram()
 
     private TypeNode ParseType()
     {
+        var isVolatile = MatchContextualKeyword("volatile", TokenType.Volatile);
         bool isSlice = false;
         int? arraySize = null;
         
@@ -381,7 +419,7 @@ public List<Node> ParseProgram()
             TypeNode retType = new() { Name = "void" };
             if (Match(TokenType.Arrow)) retType = ParseType();
 
-            var fnTypeNode = new TypeNode { IsFunction = true, ParamTypes = paramsList, ReturnType = retType, IsSlice = isSlice };
+            var fnTypeNode = new TypeNode { IsFunction = true, ParamTypes = paramsList, ReturnType = retType, IsSlice = isSlice, IsVolatile = isVolatile };
             if (arraySize.HasValue)
             {
                 fnTypeNode.ArraySize = arraySize;
@@ -424,6 +462,7 @@ public List<Node> ParseProgram()
         {
             Name = name,
             NamespacePath = path,
+            IsVolatile = isVolatile,
             IsSlice = isSlice,
             IsPointer = pointer,
             PointerLevel = pointerLevel,
@@ -436,6 +475,7 @@ public List<Node> ParseProgram()
             {
                 Name = name,
                 NamespacePath = new List<string>(path),
+                IsVolatile = isVolatile,
                 IsSlice = isSlice,
                 IsPointer = pointer,
                 PointerLevel = pointerLevel,
@@ -445,6 +485,7 @@ public List<Node> ParseProgram()
                 {
                     Name = name,
                     NamespacePath = new List<string>(path),
+                    IsVolatile = isVolatile,
                     IsSlice = isSlice,
                     IsPointer = pointer,
                     PointerLevel = pointerLevel,
@@ -458,47 +499,7 @@ public List<Node> ParseProgram()
 
     private FunctionDecl ParseFunction()
     {
-        var attributes = new List<string>();
-        while (Current.Type == TokenType.LBracket)
-        {
-            Advance();
-            while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
-            {
-                if (Current.Type == TokenType.Align)
-                {
-                    Advance();
-                    Expect(TokenType.LParen);
-                    var numToken = Expect(TokenType.Number);
-                    Expect(TokenType.RParen);
-                    attributes.Add($"align({numToken.Value})");
-                }
-                else if (Current.Type == TokenType.NoInline)
-                {
-                    Advance();
-                    attributes.Add("noinline");
-                }
-                else if (Current.Type == TokenType.NoClone)
-                {
-                    Advance();
-                    attributes.Add("noclone");
-                }
-                else
-                {
-                    ErrorReporter.Error($"Unknown attribute {DescribeToken(Current)} in function attribute list.", Current.Line, Current.Column, _fileName);
-                    Advance();
-                }
-
-                if (Current.Type == TokenType.Comma)
-                {
-                    Advance();
-                }
-                else if (Current.Type != TokenType.RBracket)
-                {
-                    ErrorReporter.Error($"Expected ',' or ']' in function attribute list, got {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
-                }
-            }
-            Expect(TokenType.RBracket, "Expected ']' to close function attribute list.");
-        }
+        var attributes = ParseFunctionAttributes();
 
         bool isExtern = Match(TokenType.Extern);
         Expect(TokenType.Fn, "Expected 'fn' after 'extern'.");
@@ -533,6 +534,7 @@ public List<Node> ParseProgram()
             {
                 Name = innerType.Name,
                 NamespacePath = innerType.NamespacePath,
+                IsVolatile = innerType.IsVolatile,
                 IsSlice = innerType.IsSlice,
                 IsPointer = innerType.IsPointer,
                 PointerLevel = innerType.PointerLevel,
@@ -599,7 +601,7 @@ public List<Node> ParseProgram()
             {
                 return attributes;
             }
-            
+
             Advance();
             while (Current.Type != TokenType.RBracket)
             {
@@ -611,14 +613,20 @@ public List<Node> ParseProgram()
                     Expect(TokenType.RParen);
                     attributes.Add($"align({numToken.Value})");
                 }
-                else if (Current.Type == TokenType.NoInline)
+                else if (MatchContextualKeyword("section", TokenType.Section))
                 {
-                    Advance();
+                    attributes.Add(ParseSectionAttribute());
+                }
+                else if (MatchContextualKeyword("volatile", TokenType.Volatile))
+                {
+                    attributes.Add("volatile");
+                }
+                else if (MatchContextualKeyword("noinline", TokenType.NoInline))
+                {
                     attributes.Add("noinline");
                 }
-                else if (Current.Type == TokenType.NoClone)
+                else if (MatchContextualKeyword("noclone", TokenType.NoClone))
                 {
-                    Advance();
                     attributes.Add("noclone");
                 }
                 else
@@ -639,6 +647,194 @@ public List<Node> ParseProgram()
             Expect(TokenType.RBracket, "Expected ']' to close attribute list.");
         }
         return attributes;
+    }
+
+    private List<string> ParseFunctionAttributes()
+    {
+        var attributes = new List<string>();
+        while (Current.Type == TokenType.LBracket)
+        {
+            Advance();
+            while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
+            {
+                if (Current.Type == TokenType.Align)
+                {
+                    Advance();
+                    Expect(TokenType.LParen);
+                    var numToken = Expect(TokenType.Number);
+                    Expect(TokenType.RParen);
+                    attributes.Add($"align({numToken.Value})");
+                }
+                else if (MatchContextualKeyword("abi", TokenType.Abi))
+                {
+                    Expect(TokenType.LParen, "Expected '(' after 'abi' attribute.");
+                    var abiToken = Expect(TokenType.Identifier, "Expected ABI name inside abi(...).");
+                    Expect(TokenType.RParen, "Expected ')' to close abi attribute.");
+                    attributes.Add(ParseAbiAttribute(abiToken));
+                }
+                else if (MatchContextualKeyword("section", TokenType.Section))
+                {
+                    attributes.Add(ParseSectionAttribute());
+                }
+                else if (MatchContextualKeyword("noinline", TokenType.NoInline))
+                {
+                    attributes.Add("noinline");
+                }
+                else if (MatchContextualKeyword("noclone", TokenType.NoClone))
+                {
+                    attributes.Add("noclone");
+                }
+                else
+                {
+                    ErrorReporter.Error($"Unknown attribute {DescribeToken(Current)} in function attribute list.", Current.Line, Current.Column, _fileName);
+                    Advance();
+                }
+
+                if (Current.Type == TokenType.Comma)
+                {
+                    Advance();
+                }
+                else if (Current.Type != TokenType.RBracket)
+                {
+                    ErrorReporter.Error($"Expected ',' or ']' in function attribute list, got {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
+                }
+            }
+            Expect(TokenType.RBracket, "Expected ']' to close function attribute list.");
+        }
+
+        return attributes;
+    }
+
+    private List<string> ParseStructAttributes()
+    {
+        var attributes = new List<string>();
+        while (Current.Type == TokenType.LBracket)
+        {
+            Advance();
+            while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
+            {
+                if (MatchContextualKeyword("packed", TokenType.Packed))
+                {
+                    attributes.Add("packed");
+                }
+                else if (MatchContextualKeyword("layout", TokenType.Layout))
+                {
+                    Expect(TokenType.LParen, "Expected '(' after 'layout' attribute.");
+                    var layoutToken = Expect(TokenType.Identifier, "Expected layout kind inside layout(...).");
+                    Expect(TokenType.RParen, "Expected ')' to close layout attribute.");
+                    attributes.Add(ParseLayoutAttribute(layoutToken));
+                }
+                else if (Current.Type == TokenType.Align)
+                {
+                    Advance();
+                    Expect(TokenType.LParen);
+                    var numToken = Expect(TokenType.Number);
+                    Expect(TokenType.RParen);
+                    attributes.Add($"align({numToken.Value})");
+                }
+                else
+                {
+                    ErrorReporter.Error($"Unknown attribute {DescribeToken(Current)} in struct attribute list.", Current.Line, Current.Column, _fileName);
+                    Advance();
+                }
+
+                if (Current.Type == TokenType.Comma)
+                {
+                    Advance();
+                }
+                else if (Current.Type != TokenType.RBracket)
+                {
+                    ErrorReporter.Error($"Expected ',' or ']' in struct attribute list, got {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
+                }
+            }
+            Expect(TokenType.RBracket, "Expected ']' to close struct attribute list.");
+        }
+
+        return attributes;
+    }
+
+    private List<string> ParseFieldAttributes()
+    {
+        var attributes = new List<string>();
+        while (Current.Type == TokenType.LBracket)
+        {
+            Advance();
+            while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
+            {
+                if (MatchContextualKeyword("offset", TokenType.Offset))
+                {
+                    Expect(TokenType.LParen, "Expected '(' after 'offset' attribute.");
+                    var offsetToken = Expect(TokenType.Number, "Expected byte offset inside offset(...).");
+                    Expect(TokenType.RParen, "Expected ')' to close offset attribute.");
+                    attributes.Add($"offset({offsetToken.Value})");
+                }
+                else
+                {
+                    ErrorReporter.Error($"Unknown attribute {DescribeToken(Current)} in struct field attribute list.", Current.Line, Current.Column, _fileName);
+                    Advance();
+                }
+
+                if (Current.Type == TokenType.Comma)
+                {
+                    Advance();
+                }
+                else if (Current.Type != TokenType.RBracket)
+                {
+                    ErrorReporter.Error($"Expected ',' or ']' in struct field attribute list, got {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
+                }
+            }
+            Expect(TokenType.RBracket, "Expected ']' to close struct field attribute list.");
+        }
+
+        return attributes;
+    }
+
+    private string ParseAbiAttribute(Token abiToken)
+    {
+        return abiToken.Value switch
+        {
+            "sysv" or "sysv64" => "abi(sysv)",
+            "ms" or "win64" => "abi(ms)",
+            _ =>
+                ReportInvalidAbiAttribute(abiToken)
+        };
+    }
+
+    private string ParseLayoutAttribute(Token layoutToken)
+    {
+        return layoutToken.Value switch
+        {
+            "explicit" => "layout(explicit)",
+            _ => ReportInvalidLayoutAttribute(layoutToken)
+        };
+    }
+
+    private string ReportInvalidLayoutAttribute(Token layoutToken)
+    {
+        ErrorReporter.Error($"Unknown layout '{layoutToken.Value}' in layout attribute. Expected: explicit.", layoutToken.Line, layoutToken.Column, _fileName);
+        return $"layout({layoutToken.Value})";
+    }
+
+    private string ParseSectionAttribute()
+    {
+        // "section" keyword has already been consumed by the caller
+        Expect(TokenType.LParen, "Expected '(' after 'section' attribute.");
+        var sectionToken = Expect(TokenType.String, "Expected string literal inside section(...).");
+        Expect(TokenType.RParen, "Expected ')' to close section attribute.");
+        return "section:" + sectionToken.Value;
+    }
+
+    private string ReportInvalidAbiAttribute(Token abiToken)
+    {
+        ErrorReporter.Error($"Unknown ABI '{abiToken.Value}' in abi attribute. Expected one of: sysv, sysv64, ms, win64.", abiToken.Line, abiToken.Column, _fileName);
+        return $"abi({abiToken.Value})";
+    }
+
+    private static void ApplyVariableAttributes(VariableDeclarationNode varDecl, List<string> attributes)
+    {
+        varDecl.Attributes = attributes;
+        if (attributes.Contains("volatile"))
+            varDecl.TypeName.IsVolatile = true;
     }
 
     private Statement ParseStatement()
@@ -682,14 +878,14 @@ public List<Node> ParseProgram()
         if (Current.Type == TokenType.Const)
         {
             var varDecl = (VariableDeclarationNode)ParseVarDecl(false);
-            varDecl.Attributes = attributes;
+            ApplyVariableAttributes(varDecl, attributes);
             return varDecl;
         }
 
         if (Current.Type == TokenType.Identifier && Peek(1).Type == TokenType.Colon)
         {
             var varDecl = (VariableDeclarationNode)ParseVarDecl(false);
-            varDecl.Attributes = attributes;
+            ApplyVariableAttributes(varDecl, attributes);
             return varDecl;
         }
 
@@ -884,14 +1080,14 @@ public List<Node> ParseProgram()
         if (Current.Type == TokenType.Const)
         {
             var varDecl = (VariableDeclarationNode)ParseVarDecl(false);
-            varDecl.Attributes = attributes;
+            ApplyVariableAttributes(varDecl, attributes);
             return varDecl;
         }
 
         if (Current.Type == TokenType.Identifier && Peek(1).Type == TokenType.Colon)
         {
             var varDecl = (VariableDeclarationNode)ParseVarDecl(false);
-            varDecl.Attributes = attributes;
+            ApplyVariableAttributes(varDecl, attributes);
             return varDecl;
         }
 
@@ -1354,6 +1550,12 @@ public List<Node> ParseProgram()
                 StampNode(expr, startToken);
                 return expr;
             }
+            if (builtinName == "IsBareMetal")
+            {
+                var expr = new BuiltinExpr { Name = "Builtin.IsBareMetal" };
+                StampNode(expr, startToken);
+                return expr;
+            }
             if (builtinName == "IsX86_64")
             {
                 var expr = new BuiltinExpr { Name = "Builtin.IsX86_64" };
@@ -1363,6 +1565,22 @@ public List<Node> ParseProgram()
             if (builtinName == "IsAArch64")
             {
                 var expr = new BuiltinExpr { Name = "Builtin.IsAArch64" };
+                StampNode(expr, startToken);
+                return expr;
+            }
+            if (builtinName == "CompileError")
+            {
+                Expect(TokenType.LParen, "Expected '(' after 'Builtin.CompileError'.");
+                var messageExpr = ParseExpression();
+                Expect(TokenType.RParen, "Expected ')' to close Builtin.CompileError argument list.");
+
+                if (messageExpr is not StringExpr message)
+                {
+                    ErrorReporter.Error("Builtin.CompileError expects a string literal message.", startToken.Line, startToken.Column, _fileName);
+                    return null!;
+                }
+
+                var expr = new BuiltinExpr { Name = "Builtin.CompileError", Message = message.Value };
                 StampNode(expr, startToken);
                 return expr;
             }

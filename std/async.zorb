@@ -4,6 +4,10 @@ export struct std.async {}
 epoll_fd: i32 = -1
 
 export fn std.async.is_supported() -> bool {
+    if Builtin.IsBareMetal {
+        return false
+    }
+
     if !Builtin.IsLinux {
         return false
     }
