@@ -22,6 +22,7 @@ public class CGenerator
     private readonly string _currentDir;
     private readonly SymbolTable _symbolTable;
     private readonly Dictionary<string, TypeNode> _localVars = new();
+    private readonly Stack<string?> _continueTargets = new();
     private readonly HashSet<string> _generatedResultTypes = new();
     private readonly HashSet<string> _generatedSliceTypes = new();
     private readonly StringBuilder _dynamicStructs = new();
@@ -114,6 +115,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         _tempCounter = 0;
         _insideFunctionBody = false;
         _currentFunctionLowersToHostedMain = false;
+        _continueTargets.Clear();
         
         CollectNodes(nodes, allNodes, processed, emittedItems, _currentDir);
 
@@ -669,12 +671,121 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 AppendIndentedBlock(sb, generatedCondition.Prelude, "        ");
                 sb.AppendLine($"        if (!({FormatConditionExpression(generatedCondition.Code)})) break;");
             }
-            AppendIndentedGeneratedBlock(sb, ws.Body, "        ");
+            _continueTargets.Push(null);
+            try
+            {
+                AppendIndentedGeneratedBlock(sb, ws.Body, "        ");
+            }
+            finally
+            {
+                _continueTargets.Pop();
+            }
             sb.Append("    }");
             return sb.ToString();
         }
+        if (stmt is ForStmt forStmt)
+        {
+            var sb = new StringBuilder();
+            var savedLocals = CloneLocalVars();
+            try
+            {
+                sb.AppendLine("{");
+
+                if (forStmt.Initializer != null)
+                {
+                    var generatedInitializer = GenerateStatement(forStmt.Initializer);
+                    if (!string.IsNullOrEmpty(generatedInitializer))
+                        AppendIndentedBlock(sb, generatedInitializer, "    ");
+                }
+
+                var continueLabel = NewTemp("for_continue");
+                sb.AppendLine("    while (1) {");
+
+                if (forStmt.Condition != null)
+                {
+                    var generatedCondition = GenerateExpressionWithPrelude(forStmt.Condition);
+                    AppendIndentedBlock(sb, generatedCondition.Prelude, "        ");
+                    sb.AppendLine($"        if (!({FormatConditionExpression(generatedCondition.Code)})) break;");
+                }
+
+                _continueTargets.Push(continueLabel);
+                try
+                {
+                    AppendIndentedGeneratedBlock(sb, forStmt.Body, "        ");
+                }
+                finally
+                {
+                    _continueTargets.Pop();
+                }
+
+                sb.AppendLine($"    {continueLabel}: ;");
+                if (forStmt.Update != null)
+                {
+                    var generatedUpdate = GenerateStatement(forStmt.Update);
+                    if (!string.IsNullOrEmpty(generatedUpdate))
+                        AppendIndentedBlock(sb, generatedUpdate, "        ");
+                }
+
+                sb.AppendLine("    }");
+                sb.Append("}");
+            }
+            finally
+            {
+                RestoreLocalVars(savedLocals);
+            }
+            return sb.ToString();
+        }
+        if (stmt is SwitchStmt switchStmt)
+        {
+            var switchType = GetExprType(switchStmt.Expression)
+                ?? throw new Exception("Switch expressions require a known type during code generation.");
+            var generatedSwitchExpression = GenerateExpressionWithPrelude(switchStmt.Expression);
+            var switchValueTemp = NewTemp("switch_value");
+            var switchMatchedTemp = NewTemp("switch_matched");
+            var savedLocals = CloneLocalVars();
+            var sb = new StringBuilder();
+
+            try
+            {
+                sb.AppendLine("{");
+                AppendIndentedBlock(sb, generatedSwitchExpression.Prelude, "    ");
+                sb.AppendLine($"    {MapType(switchType)} {switchValueTemp} = {generatedSwitchExpression.Code};");
+                sb.AppendLine($"    int32_t {switchMatchedTemp} = 0;");
+
+                foreach (var switchCase in switchStmt.Cases)
+                {
+                    var generatedCaseValue = CoerceExpressionToTargetType(switchType, switchCase.Value, GenerateExpressionWithPrelude(switchCase.Value));
+                    sb.AppendLine($"    if (!{switchMatchedTemp}) {{");
+                    AppendIndentedBlock(sb, generatedCaseValue.Prelude, "        ");
+                    sb.AppendLine($"        if ({switchValueTemp} == {generatedCaseValue.Code}) {{");
+                    sb.AppendLine($"            {switchMatchedTemp} = 1;");
+                    AppendIndentedGeneratedBlock(sb, switchCase.Body, "            ");
+                    sb.AppendLine("        }");
+                    sb.AppendLine("    }");
+                }
+
+                if (switchStmt.ElseBody.Count > 0)
+                {
+                    sb.AppendLine($"    if (!{switchMatchedTemp}) {{");
+                    AppendIndentedGeneratedBlock(sb, switchStmt.ElseBody, "        ");
+                    sb.AppendLine("    }");
+                }
+
+                sb.Append("}");
+            }
+            finally
+            {
+                RestoreLocalVars(savedLocals);
+            }
+
+            return sb.ToString();
+        }
         if (stmt is ContinueStmt)
+        {
+            if (_continueTargets.Count > 0 && _continueTargets.Peek() is string continueTarget)
+                return $"goto {continueTarget};";
             return "continue;";
+        }
         if (stmt is BreakStmt)
             return "break;";
         if (stmt is AssignStmt assign)

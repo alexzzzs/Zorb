@@ -1,0 +1,26 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+calls: i64 = 0
+
+fn next_value() -> i64 {
+    calls = calls + 1
+    return 2
+}
+
+fn _start() {
+    switch next_value() {
+        case 1 {
+            std.io.print("bad\n")
+        }
+        case 2 {
+            std.io.print_i64(calls)
+            std.io.print("\n")
+        }
+        else {
+            std.io.print("miss\n")
+        }
+    }
+
+    std.os.exit(0)
+}

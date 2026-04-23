@@ -1,0 +1,18 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn _start() {
+    sum: i64 = 0
+
+    for i: i64 = 0; i < 5; i = i + 1 {
+        if i == 2 {
+            continue
+        }
+
+        sum = sum + i
+    }
+
+    std.io.print_i64(sum)
+    std.io.print("\n")
+    std.os.exit(0)
+}

@@ -104,6 +104,27 @@ public class WhileStmt : Statement
     public List<Statement> Body { get; set; } = new();
 }
 
+public class ForStmt : Statement
+{
+    public Statement? Initializer { get; set; }
+    public Expr? Condition { get; set; }
+    public Statement? Update { get; set; }
+    public List<Statement> Body { get; set; } = new();
+}
+
+public class SwitchCase
+{
+    public Expr Value { get; set; } = null!;
+    public List<Statement> Body { get; set; } = new();
+}
+
+public class SwitchStmt : Statement
+{
+    public Expr Expression { get; set; } = null!;
+    public List<SwitchCase> Cases { get; set; } = new();
+    public List<Statement> ElseBody { get; set; } = new();
+}
+
 public class ContinueStmt : Statement { }
 
 public class BreakStmt : Statement { }

@@ -1,0 +1,1 @@
+Switch expression must have numeric or bool type, got 'string'.
