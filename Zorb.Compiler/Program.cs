@@ -634,6 +634,34 @@ class Program
             return null;
         }
 
+        if (options.KeepCPath != null && options.Mode == CommandMode.EmitC)
+        {
+            Console.Error.WriteLine("Option --keep-c is only valid with build or run.");
+            PrintUsage();
+            return null;
+        }
+
+        if (options.CheckOnly && options.OutputPathExplicitlySet)
+        {
+            Console.Error.WriteLine("Option -o/--output is not valid with --check.");
+            PrintUsage();
+            return null;
+        }
+
+        if (options.OutputPathExplicitlySet && options.Mode == CommandMode.Run)
+        {
+            Console.Error.WriteLine("Option -o/--output is not valid with run.");
+            PrintUsage();
+            return null;
+        }
+
+        if (options.CheckOnly && options.Mode != CommandMode.EmitC)
+        {
+            Console.Error.WriteLine("Option --check cannot be combined with build or run.");
+            PrintUsage();
+            return null;
+        }
+
         return options;
     }
 

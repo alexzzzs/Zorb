@@ -660,6 +660,13 @@ public List<Node> ParseProgram()
 
         var attributes = ParseAttributes();
 
+        if (Current.Type == TokenType.Const)
+        {
+            var varDecl = (VariableDeclarationNode)ParseVarDecl(false);
+            varDecl.Attributes = attributes;
+            return varDecl;
+        }
+
         if (Current.Type == TokenType.Identifier && Peek(1).Type == TokenType.Colon)
         {
             var varDecl = (VariableDeclarationNode)ParseVarDecl(false);
