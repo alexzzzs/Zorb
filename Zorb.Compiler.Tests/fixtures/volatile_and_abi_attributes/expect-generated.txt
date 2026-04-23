@@ -1,0 +1,5 @@
+volatile uint32_t* reg;
+__attribute__((sysv_abi, noinline)) uint32_t read_reg(volatile uint32_t* reg)
+__attribute__((ms_abi)) extern void firmware_hook(int64_t code);
+volatile uint32_t* mmio = (uint32_t*)4276092928;
+volatile uint32_t* typed_mmio = (volatile uint32_t*)4276092928;

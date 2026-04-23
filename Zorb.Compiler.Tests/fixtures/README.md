@@ -126,9 +126,9 @@ If present and the suite is running on a Windows host, this file overrides `expe
 
 ## Runtime Expectations
 
-If either Linux host runtime expectation file is present, the runner also:
+If either Linux runtime expectation file is present, the runner also:
 
-1. regenerates the fixture with `_start` preserved and `-nostdlib` semantics enabled
+1. regenerates the fixture for the `freestanding-linux` target, with `_start` preserved and `-nostdlib` semantics enabled
 2. compiles the generated C with:
 
 ```bash
@@ -153,7 +153,7 @@ If `expect-exit.txt` is omitted but runtime expectations are enabled, the runner
 
 ### `expect-stdout-windows.txt`
 
-This enables an additional hosted Windows runtime pass for the fixture when the suite is run on a Windows host.
+This enables an additional `host-windows` runtime pass for the fixture when the suite is run on a Windows host.
 
 The runner will:
 
@@ -165,11 +165,11 @@ Stdout is matched exactly after newline normalization.
 
 ### `expect-stderr-windows.txt`
 
-This file is matched against the hosted Windows runtime pass stderr exactly after newline normalization.
+This file is matched against the `host-windows` runtime pass stderr exactly after newline normalization.
 
 ### `expect-exit-windows.txt`
 
-This contains the expected integer process exit code for the hosted Windows runtime pass.
+This contains the expected integer process exit code for the `host-windows` runtime pass.
 
 If `expect-exit-windows.txt` is omitted but hosted Windows runtime expectations are enabled, the runner falls back to `expect-exit.txt` when present, otherwise it assumes exit code `0`.
 

@@ -50,9 +50,11 @@ The lexer recognizes these reserved words:
 - `struct`
 - `cast`
 - `extern`
+- `abi`
 - `align`
 - `noinline`
 - `noclone`
+- `volatile`
 - `catch`
 - `const`
 - `continue`
@@ -280,6 +282,17 @@ struct Name {
     field: Type,
     other: Type,
 }
+
+[packed]
+struct PackedName {
+    field: Type,
+}
+
+[layout(explicit)]
+struct Table {
+    [offset(0)] header: u32,
+    [offset(8)] ptr: u64,
+}
 ```
 
 Meaning:
@@ -287,6 +300,12 @@ Meaning:
 - Struct fields are named and typed.
 - Trailing commas are effectively tolerated because field parsing stops at `}`.
 - Field types must name built-in numeric types, `void`, `string`, function types, or known structs.
+- Struct declarations also accept attributes.
+- Recognized struct attributes are `packed`, `align(N)`, and `layout(explicit)`.
+- Recognized struct-field attributes are `offset(N)`.
+- `layout(explicit)` requires every field to declare `offset(N)`.
+- `layout(explicit)` currently means byte-precise packed layout; code generation inserts explicit padding fields as needed and emits `_Static_assert` checks for the final field offsets.
+- Byte-precise layout currently rejects field types that do not have a stable compile-time C layout in the compiler model, such as function types, slices, and error unions.
 
 ### Function Declarations
 
@@ -312,13 +331,25 @@ Attributes are written in square brackets:
 [noinline]
 [noclone]
 [align(16)]
+[section(".text.boot")]
+[abi(sysv)]
+[volatile]
+[packed]
+[layout(explicit)]
 ```
 
 Current behavior:
 
 - Attributes may appear before functions.
 - Attributes may also appear before variable declarations.
-- Recognized attributes are `noinline`, `noclone`, and `align(N)`.
+- Attributes may also appear before struct declarations.
+- Struct field attributes appear before the field name inside a struct body.
+- Recognized function attributes are `noinline`, `noclone`, `align(N)`, `section("name")`, and `abi(name)`.
+- Recognized variable attributes are `align(N)`, `section("name")`, and `volatile`.
+- Recognized struct attributes are `packed`, `align(N)`, and `layout(explicit)`.
+- Recognized struct-field attributes are `offset(N)`.
+- `abi(name)` currently accepts `sysv`, `sysv64`, `ms`, and `win64`.
+- `section("name")` is currently intended for functions and global variables.
 - Unknown attributes are parser errors.
 - Attributes are lowered to GCC-style `__attribute__` annotations in generated C.
 
@@ -472,6 +503,7 @@ Current builtins:
 
 - `Builtin.IsLinux`
 - `Builtin.IsWindows`
+- `Builtin.IsBareMetal`
 - `Builtin.IsX86_64`
 - `Builtin.IsAArch64`
 
@@ -499,7 +531,7 @@ Meaning:
 
 - A symbol may exist in the symbol table but still fail visibility checks if it was not made visible in the current file/import scope.
 - Imported symbols are made visible by semantic import processing.
-- Builtins like `syscall`, `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsX86_64`, and `Builtin.IsAArch64` are inserted as visible built-in symbols.
+- Builtins like `syscall`, `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`, `Builtin.IsX86_64`, and `Builtin.IsAArch64` are inserted as visible built-in symbols.
 
 ## Type Checking
 
@@ -769,6 +801,7 @@ The semantic checker injects:
 - `syscall: fn(i64, i64, i64, i64, i64, i64) -> i64`
 - `Builtin.IsLinux: bool`
 - `Builtin.IsWindows: bool`
+- `Builtin.IsBareMetal: bool`
 - `Builtin.IsX86_64: bool`
 - `Builtin.IsAArch64: bool`
 
@@ -785,14 +818,16 @@ The current compiler lowers Zorb to C.
 
 ### Platform Lowering
 
-- Linux syscall support code is emitted under Unix-like preprocessor guards.
-- On Linux, the generated syscall wrapper currently has x86_64 and AArch64 inline-assembly implementations.
-- `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsX86_64`, and `Builtin.IsAArch64` lower to preprocessor-defined boolean-like constants (`0` or `1` in generated C).
+- Linux syscall support code is emitted only for targets that use the Linux syscall ABI.
+- On Linux syscall targets, the generated syscall wrapper currently has x86_64 and AArch64 inline-assembly implementations.
+- `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`, `Builtin.IsX86_64`, and `Builtin.IsAArch64` lower to preprocessor-defined boolean-like constants (`0` or `1` in generated C).
 
 ### Entry Point
 
-- A function named `_start` is emitted as `main` by default.
-- Passing `-nostdlib` preserves `_start`.
+- On hosted targets, a top-level `_start` becomes the program entry via a generated `main` shim.
+- If hosted source defines both `_start` and `main`, the compiler keeps both by renaming the user functions internally and reserving the real C `main` for the generated shim.
+- Passing `-nostdlib` preserves `_start` for the `freestanding-linux` target.
+- `bare-metal-x86_64` also preserves `_start`, but it is a separate target with no Linux syscall shim, no host `run` support, and a linker-script-driven kernel link step.
 
 ## Error Handling And Recovery
 

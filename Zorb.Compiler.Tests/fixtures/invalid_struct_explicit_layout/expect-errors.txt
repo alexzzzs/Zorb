@@ -1,0 +1,1 @@
+Explicit-layout struct 'BadHeader' requires every field to declare an [offset(N)] attribute.

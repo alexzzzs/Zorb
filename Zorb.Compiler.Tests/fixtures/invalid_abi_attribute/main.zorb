@@ -1,0 +1,3 @@
+[abi(plan9)]
+fn kernel_entry() {
+}

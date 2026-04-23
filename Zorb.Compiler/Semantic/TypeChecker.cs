@@ -5,6 +5,7 @@ using System.IO;
 using Zorb.Compiler.AST;
 using Zorb.Compiler.AST.Expressions;
 using Zorb.Compiler.AST.Statements;
+using Zorb.Compiler.Layouts;
 using Zorb.Compiler.Lexer;
 using Zorb.Compiler.Parser;
 using Zorb.Compiler.Utils;
@@ -420,26 +421,29 @@ public class TypeChecker
             else if (node is StructNode sn) {
                 var fullName = sn.NamespacePath.Any() ? string.Join(".", sn.NamespacePath) + "." + sn.Name : sn.Name;
                 MakeVisible(fullName);
-                if (!_symbolTable.IsDefined(fullName)) _symbolTable.DefineStruct(fullName, sn.Fields);
+                if (!_symbolTable.IsDefined(fullName)) _symbolTable.DefineStruct(fullName, sn);
 
                 foreach (var field in sn.Fields)
                 {
-                    NormalizeTypeReferenceInPlace(field.Type);
-                    var fieldFullName = field.Type.NamespacePath.Any() 
-                        ? string.Join(".", field.Type.NamespacePath) + "." + field.Type.Name 
-                        : field.Type.Name;
+                    NormalizeTypeReferenceInPlace(field.TypeName);
+                    var fieldFullName = field.TypeName.NamespacePath.Any() 
+                        ? string.Join(".", field.TypeName.NamespacePath) + "." + field.TypeName.Name 
+                        : field.TypeName.Name;
 
-                    if (field.Type.IsFunction || field.Type.Name == "void" || field.Type.Name == "string" || field.Type.Name == "bool") 
+                    if (field.TypeName.IsFunction || field.TypeName.Name == "void" || field.TypeName.Name == "string" || field.TypeName.Name == "bool") 
                         continue;
 
-                    if (!_numericTypes.Contains(field.Type.Name) && !_symbolTable.TryLookupStruct(fieldFullName, out _))
+                    if (!_numericTypes.Contains(field.TypeName.Name) && !_symbolTable.TryLookupStruct(fieldFullName, out _))
                     {
                         _errors.Error(sn, $"Unknown type '{fieldFullName}' in struct '{fullName}'");
                     }
                 }
+
+                ValidateStructAttributes(sn, fullName);
             }
             else if (node is VariableDeclarationNode vd) {
                 NormalizeTypeReferenceInPlace(vd.TypeName);
+                ValidateVariableAttributes(vd, isGlobal: true);
                 RegisterErrorDeclaration(vd);
                 MakeVisible(vd.Name);
                 if (!_symbolTable.IsDefined(vd.Name)) _symbolTable.DefineVariable(vd.Name, vd.TypeName);
@@ -541,6 +545,7 @@ public class TypeChecker
         MakeVisible("syscall");
         MakeVisible("Builtin.IsLinux");
         MakeVisible("Builtin.IsWindows");
+        MakeVisible("Builtin.IsBareMetal");
         MakeVisible("Builtin.IsX86_64");
         MakeVisible("Builtin.IsAArch64");
 
@@ -570,6 +575,9 @@ public class TypeChecker
         
         _symbolTable.DefineVariable("Builtin.IsWindows", new TypeNode { Name = "bool" });
         MakeVisible("Builtin.IsWindows");
+
+        _symbolTable.DefineVariable("Builtin.IsBareMetal", new TypeNode { Name = "bool" });
+        MakeVisible("Builtin.IsBareMetal");
 
         _symbolTable.DefineVariable("Builtin.IsX86_64", new TypeNode { Name = "bool" });
         MakeVisible("Builtin.IsX86_64");
@@ -794,9 +802,35 @@ public class TypeChecker
     private void CheckVariableDeclaration(VariableDeclarationNode varDecl)
     {
         ValidateTypeReference(varDecl.TypeName, varDecl);
+        ValidateVariableAttributes(varDecl, isGlobal: false);
         _symbolTable.DefineVariable(varDecl.Name, varDecl.TypeName);
 
         CheckVariableInitializer(varDecl);
+    }
+
+    private void ValidateVariableAttributes(VariableDeclarationNode varDecl, bool isGlobal)
+    {
+        var sectionName = StructLayout.GetSectionName(varDecl.Attributes);
+        if (sectionName != null && !isGlobal)
+            _errors.Error(varDecl, $"Variable '{varDecl.Name}' uses [section(\"{sectionName}\")], but section placement is only supported for global variables.");
+    }
+
+    private void ValidateStructAttributes(StructNode structNode, string fullName)
+    {
+        var explicitLayout = StructLayout.HasExplicitLayout(structNode);
+
+        foreach (var field in structNode.Fields)
+        {
+            var explicitOffset = StructLayout.GetExplicitOffset(field);
+            if (!explicitLayout && explicitOffset != null)
+                _errors.Error(field, $"Field '{field.Name}' in struct '{fullName}' uses [offset(...)] but the struct is not marked [layout(explicit)].");
+        }
+
+        if (!explicitLayout && !structNode.Attributes.Contains("packed") && StructLayout.GetAlignment(structNode.Attributes) == null)
+            return;
+
+        if (!StructLayout.TryCompute(structNode, name => _symbolTable.LookupStructNode(name), out _, out var error) && error != null)
+            _errors.Error(structNode, error);
     }
 
     private void CheckAssignment(AssignStmt assign)
@@ -1068,6 +1102,8 @@ public class TypeChecker
 
         if (type.IsFunction)
         {
+            if (type.IsVolatile)
+                _errors.Error(context, "Function types cannot be volatile-qualified.");
             if (type.ReturnType != null)
                 ValidateTypeReference(type.ReturnType, context);
             foreach (var paramType in type.ParamTypes)
@@ -1488,7 +1524,8 @@ public class TypeChecker
                     return new TypeNode
                     {
                         Name = targetType.Name,
-                        NamespacePath = new List<string>(targetType.NamespacePath)
+                        NamespacePath = new List<string>(targetType.NamespacePath),
+                        IsVolatile = targetType.IsVolatile
                     };
                 if (targetType.IsSlice)
                 {
@@ -1506,6 +1543,7 @@ public class TypeChecker
                         {
                             Name = targetType.Name,
                             NamespacePath = new List<string>(targetType.NamespacePath),
+                            IsVolatile = targetType.IsVolatile,
                             IsPointer = true,
                             PointerLevel = level - 1
                         };
@@ -1513,7 +1551,8 @@ public class TypeChecker
                     return new TypeNode
                     {
                         Name = targetType.Name,
-                        NamespacePath = new List<string>(targetType.NamespacePath)
+                        NamespacePath = new List<string>(targetType.NamespacePath),
+                        IsVolatile = targetType.IsVolatile
                     };
                 }
                 return new TypeNode { Name = "i32" };
@@ -1566,7 +1605,7 @@ public class TypeChecker
 
                 if (_numericTypes.Contains(structName))
                 {
-                    return new TypeNode { Name = structName, IsPointer = ft.IsPointer, PointerLevel = ft.PointerLevel };
+                    return new TypeNode { Name = structName, IsVolatile = ft.IsVolatile, IsPointer = ft.IsPointer, PointerLevel = ft.PointerLevel };
                 }
 
                 if (_symbolTable.TryLookupStruct(structName, out var structDef))
@@ -1621,6 +1660,7 @@ public class TypeChecker
                     "false" => new TypeNode { Name = "bool" },
                     "Builtin.IsLinux" => new TypeNode { Name = "bool" },
                     "Builtin.IsWindows" => new TypeNode { Name = "bool" },
+                    "Builtin.IsBareMetal" => new TypeNode { Name = "bool" },
                     "Builtin.IsX86_64" => new TypeNode { Name = "bool" },
                     "Builtin.IsAArch64" => new TypeNode { Name = "bool" },
                     _ => new TypeNode { Name = "i32" }
@@ -1736,6 +1776,9 @@ public class TypeChecker
         if (type.IsSlice)
             baseName = $"[]{baseName}";
 
+        if (type.IsVolatile)
+            baseName = "volatile " + baseName;
+
         return baseName;
     }
 
@@ -1780,6 +1823,7 @@ public class TypeChecker
             {
                 Name = operandType.Name,
                 NamespacePath = new List<string>(operandType.NamespacePath),
+                IsVolatile = operandType.IsVolatile,
                 IsPointer = true,
                 PointerLevel = 1
             };
@@ -1790,6 +1834,7 @@ public class TypeChecker
         {
             Name = operandType.Name,
             NamespacePath = new List<string>(operandType.NamespacePath),
+            IsVolatile = operandType.IsVolatile,
             IsPointer = true,
             PointerLevel = newLevel
         };
@@ -1818,6 +1863,9 @@ public class TypeChecker
         }
 
         if (SameType(target, source))
+            return true;
+
+        if (CanAddVolatileQualifier(target, source))
             return true;
 
         var targetIsFixedArray = target.ArraySize != null;
@@ -1850,6 +1898,16 @@ public class TypeChecker
             return target.Name == source.Name && target.NamespacePath.SequenceEqual(source.NamespacePath);
 
         return false;
+    }
+
+    private static bool CanAddVolatileQualifier(TypeNode target, TypeNode source)
+    {
+        if (!target.IsVolatile || source.IsVolatile)
+            return false;
+
+        var unqualifiedTarget = target.Clone();
+        unqualifiedTarget.IsVolatile = false;
+        return SameType(unqualifiedTarget, source);
     }
 
     private static bool SameNumericType(TypeNode target, TypeNode source)
@@ -1939,6 +1997,7 @@ public class TypeChecker
             return left == right;
 
         if (left.Name != right.Name ||
+            left.IsVolatile != right.IsVolatile ||
             left.IsSlice != right.IsSlice ||
             left.IsPointer != right.IsPointer ||
             left.PointerLevel != right.PointerLevel ||

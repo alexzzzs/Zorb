@@ -66,6 +66,21 @@ export fn std.io.write(fd: i32, buf: []u8) {
         return
     }
 
+    if Builtin.IsBareMetal {
+        if Builtin.IsX86_64 {
+            index: i64 = 0
+            while index < validated_len {
+                ch: u8 = buf[index]
+                asm {
+                    "outb %b0, $0xE9"
+                    : : "a"(ch) : "memory"
+                }
+                index = index + 1
+            }
+        }
+        return
+    }
+
     if Builtin.IsLinux {
         write_nr: i64 = 0
         if Builtin.IsX86_64 {

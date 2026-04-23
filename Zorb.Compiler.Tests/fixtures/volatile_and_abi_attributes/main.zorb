@@ -1,0 +1,16 @@
+struct Device {
+    reg: volatile *u32
+}
+
+[abi(sysv), noinline]
+fn read_reg(reg: volatile *u32) -> u32 {
+    return reg[0]
+}
+
+[abi(ms)]
+extern fn firmware_hook(code: i64) -> void
+
+[volatile]
+mmio: *u32 = cast(*u32, 4276092928)
+
+typed_mmio: volatile *u32 = cast(volatile *u32, 4276092928)

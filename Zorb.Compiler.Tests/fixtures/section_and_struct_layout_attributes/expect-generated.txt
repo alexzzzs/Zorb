@@ -1,0 +1,10 @@
+__attribute__((section(".text.boot"), noinline)) void __zorb_user_start()
+int64_t __zorb_user_main()
+int main()
+uint8_t boot_stack[64] __attribute__((section(".boot.data"), aligned(16))) = {
+struct __attribute__((packed)) GdtEntry {
+struct __attribute__((packed)) AcpiHeader {
+uint8_t __zorb_pad_0[3];
+_Static_assert(offsetof(struct AcpiHeader, rsdt_address) == 12
+((int64_t)sizeof(struct AcpiHeader))
+__zorb_user_start();
