@@ -1,0 +1,6 @@
+fn main() {
+    for i: i64 = 0; i < 1; i = i + 1 {
+    }
+
+    value: i64 = i
+}

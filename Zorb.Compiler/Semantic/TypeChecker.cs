@@ -245,6 +245,29 @@ public class TypeChecker
                     whileStmt.Body[i] = NormalizeAliasReferences(whileStmt.Body[i]);
                 return whileStmt;
 
+            case ForStmt forStmt:
+                if (forStmt.Initializer != null)
+                    forStmt.Initializer = NormalizeAliasReferences(forStmt.Initializer);
+                if (forStmt.Condition != null)
+                    forStmt.Condition = NormalizeAliasReferences(forStmt.Condition);
+                if (forStmt.Update != null)
+                    forStmt.Update = NormalizeAliasReferences(forStmt.Update);
+                for (int i = 0; i < forStmt.Body.Count; i++)
+                    forStmt.Body[i] = NormalizeAliasReferences(forStmt.Body[i]);
+                return forStmt;
+
+            case SwitchStmt switchStmt:
+                switchStmt.Expression = NormalizeAliasReferences(switchStmt.Expression);
+                for (int i = 0; i < switchStmt.Cases.Count; i++)
+                {
+                    switchStmt.Cases[i].Value = NormalizeAliasReferences(switchStmt.Cases[i].Value);
+                    for (int j = 0; j < switchStmt.Cases[i].Body.Count; j++)
+                        switchStmt.Cases[i].Body[j] = NormalizeAliasReferences(switchStmt.Cases[i].Body[j]);
+                }
+                for (int i = 0; i < switchStmt.ElseBody.Count; i++)
+                    switchStmt.ElseBody[i] = NormalizeAliasReferences(switchStmt.ElseBody[i]);
+                return switchStmt;
+
             case BreakStmt breakStmt:
                 return breakStmt;
 
@@ -664,14 +687,80 @@ public class TypeChecker
                 }
                 return FlowOutcome.FallsThrough;
 
+            case ForStmt forStmt:
+                _symbolTable.PushScope();
+                try
+                {
+                    if (forStmt.Initializer != null)
+                        CheckStatement(forStmt.Initializer);
+
+                    if (forStmt.Condition != null)
+                    {
+                        CheckExpression(forStmt.Condition);
+                        if (!IsBoolType(forStmt.Condition))
+                        {
+                            _errors.Error(forStmt.Condition, $"Condition must have type 'bool', got '{FormatType(GetExpressionType(forStmt.Condition, reportErrors: false))}'. Compare explicitly if you meant truthiness.");
+                        }
+                    }
+
+                    _loopDepth++;
+                    try
+                    {
+                        CheckBlock(forStmt.Body);
+                    }
+                    finally
+                    {
+                        _loopDepth--;
+                    }
+
+                    if (forStmt.Update != null)
+                        CheckStatement(forStmt.Update);
+                }
+                finally
+                {
+                    _symbolTable.PopScope();
+                }
+                return FlowOutcome.FallsThrough;
+
+            case SwitchStmt switchStmt:
+                CheckExpression(switchStmt.Expression);
+                var switchType = GetExpressionType(switchStmt.Expression);
+                if (switchType != null && !IsSwitchOperandType(switchType))
+                {
+                    _errors.Error(switchStmt.Expression, $"Switch expression must have numeric or bool type, got '{FormatType(switchType)}'.");
+                }
+
+                var allCaseBodiesReturn = true;
+                foreach (var switchCase in switchStmt.Cases)
+                {
+                    CheckExpression(switchCase.Value);
+                    var caseType = GetExpressionType(switchCase.Value);
+                    if (switchType != null && caseType != null && !AreEqualityComparableTypes(switchType, caseType))
+                    {
+                        _errors.Error(switchCase.Value, $"Switch case expression of type '{FormatType(caseType)}' is not comparable to switch expression type '{FormatType(switchType)}'.");
+                    }
+
+                    var caseFlow = CheckBlock(switchCase.Body);
+                    if (caseFlow != FlowOutcome.Returns)
+                        allCaseBodiesReturn = false;
+                }
+
+                if (switchStmt.ElseBody.Count == 0)
+                    return FlowOutcome.FallsThrough;
+
+                var switchElseFlow = CheckBlock(switchStmt.ElseBody);
+                return allCaseBodiesReturn && switchElseFlow == FlowOutcome.Returns
+                    ? FlowOutcome.Returns
+                    : FlowOutcome.FallsThrough;
+
             case ContinueStmt continueStmt:
                 if (_loopDepth == 0)
-                    _errors.Error(continueStmt, "'continue' is only allowed inside a while loop.");
+                    _errors.Error(continueStmt, "'continue' is only allowed inside a while or for loop.");
                 return FlowOutcome.FallsThrough;
 
             case BreakStmt breakStmt:
                 if (_loopDepth == 0)
-                    _errors.Error(breakStmt, "'break' is only allowed inside a while loop.");
+                    _errors.Error(breakStmt, "'break' is only allowed inside a while or for loop.");
                 return FlowOutcome.FallsThrough;
 
             case AsmStatementNode asmStmt:
@@ -1056,20 +1145,33 @@ public class TypeChecker
 
         if (bin.Operator is "==" or "!=")
         {
-            if (IsNumericType(leftType) && IsNumericType(rightType))
-                return;
-
-            if (IsBoolType(leftType) && IsBoolType(rightType))
-                return;
-
-            if (IsStringType(leftType) && IsStringType(rightType))
-                return;
-
-            if (leftType.IsPointer && rightType.IsPointer && SameType(leftType, rightType))
+            if (AreEqualityComparableTypes(leftType, rightType))
                 return;
 
             _errors.Error($"Operator '{bin.Operator}' requires numeric operands, bool operands, matching pointer types, or two strings");
         }
+    }
+
+    private bool IsSwitchOperandType(TypeNode type)
+    {
+        return IsNumericType(type) || IsBoolType(type);
+    }
+
+    private bool AreEqualityComparableTypes(TypeNode leftType, TypeNode rightType)
+    {
+        if (IsNumericType(leftType) && IsNumericType(rightType))
+            return true;
+
+        if (IsBoolType(leftType) && IsBoolType(rightType))
+            return true;
+
+        if (IsStringType(leftType) && IsStringType(rightType))
+            return true;
+
+        if (leftType.IsPointer && rightType.IsPointer && SameType(leftType, rightType))
+            return true;
+
+        return false;
     }
 
     private void CheckStructLiteralExpression(StructLiteralExpr structLiteral)

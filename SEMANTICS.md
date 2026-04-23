@@ -43,6 +43,9 @@ The lexer recognizes these reserved words:
 - `if`
 - `else`
 - `while`
+- `for`
+- `switch`
+- `case`
 - `return`
 - `struct`
 - `cast`
@@ -246,10 +249,11 @@ const name: Type = expr
 
 ### Loop Control
 
-- `continue` skips to the next iteration of the nearest enclosing `while`.
-- `break` exits the nearest enclosing `while`.
-- `continue` is valid only inside a `while` body.
-- `break` is valid only inside a `while` body.
+- `continue` skips to the next iteration of the nearest enclosing `while` or `for`.
+- `break` exits the nearest enclosing `while` or `for`.
+- `continue` is valid only inside a `while` or `for` body.
+- `break` is valid only inside a `while` or `for` body.
+- In a `for` loop, `continue` still runs the update clause before the next condition check.
 
 Meaning:
 
@@ -327,14 +331,57 @@ The current statement forms are:
 - expression statement
 - `if`
 - `while`
+- `for`
+- `switch`
 - `return`
 - `continue`
 - `break`
 - inline `asm`
 
-`break` exits the nearest enclosing `while`.
+`break` exits the nearest enclosing `while` or `for`.
 
-There is no dedicated block statement syntax beyond the bodies of `if`, `else`, `while`, and functions.
+There is no dedicated block statement syntax beyond the bodies of `if`, `else`, `while`, `for`, `switch` cases, and functions.
+
+### For Statements
+
+Syntax:
+
+```text
+for init; condition; update { ... }
+for ; condition; update { ... }
+for init; ; update { ... }
+for ; ; { ... }
+```
+
+Meaning:
+
+- `for` headers are written without parentheses.
+- The initializer and update clauses may be a variable declaration, assignment, or expression statement.
+- The initializer clause runs once before the loop starts.
+- The condition clause is evaluated before each iteration. If omitted, the loop behaves as if the condition were always `true`.
+- The update clause runs after each completed iteration and also after `continue` before the next condition check.
+
+### Switch Statements
+
+Syntax:
+
+```text
+switch expr {
+    case value { ... }
+    case other { ... }
+    else { ... }
+}
+```
+
+Meaning:
+
+- `switch` compares the controlling expression against each `case` in source order.
+- The controlling expression is evaluated once.
+- `else` is optional and runs only when no earlier case matches.
+- Case bodies do not fall through into later cases.
+- `switch` currently accepts numeric and `bool` controlling expressions.
+- Case expressions must be equality-comparable to the controlling expression type.
+- `break` retains its loop-only meaning and is not required to exit a `switch` case.
 
 ## Expressions
 
@@ -441,7 +488,7 @@ Meaning:
 - The symbol table has a global scope and nested local scopes.
 - Lookup now prefers the innermost active scope.
 - Function parameters live in the function-local scope.
-- Nested statement blocks created by `if`, `else`, and `while` create nested scopes in semantic analysis.
+- Nested statement blocks created by `if`, `else`, `while`, `for`, and `switch` cases create nested scopes in semantic analysis.
 
 ### Shadowing
 
@@ -478,7 +525,7 @@ Notes:
 
 ### Conditions
 
-- `if` and `while` conditions must have type `bool`.
+- `if`, `while`, and `for` conditions must have type `bool`.
 - Numeric and pointer values are not implicitly truthy in conditions.
 - `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsX86_64`, and `Builtin.IsAArch64` may be used directly as conditions because they are `bool`.
 - To branch on a numeric or pointer expression, compare it explicitly, for example `value != 0`.
