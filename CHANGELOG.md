@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-04-23
+
 ### Added
 
 - Explicit `--target` CLI selection for compiler output modes, with `host-linux`, `freestanding-linux`, and `host-windows` targets.
