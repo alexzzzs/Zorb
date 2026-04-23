@@ -42,6 +42,17 @@ catch (Exception ex)
     Console.WriteLine("FAIL cli_workflow");
 }
 
+try
+{
+    RunCliArgumentValidationTests(fixtureRoot);
+    Console.WriteLine("PASS cli_args");
+}
+catch (Exception ex)
+{
+    failures.Add($"cli_args: {ex.Message}");
+    Console.WriteLine("FAIL cli_args");
+}
+
 var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
     ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
 var examplesRoot = Path.Combine(projectRoot, "examples");
@@ -121,6 +132,96 @@ static void RunCliWorkflowTests(string fixtureRoot)
     {
         if (Directory.Exists(tempDir))
             Directory.Delete(tempDir, recursive: true);
+    }
+}
+
+static void RunCliArgumentValidationTests(string fixtureRoot)
+{
+    var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
+    var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
+        ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
+    var compilerInvocation = GetCompilerInvocation(projectRoot);
+    var sampleInput = Path.Combine(fixtureRoot, "runtime_hello_world", "main.zorb");
+
+    var cases = new[]
+    {
+        new CliArgumentCase(
+            "help",
+            "--help",
+            0,
+            "Usage:",
+            null),
+        new CliArgumentCase(
+            "version",
+            "--version",
+            0,
+            "Zorb.Compiler ",
+            null),
+        new CliArgumentCase(
+            "missing_target_value",
+            $"\"{sampleInput}\" --target",
+            1,
+            "Usage:",
+            "Missing value for --target."),
+        new CliArgumentCase(
+            "unknown_target",
+            $"\"{sampleInput}\" --target host-macos",
+            1,
+            "Usage:",
+            "Unknown target: host-macos"),
+        new CliArgumentCase(
+            "unexpected_extra_input",
+            $"\"{sampleInput}\" \"{sampleInput}\"",
+            1,
+            "Usage:",
+            "Unexpected extra input path:"),
+        new CliArgumentCase(
+            "keep_c_emit_c_mode",
+            $"\"{sampleInput}\" --keep-c out.c",
+            1,
+            "Usage:",
+            "Option --keep-c is only valid with build or run."),
+        new CliArgumentCase(
+            "run_output_rejected",
+            $"run \"{sampleInput}\" -o out",
+            1,
+            "Usage:",
+            "Option -o/--output is not valid with run."),
+        new CliArgumentCase(
+            "build_check_rejected",
+            $"build \"{sampleInput}\" --check",
+            1,
+            "Usage:",
+            "Option --check cannot be combined with build or run.")
+    };
+
+    foreach (var testCase in cases)
+    {
+        var result = RunProcessWithTimeout(
+            compilerInvocation.FileName,
+            CombineCommandArguments(compilerInvocation.ArgumentsPrefix, testCase.Arguments),
+            projectRoot,
+            TimeSpan.FromSeconds(30));
+
+        if (result.ExitCode != testCase.ExpectedExitCode)
+            throw new Exception($"CLI arg case '{testCase.Name}' exit code mismatch. Expected {testCase.ExpectedExitCode}, got {result.ExitCode}.");
+
+        var actualStdOut = NormalizeNewlines(result.StdOut);
+        var actualStdErr = NormalizeNewlines(result.StdErr);
+
+        if (!string.IsNullOrEmpty(testCase.ExpectedStdOutSubstring) &&
+            !actualStdOut.Contains(testCase.ExpectedStdOutSubstring, StringComparison.Ordinal))
+        {
+            throw new Exception(
+                $"CLI arg case '{testCase.Name}' stdout did not contain expected text '{testCase.ExpectedStdOutSubstring}'.{Environment.NewLine}Actual stdout:{Environment.NewLine}{actualStdOut}");
+        }
+
+        if (!string.IsNullOrEmpty(testCase.ExpectedStdErrSubstring) &&
+            !actualStdErr.Contains(testCase.ExpectedStdErrSubstring, StringComparison.Ordinal))
+        {
+            throw new Exception(
+                $"CLI arg case '{testCase.Name}' stderr did not contain expected text '{testCase.ExpectedStdErrSubstring}'.{Environment.NewLine}Actual stderr:{Environment.NewLine}{actualStdErr}");
+        }
     }
 }
 
@@ -880,3 +981,5 @@ sealed record RuntimeExpectation(string TargetName, string? ExpectedStdOut, stri
 sealed record CompilerInvocation(string FileName, string ArgumentsPrefix);
 
 sealed record CliWorkflowCase(string FixtureName, string TargetName);
+
+sealed record CliArgumentCase(string Name, string Arguments, int ExpectedExitCode, string? ExpectedStdOutSubstring, string? ExpectedStdErrSubstring);
