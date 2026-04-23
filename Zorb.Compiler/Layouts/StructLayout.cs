@@ -38,7 +38,20 @@ public static class StructLayout
         foreach (var attr in field.Attributes)
         {
             if (attr.StartsWith("offset(", StringComparison.Ordinal) && attr.EndsWith(")", StringComparison.Ordinal))
-                return int.Parse(attr.Substring(7, attr.Length - 8));
+            {
+                var text = attr.Substring(7, attr.Length - 8);
+                if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) || text.StartsWith("0X", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(text.Substring(2), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var val))
+                        return val;
+                }
+                else
+                {
+                    if (int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var val))
+                        return val;
+                }
+                return null;
+            }
         }
 
         return null;
@@ -49,7 +62,20 @@ public static class StructLayout
         foreach (var attr in attributes)
         {
             if (attr.StartsWith("align(", StringComparison.Ordinal) && attr.EndsWith(")", StringComparison.Ordinal))
-                return int.Parse(attr.Substring(6, attr.Length - 7));
+            {
+                var text = attr.Substring(6, attr.Length - 7);
+                if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) || text.StartsWith("0X", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(text.Substring(2), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var val))
+                        return val;
+                }
+                else
+                {
+                    if (int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var val))
+                        return val;
+                }
+                return null;
+            }
         }
 
         return null;
