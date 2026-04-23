@@ -61,6 +61,11 @@ export fn std.io.eprint_i64(val: i64) {
 }
 
 export fn std.io.write(fd: i32, buf: []u8) {
+    validated_len: i64 = buf.len
+    if validated_len < 0 {
+        return
+    }
+
     if Builtin.IsLinux {
         write_nr: i64 = 0
         if Builtin.IsX86_64 {
@@ -70,11 +75,16 @@ export fn std.io.write(fd: i32, buf: []u8) {
             write_nr = 64
         }
         if write_nr != 0 {
-            syscall(write_nr, cast(i64, fd), cast(i64, buf.ptr), buf.len)
+            syscall(write_nr, cast(i64, fd), cast(i64, buf.ptr), validated_len)
         }
     }
 
     if Builtin.IsWindows {
+        windows_len: u32 = cast(u32, validated_len)
+        if validated_len > 4294967295 {
+            windows_len = cast(u32, 4294967295)
+        }
+
         handle: i64 = 0
         if fd == std.io.stdout_fd() {
             handle = GetStdHandle(-11)
@@ -84,7 +94,7 @@ export fn std.io.write(fd: i32, buf: []u8) {
         }
         if handle != 0 {
             written: u32 = 0
-            WriteFile(handle, cast(*i8, buf.ptr), cast(u32, buf.len), &written, 0)
+            WriteFile(handle, cast(*i8, buf.ptr), windows_len, &written, 0)
         }
     }
 }

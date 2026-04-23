@@ -1,3 +1,4 @@
 struct Slice_u8
 GetStdHandle(-12)
-WriteFile(handle, (int8_t*)buf.ptr, (uint32_t)buf.len, &written, 0)
+uint32_t windows_len = (uint32_t)validated_len;
+WriteFile(handle, (int8_t*)buf.ptr, windows_len, &written, 0)
