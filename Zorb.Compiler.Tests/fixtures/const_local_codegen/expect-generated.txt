@@ -1,0 +1,2 @@
+const int64_t answer = 42;
+return answer;

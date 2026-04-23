@@ -1,0 +1,18 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn _start() {
+    i: i64 = 0
+    while i < 5 {
+        i = i + 1
+        if i == 3 {
+            continue
+        }
+
+        std.io.print_i64(i)
+        std.io.print(" ")
+    }
+
+    std.io.print("\n")
+    std.os.exit(0)
+}
