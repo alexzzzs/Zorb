@@ -9,6 +9,7 @@
 #else
     #define __zorb_builtin_is_windows 0
 #endif
+#define __zorb_builtin_is_bare_metal 0
 #if defined(__x86_64__) || defined(_M_X64)
     #define __zorb_builtin_is_x86_64 1
 #else

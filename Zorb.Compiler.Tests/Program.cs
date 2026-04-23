@@ -44,6 +44,17 @@ catch (Exception ex)
 
 try
 {
+    RunBareMetalCliBuildTests(fixtureRoot);
+    Console.WriteLine("PASS cli_bare_metal");
+}
+catch (Exception ex)
+{
+    failures.Add($"cli_bare_metal: {ex.Message}");
+    Console.WriteLine("FAIL cli_bare_metal");
+}
+
+try
+{
     RunCliArgumentValidationTests(fixtureRoot);
     Console.WriteLine("PASS cli_args");
 }
@@ -214,6 +225,18 @@ static CliArgumentCase[] GetCliArgumentCases(string sampleInput)
             "Usage:",
             "Option --keep-c is only valid with build or run."),
         new CliArgumentCase(
+            "missing_linker_script_value",
+            $"build \"{sampleInput}\" --target bare-metal-x86_64 --linker-script",
+            1,
+            "Usage:",
+            "Missing value for --linker-script."),
+        new CliArgumentCase(
+            "missing_emit_linker_script_value",
+            $"build \"{sampleInput}\" --target bare-metal-x86_64 --emit-linker-script",
+            1,
+            "Usage:",
+            "Missing value for --emit-linker-script."),
+        new CliArgumentCase(
             "emit_check_output_rejected",
             $"\"{sampleInput}\" --check -o out.c",
             1,
@@ -230,8 +253,170 @@ static CliArgumentCase[] GetCliArgumentCases(string sampleInput)
             $"build \"{sampleInput}\" --check",
             1,
             "Usage:",
-            "Option --check cannot be combined with build or run.")
+            "Option --check cannot be combined with build or run."),
+        new CliArgumentCase(
+            "bare_metal_run_rejected",
+            $"run \"{sampleInput}\" --target bare-metal-x86_64",
+            1,
+            null,
+            "Run does not support target 'bare-metal-x86_64'."),
+        new CliArgumentCase(
+            "linker_script_wrong_target",
+            $"build \"{sampleInput}\" --target host-linux --linker-script kernel.ld",
+            1,
+            null,
+            "Option --linker-script is only valid with build --target bare-metal-x86_64."),
+        new CliArgumentCase(
+            "emit_linker_script_wrong_target",
+            $"build \"{sampleInput}\" --target host-linux --emit-linker-script kernel.ld",
+            1,
+            null,
+            "Option --emit-linker-script is only valid with build --target bare-metal-x86_64.")
     ];
+}
+
+static void RunBareMetalCliBuildTests(string fixtureRoot)
+{
+    if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
+        return;
+
+    EnsureToolAvailable("gcc");
+    EnsureToolAvailable("ld");
+
+    var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
+    var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
+        ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
+    var compilerInvocation = GetCompilerInvocation(projectRoot);
+
+    var fixtureDir = Path.Combine(fixtureRoot, "bare_metal_debug_port");
+    var mainPath = Path.Combine(fixtureDir, "main.zorb");
+    var tempDir = Path.Combine(Path.GetTempPath(), "zorb-bare-metal-cli", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(tempDir);
+
+    try
+    {
+        var imagePath = Path.Combine(tempDir, "kernel.elf");
+        var keptCPath = Path.Combine(tempDir, "kernel.c");
+        var emittedBundledLinkerScriptPath = Path.Combine(tempDir, "bundled.ld");
+        var bundledBuild = RunProcessWithTimeout(
+            compilerInvocation.FileName,
+            CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"build \"{mainPath}\" --target bare-metal-x86_64 -o \"{imagePath}\" --keep-c \"{keptCPath}\" --emit-linker-script \"{emittedBundledLinkerScriptPath}\""),
+            projectRoot,
+            TimeSpan.FromSeconds(30));
+
+        if (bundledBuild.ExitCode != 0)
+            throw new Exception($"Bare-metal CLI build failed with exit code {bundledBuild.ExitCode}.{Environment.NewLine}{bundledBuild.StdErr}{bundledBuild.StdOut}".Trim());
+
+        if (!File.Exists(imagePath))
+            throw new Exception("Bare-metal CLI build did not produce the requested kernel image.");
+
+        if (!File.Exists(keptCPath))
+            throw new Exception("Bare-metal CLI build did not keep the requested C output.");
+
+        if (!File.Exists(emittedBundledLinkerScriptPath))
+            throw new Exception("Bare-metal CLI build did not emit the bundled linker script.");
+
+        if (!bundledBuild.StdOut.Contains("Linker script: bundled bare-metal-x86_64 default", StringComparison.Ordinal))
+            throw new Exception("Bare-metal CLI build did not report using the bundled linker script.");
+
+        if (!bundledBuild.StdOut.Contains($"Emitted linker script to {emittedBundledLinkerScriptPath}", StringComparison.Ordinal))
+            throw new Exception("Bare-metal CLI build did not report the emitted linker script path.");
+
+        var keptC = NormalizeNewlines(File.ReadAllText(keptCPath, Encoding.UTF8));
+        var emittedBundledLinkerScript = NormalizeNewlines(File.ReadAllText(emittedBundledLinkerScriptPath, Encoding.UTF8));
+        var expectedSnippets = new[]
+        {
+            "#define __zorb_builtin_is_bare_metal 1",
+            "#define __zorb_builtin_is_linux 0",
+            "#define __zorb_builtin_is_x86_64 1",
+            "outb %b0, $0xE9"
+        };
+
+        foreach (var snippet in expectedSnippets)
+        {
+            if (!keptC.Contains(snippet, StringComparison.Ordinal))
+                throw new Exception($"Bare-metal CLI build output did not contain expected snippet '{snippet}'.");
+        }
+
+        if (!emittedBundledLinkerScript.Contains("ENTRY(_start)", StringComparison.Ordinal) ||
+            !emittedBundledLinkerScript.Contains(". = 1M;", StringComparison.Ordinal))
+        {
+            throw new Exception("Bare-metal CLI build emitted an unexpected bundled linker script.");
+        }
+
+        var customLinkerScriptPath = Path.Combine(tempDir, "custom.ld");
+        File.WriteAllText(customLinkerScriptPath, """
+OUTPUT_FORMAT(elf64-x86-64)
+OUTPUT_ARCH(i386:x86-64)
+ENTRY(_start)
+
+SECTIONS
+{
+    . = 2M;
+
+    .text ALIGN(4K) :
+    {
+        *(.text .text.*)
+    }
+
+    .rodata ALIGN(4K) :
+    {
+        *(.rodata .rodata.*)
+    }
+
+    .data ALIGN(4K) :
+    {
+        *(.data .data.*)
+    }
+
+    .bss ALIGN(4K) :
+    {
+        *(COMMON)
+        *(.bss .bss.*)
+    }
+
+    /DISCARD/ :
+    {
+        *(.comment)
+        *(.eh_frame)
+        *(.note .note.*)
+    }
+}
+""", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var customImagePath = Path.Combine(tempDir, "kernel-custom.elf");
+        var emittedCustomLinkerScriptPath = Path.Combine(tempDir, "custom-emitted.ld");
+        var customBuild = RunProcessWithTimeout(
+            compilerInvocation.FileName,
+            CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"build \"{mainPath}\" --target bare-metal-x86_64 --linker-script \"{customLinkerScriptPath}\" --emit-linker-script \"{emittedCustomLinkerScriptPath}\" -o \"{customImagePath}\""),
+            projectRoot,
+            TimeSpan.FromSeconds(30));
+
+        if (customBuild.ExitCode != 0)
+            throw new Exception($"Bare-metal CLI build with custom linker script failed with exit code {customBuild.ExitCode}.{Environment.NewLine}{customBuild.StdErr}{customBuild.StdOut}".Trim());
+
+        if (!File.Exists(customImagePath))
+            throw new Exception("Bare-metal CLI build with custom linker script did not produce the requested kernel image.");
+
+        if (!File.Exists(emittedCustomLinkerScriptPath))
+            throw new Exception("Bare-metal CLI build with custom linker script did not emit the linker script.");
+
+        if (!customBuild.StdOut.Contains($"Linker script: {customLinkerScriptPath}", StringComparison.Ordinal))
+            throw new Exception("Bare-metal CLI build did not report the custom linker script path.");
+
+        if (!customBuild.StdOut.Contains($"Emitted linker script to {emittedCustomLinkerScriptPath}", StringComparison.Ordinal))
+            throw new Exception("Bare-metal CLI build did not report the emitted custom linker script path.");
+
+        var emittedCustomLinkerScript = NormalizeNewlines(File.ReadAllText(emittedCustomLinkerScriptPath, Encoding.UTF8));
+        var customLinkerScript = NormalizeNewlines(File.ReadAllText(customLinkerScriptPath, Encoding.UTF8));
+        if (!string.Equals(emittedCustomLinkerScript, customLinkerScript, StringComparison.Ordinal))
+            throw new Exception("Bare-metal CLI build did not emit the exact custom linker script content.");
+    }
+    finally
+    {
+        if (Directory.Exists(tempDir))
+            Directory.Delete(tempDir, recursive: true);
+    }
 }
 
 static CliWorkflowCase[] GetCliWorkflowCases()
@@ -683,7 +868,7 @@ static List<RuntimeExpectation> ReadRuntimeExpectations(string fixtureDir)
     if (File.Exists(hostStdOutPath) || File.Exists(hostStdErrPath) || File.Exists(hostExitPath))
     {
         expectations.Add(new RuntimeExpectation(
-            "host-linux",
+            "freestanding-linux",
             File.Exists(hostStdOutPath) ? NormalizeNewlines(File.ReadAllText(hostStdOutPath, Encoding.UTF8)) : null,
             File.Exists(hostStdErrPath) ? NormalizeNewlines(File.ReadAllText(hostStdErrPath, Encoding.UTF8)) : null,
             File.Exists(hostExitPath) ? int.Parse(File.ReadAllText(hostExitPath, Encoding.UTF8).Trim()) : 0));
@@ -731,14 +916,21 @@ static RuntimeExpectation ReadCliWorkflowExpectation(string fixtureDir, string t
 
     if (string.Equals(targetName, "freestanding-linux", StringComparison.Ordinal))
     {
-        var hostLinuxExpectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "host-linux", StringComparison.Ordinal));
+        var hostLinuxExpectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "freestanding-linux", StringComparison.Ordinal));
         if (hostLinuxExpectation != null)
             return hostLinuxExpectation;
     }
 
+    if (string.Equals(targetName, "host-linux", StringComparison.Ordinal))
+    {
+        var freestandingExpectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "freestanding-linux", StringComparison.Ordinal));
+        if (freestandingExpectation != null)
+            return freestandingExpectation;
+    }
+
     if (string.Equals(targetName, "host-windows", StringComparison.Ordinal))
     {
-        var hostLinuxExpectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "host-linux", StringComparison.Ordinal));
+        var hostLinuxExpectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "freestanding-linux", StringComparison.Ordinal));
         if (hostLinuxExpectation != null)
             return hostLinuxExpectation;
     }
@@ -750,7 +942,7 @@ static bool IsRuntimeExpectationRunnableOnCurrentHost(RuntimeExpectation runtime
 {
     return runtimeExpectation.TargetName switch
     {
-        "host-linux" or "linux-aarch64" => OperatingSystem.IsLinux(),
+        "freestanding-linux" or "host-linux" or "linux-aarch64" => OperatingSystem.IsLinux(),
         "host-windows" => OperatingSystem.IsWindows(),
         _ => false
     };
@@ -760,7 +952,8 @@ static (bool PreserveStart, bool NoStdLib) GetRuntimeCompilationOptions(string t
 {
     return targetName switch
     {
-        "host-linux" => (PreserveStart: true, NoStdLib: true),
+        "freestanding-linux" => (PreserveStart: true, NoStdLib: true),
+        "host-linux" => (PreserveStart: false, NoStdLib: false),
         "linux-aarch64" => (PreserveStart: true, NoStdLib: true),
         "host-windows" => (PreserveStart: false, NoStdLib: false),
         _ => throw new Exception($"Unknown runtime target '{targetName}'.")
@@ -783,7 +976,7 @@ static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeEx
         ProcessResult compile;
         ProcessResult execution;
 
-        if (runtimeExpectation.TargetName == "host-linux")
+        if (runtimeExpectation.TargetName == "freestanding-linux")
         {
             EnsureToolAvailable("timeout");
             var binaryPath = Path.Combine(tempDir, "out");
@@ -794,6 +987,20 @@ static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeEx
 
             if (compile.ExitCode != 0)
                 throw new Exception($"Runtime gcc compile failed with exit code {compile.ExitCode}.{Environment.NewLine}{compile.StdErr}{compile.StdOut}".Trim());
+
+            execution = RunProcess("timeout", $"30s \"{binaryPath}\"", tempDir);
+        }
+        else if (runtimeExpectation.TargetName == "host-linux")
+        {
+            EnsureToolAvailable("timeout");
+            var binaryPath = Path.Combine(tempDir, "out");
+            compile = RunProcess(
+                "gcc",
+                $"-O2 \"{sourcePath}\" -o \"{binaryPath}\"",
+                tempDir);
+
+            if (compile.ExitCode != 0)
+                throw new Exception($"Hosted Linux gcc compile failed with exit code {compile.ExitCode}.{Environment.NewLine}{compile.StdErr}{compile.StdOut}".Trim());
 
             execution = RunProcess("timeout", $"30s \"{binaryPath}\"", tempDir);
         }

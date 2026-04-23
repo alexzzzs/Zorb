@@ -1,43 +1,45 @@
 
+# Compiling Freestanding Linux Zorb Programs
 
-# Compiling Zorb Programs
+This document is about Zorb's `freestanding-linux` target, not true bare-metal kernels.
 
-Zorb targets a "Bare Metal" execution environment. When Zorb code is translated to C, it does not use the standard C library (`libc`) and manages its own entry point (`_start`) and thread stacks. 
+`freestanding-linux` means:
 
-To ensure the resulting binary runs correctly on Linux x86_64, you **must** use specific compiler and linker flags.
+- `_start` is preserved instead of lowered to `main`
+- the generated program talks directly to the Linux syscall ABI
+- the usual C runtime startup objects are not linked
 
-## The Recommended Command
+That is still a Linux userspace binary. It is not the same thing as `bare-metal-x86_64`, which links a kernel ELF through either Zorb's bundled linker script or a user-supplied linker script.
+
+## Recommended Command
 
 ```bash
 gcc -O2 -nostdlib -fno-pie -no-pie -z execstack -fno-builtin out.c -o out
 ```
 
----
-
 ## Flag Breakdown
 
-### 1. Environment & Entry Point
-* **`-nostdlib`**: Prevents the compiler from looking for `main()` or linking standard libraries. This allows Zorb's `_start` function to act as the true entry point.
+### Environment and entry point
 
-### 2. Memory Addressing (Critical)
-* **`-fno-pie` & **`-no-pie`**: Disables "Position Independent Executable" generation.
-    * **Why?** Without a dynamic loader (like `ld-linux.so`), the program cannot resolve relative addresses for global variables at runtime. These flags ensure that pointers to global strings and arrays use fixed, absolute memory addresses.
+- `-nostdlib`: do not link the standard C runtime startup files. This lets Zorb's `_start` remain the entry point.
 
-### 3. Stack Permissions
-* **`-z execstack`**: Marks the program's data segments as executable.
-    * **Why?** Modern Linux security (NX-bit) prevents code execution on the stack by default. This flag allows the CPU to execute the `call` and `ret` instructions required for thread functions to run.
+### Addressing model
 
-### 4. Code Generation
-* **`-O2`**: Highly recommended for programs using `asm` blocks. It ensures the compiler efficiently maps Zorb variables to the specific CPU registers required by the Linux Syscall ABI.
+- `-fno-pie` and `-no-pie`: disable position-independent executable generation. The current freestanding Linux runtime model expects fixed addresses for globals and string literals.
 
----
+### Stack permissions
+
+- `-z execstack`: mark the stack executable. The current task runtime swaps to manually managed stacks and expects normal call/return instructions to work there.
+
+### Code generation
+
+- `-O2`: strongly recommended for syscall-heavy and inline-assembly-heavy output.
+- `-fno-builtin`: prevents the C compiler from rewriting operations into hosted libc assumptions.
 
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |
 | :--- | :--- | :--- |
-| **Segfault (SIGSEGV)** | Missing `-z execstack` or `-no-pie`. | Ensure all flags are present. |
-| **Garbage Output** | Missing `-fno-pie`. | The syscall is pointing to the wrong memory address. |
-| **"Multiple definition of _start"** | Forgot `-nostdlib`. | GCC is trying to link the standard C startup files. |
-
-
+| Segfault | Missing `-z execstack` or `-no-pie`. | Use the full freestanding Linux flag set. |
+| Garbage output | Missing `-fno-pie`. | Rebuild with `-fno-pie -no-pie`. |
+| `multiple definition of _start` | Forgot `-nostdlib`. | Remove the hosted startup objects by using `-nostdlib`. |

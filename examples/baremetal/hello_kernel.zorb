@@ -1,0 +1,7 @@
+import "../../std/io.zorb"
+import "../../std/os.zorb"
+
+fn _start() {
+    std.io.print("hello from bare metal\n")
+    std.os.exit(0)
+}

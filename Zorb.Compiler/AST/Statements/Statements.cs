@@ -10,6 +10,7 @@ public class TypeNode
 {
     public string Name { get; set; } = "i32";
     public List<string> NamespacePath { get; set; } = new();
+    public bool IsVolatile { get; set; }
     public bool IsSlice { get; set; }
     public bool IsPointer { get; set; }
     public int PointerLevel { get; set; }
@@ -27,6 +28,7 @@ public class TypeNode
         {
             Name = Name,
             NamespacePath = new List<string>(NamespacePath),
+            IsVolatile = IsVolatile,
             IsSlice = IsSlice,
             IsPointer = IsPointer,
             PointerLevel = PointerLevel,
@@ -52,6 +54,13 @@ public class Parameter
     }
 
     public Parameter() { }
+}
+
+public class StructField : Node
+{
+    public string Name { get; set; } = null!;
+    public TypeNode TypeName { get; set; } = null!;
+    public List<string> Attributes { get; set; } = new();
 }
 
 public class FunctionDecl : Node
@@ -140,7 +149,8 @@ public class StructNode : Node
     public bool IsExported { get; set; }
     public List<string> NamespacePath { get; set; } = new();
     public string Name { get; set; } = null!;
-    public List<(string Name, TypeNode Type)> Fields { get; set; } = new();
+    public List<string> Attributes { get; set; } = new();
+    public List<StructField> Fields { get; set; } = new();
 }
 
 public class ImportNode : Statement

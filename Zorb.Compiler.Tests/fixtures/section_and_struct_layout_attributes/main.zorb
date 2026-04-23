@@ -1,0 +1,38 @@
+[section(".text.boot"), noinline]
+fn _start() -> void {
+    return
+}
+
+[section(".boot.data"), align(16)]
+boot_stack: [64]u8 = [64]u8{
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0
+};
+
+[packed]
+struct GdtEntry {
+    limit_lo: u16,
+    base_lo: u16,
+    base_mid: u8,
+    access: u8,
+    granularity: u8,
+    base_hi: u8
+}
+
+[layout(explicit)]
+struct AcpiHeader {
+    [offset(0)] signature: [4]u8,
+    [offset(4)] length: u32,
+    [offset(8)] revision: u8,
+    [offset(12)] rsdt_address: u32
+}
+
+fn main() -> i64 {
+    return Builtin.sizeof(AcpiHeader)
+}

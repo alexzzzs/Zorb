@@ -19,6 +19,10 @@ export scheduler_sp: *u8 = cast(*u8, 0)
 export active_fibers: i64 = 0
 
 export fn std.task.is_supported() -> bool {
+    if Builtin.IsBareMetal {
+        return false
+    }
+
     if Builtin.IsX86_64 {
         if !Builtin.IsWindows {
             return true

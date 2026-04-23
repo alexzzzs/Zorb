@@ -393,10 +393,22 @@ namespace Zorb.Compiler.Lexer;
                     tokens.Add(new Token(TokenType.Extern, "", loc.Item1, loc.Item2));
                 else if (text == "align")
                     tokens.Add(new Token(TokenType.Align, "", loc.Item1, loc.Item2));
+                else if (text == "abi")
+                    tokens.Add(new Token(TokenType.Abi, "", loc.Item1, loc.Item2));
+                else if (text == "section")
+                    tokens.Add(new Token(TokenType.Section, "", loc.Item1, loc.Item2));
+                else if (text == "packed")
+                    tokens.Add(new Token(TokenType.Packed, "", loc.Item1, loc.Item2));
+                else if (text == "layout")
+                    tokens.Add(new Token(TokenType.Layout, "", loc.Item1, loc.Item2));
+                else if (text == "offset")
+                    tokens.Add(new Token(TokenType.Offset, "", loc.Item1, loc.Item2));
                 else if (text == "noinline")
                     tokens.Add(new Token(TokenType.NoInline, "", loc.Item1, loc.Item2));
                 else if (text == "noclone")
                     tokens.Add(new Token(TokenType.NoClone, "", loc.Item1, loc.Item2));
+                else if (text == "volatile")
+                    tokens.Add(new Token(TokenType.Volatile, "", loc.Item1, loc.Item2));
                 else if (text == "catch")
                     tokens.Add(new Token(TokenType.Catch, "", loc.Item1, loc.Item2));
                 else if (text == "const")

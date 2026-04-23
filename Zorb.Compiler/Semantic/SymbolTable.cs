@@ -19,7 +19,7 @@ public class SymbolInfo
     public SymbolKind Kind { get; set; }
     public TypeNode Type { get; set; } = null!;
     public List<Parameter>? Parameters { get; set; }
-    public List<(string Name, TypeNode Type)>? Fields { get; set; }
+    public StructNode? StructDefinition { get; set; }
 }
 
 public class SymbolTable
@@ -85,14 +85,14 @@ public class SymbolTable
         CurrentScope[name] = info;
     }
 
-    public void DefineStruct(string name, List<(string Name, TypeNode Type)> fields)
+    public void DefineStruct(string name, StructNode structDefinition)
     {
         var info = new SymbolInfo
         {
             Name = name,
             Kind = SymbolKind.Struct,
             Type = new TypeNode { Name = name },
-            Fields = fields
+            StructDefinition = structDefinition
         };
         CurrentScope[name] = info;
     }
@@ -121,9 +121,11 @@ public class SymbolTable
     public List<(string Name, TypeNode Type)>? LookupStruct(string name)
     {
         var info = Lookup(name);
-        if (info != null && info.Kind == SymbolKind.Struct)
+        if (info != null && info.Kind == SymbolKind.Struct && info.StructDefinition != null)
         {
-            return info.Fields;
+            return info.StructDefinition.Fields
+                .Select(field => (field.Name, field.TypeName))
+                .ToList();
         }
         return null;
     }
@@ -132,6 +134,14 @@ public class SymbolTable
     {
         fields = LookupStruct(name);
         return fields != null;
+    }
+
+    public StructNode? LookupStructNode(string name)
+    {
+        var info = Lookup(name);
+        if (info != null && info.Kind == SymbolKind.Struct)
+            return info.StructDefinition;
+        return null;
     }
 
     public bool IsLocal(string name)
