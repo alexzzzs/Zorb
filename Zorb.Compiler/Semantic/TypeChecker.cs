@@ -427,7 +427,7 @@ public class TypeChecker
         foreach (var node in nodes)
         {
             if (node is ImportNode importNode) ProcessImport(importNode, currentDir);
-            else if (node is VariableDeclarationNode varDecl && varDecl.Value != null)
+            else if (node is VariableDeclarationNode varDecl)
             {
                 CheckVariableInitializer(varDecl);
             }
@@ -664,6 +664,11 @@ public class TypeChecker
                 }
                 return FlowOutcome.FallsThrough;
 
+            case ContinueStmt continueStmt:
+                if (_loopDepth == 0)
+                    _errors.Error(continueStmt, "'continue' is only allowed inside a while loop.");
+                return FlowOutcome.FallsThrough;
+
             case BreakStmt breakStmt:
                 if (_loopDepth == 0)
                     _errors.Error(breakStmt, "'break' is only allowed inside a while loop.");
@@ -756,6 +761,10 @@ public class TypeChecker
                 if (!_symbolTable.IsDefined(ident.Name))
                 {
                     _errors.Error($"Use of undeclared identifier '{ident.Name}'");
+                }
+                else if (!CheckVisibility(ident.Name))
+                {
+                    _errors.Error(ident, $"'{ident.Name}' is not visible. Did you forget an import?");
                 }
                 break;
 
@@ -891,7 +900,11 @@ public class TypeChecker
     private void CheckVariableInitializer(VariableDeclarationNode varDecl)
     {
         if (varDecl.Value == null)
+        {
+            if (varDecl.IsConst)
+                _errors.Error(varDecl, $"Const declaration '{varDecl.Name}' requires an initializer.");
             return;
+        }
 
         varDecl.Value = NormalizeAliasReferences(varDecl.Value);
 

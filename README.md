@@ -15,7 +15,7 @@ The compiler supports a focused language subset:
 
 - functions, `extern fn`, and namespaced declarations
 - `struct` types
-- globals and `const` globals
+- globals, `const` declarations, and error declarations
 - `if`, `else`, `while`, `continue`, `break`, and `return`
 - logical `&&`, `||`, and unary `!` on `bool`
 - pointers, fixed-size arrays, function types, and error unions
@@ -48,7 +48,7 @@ Publish a standalone compiler binary:
 Publish a version-stamped standalone Linux compiler build:
 
 ```bash
-VERSION=0.1.4 INFORMATIONAL_VERSION=0.1.4 ./scripts/publish-compiler-linux.sh
+VERSION=0.1.5-dev INFORMATIONAL_VERSION=0.1.5-dev ./scripts/publish-compiler-linux.sh
 ```
 
 On Windows PowerShell:
@@ -60,8 +60,8 @@ On Windows PowerShell:
 Publish a version-stamped standalone Windows compiler build:
 
 ```powershell
-$env:VERSION="0.1.4"
-$env:INFORMATIONAL_VERSION="0.1.4"
+$env:VERSION="0.1.5-dev"
+$env:INFORMATIONAL_VERSION="0.1.5-dev"
 ./scripts/publish-compiler-windows.ps1
 ```
 

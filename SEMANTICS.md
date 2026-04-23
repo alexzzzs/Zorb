@@ -237,6 +237,7 @@ const name: Type = expr
 
 - `continue` skips to the next iteration of the nearest enclosing `while`.
 - `break` exits the nearest enclosing `while`.
+- `continue` is valid only inside a `while` body.
 - `break` is valid only inside a `while` body.
 
 Meaning:
@@ -246,6 +247,7 @@ Meaning:
 - Variables are explicitly typed.
 - There is no local type inference.
 - A variable may be declared without an initializer.
+- `const` declarations must include an initializer.
 - Global initializers may not contain `catch` expressions.
 - `const` marks the generated C declaration as `const`.
 

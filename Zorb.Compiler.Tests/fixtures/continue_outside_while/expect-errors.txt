@@ -1,0 +1,1 @@
+'continue' is only allowed inside a while loop.

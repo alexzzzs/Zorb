@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- New hardening fixtures covering `continue`, local `const` declarations, and exported `const` globals.
+- Additional hardening fixtures covering imports of exported vs. private symbols, and unknown-attribute parsing.
+- Direct CLI argument-regression coverage for help/version paths plus invalid option combinations.
+
+### Changed
+
+- The compiler version now advances to the `0.1.5-dev` line after the `0.1.4` release.
+
+### Fixed
+
+- `continue` is now rejected semantically outside `while` loops, matching the documented loop-control rules.
+- Local `const` declarations now parse in statement position instead of being skipped as unsupported syntax.
+- `const` declarations now require an initializer, matching the documented syntax instead of falling through to invalid C output.
+- The CLI now rejects ignored or contradictory option combinations such as `--keep-c` outside build/run, `-o` with `run`, and `--check` with build/run.
+
 ## [0.1.4] - 2026-04-23
 
 ### Added
