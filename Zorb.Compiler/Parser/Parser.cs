@@ -80,6 +80,26 @@ public class Parser
         return false;
     }
 
+    // Checks if the current token is an identifier that matches a contextual keyword.
+    // If so, returns the corresponding TokenType; otherwise returns null.
+    private TokenType? GetContextualKeywordType()
+    {
+        if (Current.Type == TokenType.Identifier)
+            return Lexer.Lexer.MapContextualKeyword(Current.Value);
+        return null;
+    }
+
+    // Checks and consumes a contextual keyword if the current identifier matches.
+    private bool MatchContextualKeyword(string keyword, TokenType expectedType)
+    {
+        if (Current.Type == TokenType.Identifier && Current.Value == keyword)
+        {
+            Advance();
+            return true;
+        }
+        return false;
+    }
+
 private void Synchronize()
 {
     if (Current.Type != TokenType.Eof)
@@ -367,7 +387,7 @@ public List<Node> ParseProgram()
 
     private TypeNode ParseType()
     {
-        var isVolatile = Match(TokenType.Volatile);
+        var isVolatile = MatchContextualKeyword("volatile", TokenType.Volatile);
         bool isSlice = false;
         int? arraySize = null;
         
@@ -581,7 +601,7 @@ public List<Node> ParseProgram()
             {
                 return attributes;
             }
-            
+
             Advance();
             while (Current.Type != TokenType.RBracket)
             {
@@ -593,23 +613,20 @@ public List<Node> ParseProgram()
                     Expect(TokenType.RParen);
                     attributes.Add($"align({numToken.Value})");
                 }
-                else if (Current.Type == TokenType.Section)
+                else if (MatchContextualKeyword("section", TokenType.Section))
                 {
                     attributes.Add(ParseSectionAttribute());
                 }
-                else if (Current.Type == TokenType.Volatile)
+                else if (MatchContextualKeyword("volatile", TokenType.Volatile))
                 {
-                    Advance();
                     attributes.Add("volatile");
                 }
-                else if (Current.Type == TokenType.NoInline)
+                else if (MatchContextualKeyword("noinline", TokenType.NoInline))
                 {
-                    Advance();
                     attributes.Add("noinline");
                 }
-                else if (Current.Type == TokenType.NoClone)
+                else if (MatchContextualKeyword("noclone", TokenType.NoClone))
                 {
-                    Advance();
                     attributes.Add("noclone");
                 }
                 else
@@ -648,26 +665,23 @@ public List<Node> ParseProgram()
                     Expect(TokenType.RParen);
                     attributes.Add($"align({numToken.Value})");
                 }
-                else if (Current.Type == TokenType.Abi)
+                else if (MatchContextualKeyword("abi", TokenType.Abi))
                 {
-                    Advance();
                     Expect(TokenType.LParen, "Expected '(' after 'abi' attribute.");
                     var abiToken = Expect(TokenType.Identifier, "Expected ABI name inside abi(...).");
                     Expect(TokenType.RParen, "Expected ')' to close abi attribute.");
                     attributes.Add(ParseAbiAttribute(abiToken));
                 }
-                else if (Current.Type == TokenType.Section)
+                else if (MatchContextualKeyword("section", TokenType.Section))
                 {
                     attributes.Add(ParseSectionAttribute());
                 }
-                else if (Current.Type == TokenType.NoInline)
+                else if (MatchContextualKeyword("noinline", TokenType.NoInline))
                 {
-                    Advance();
                     attributes.Add("noinline");
                 }
-                else if (Current.Type == TokenType.NoClone)
+                else if (MatchContextualKeyword("noclone", TokenType.NoClone))
                 {
-                    Advance();
                     attributes.Add("noclone");
                 }
                 else
@@ -699,14 +713,12 @@ public List<Node> ParseProgram()
             Advance();
             while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
             {
-                if (Current.Type == TokenType.Packed)
+                if (MatchContextualKeyword("packed", TokenType.Packed))
                 {
-                    Advance();
                     attributes.Add("packed");
                 }
-                else if (Current.Type == TokenType.Layout)
+                else if (MatchContextualKeyword("layout", TokenType.Layout))
                 {
-                    Advance();
                     Expect(TokenType.LParen, "Expected '(' after 'layout' attribute.");
                     var layoutToken = Expect(TokenType.Identifier, "Expected layout kind inside layout(...).");
                     Expect(TokenType.RParen, "Expected ')' to close layout attribute.");
@@ -749,9 +761,8 @@ public List<Node> ParseProgram()
             Advance();
             while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
             {
-                if (Current.Type == TokenType.Offset)
+                if (MatchContextualKeyword("offset", TokenType.Offset))
                 {
-                    Advance();
                     Expect(TokenType.LParen, "Expected '(' after 'offset' attribute.");
                     var offsetToken = Expect(TokenType.Number, "Expected byte offset inside offset(...).");
                     Expect(TokenType.RParen, "Expected ')' to close offset attribute.");
@@ -806,7 +817,7 @@ public List<Node> ParseProgram()
 
     private string ParseSectionAttribute()
     {
-        Expect(TokenType.Section);
+        // "section" keyword has already been consumed by the caller
         Expect(TokenType.LParen, "Expected '(' after 'section' attribute.");
         var sectionToken = Expect(TokenType.String, "Expected string literal inside section(...).");
         Expect(TokenType.RParen, "Expected ')' to close section attribute.");
