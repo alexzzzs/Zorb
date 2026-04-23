@@ -227,6 +227,8 @@ fn main() {
 `for` loops and `switch` branches:
 
 ```zorb
+import "std/os.zorb"
+
 fn classify(value: i64) -> i64 {
     switch value {
         case 0 {
@@ -238,11 +240,13 @@ fn classify(value: i64) -> i64 {
     }
 }
 
-fn main() {
+fn _start() {
     total: i64 = 0
     for i: i64 = 0; i < 3; i = i + 1 {
         total = total + classify(i)
     }
+
+    std.os.exit(0)
 }
 ```
 

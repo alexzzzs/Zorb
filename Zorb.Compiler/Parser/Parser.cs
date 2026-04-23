@@ -826,6 +826,14 @@ public List<Node> ParseProgram()
         {
             if (Match(TokenType.Case))
             {
+                if (sawElse)
+                {
+                    ErrorReporter.Error("Switch case branches cannot appear after 'else'.", Current.Line, Current.Column, _fileName);
+                    ParseExpression();
+                    ParseStatementBlock("Expected '{' to start case body.", "Expected '}' to close case body.");
+                    continue;
+                }
+
                 var caseValue = ParseExpression();
                 var caseBody = ParseStatementBlock("Expected '{' to start case body.", "Expected '}' to close case body.");
                 cases.Add(new SwitchCase { Value = caseValue, Body = caseBody });
@@ -835,7 +843,10 @@ public List<Node> ParseProgram()
             if (Match(TokenType.Else))
             {
                 if (sawElse)
+                {
                     ErrorReporter.Error("Switch statements may contain only one 'else' branch.", Current.Line, Current.Column, _fileName);
+                    continue;
+                }
 
                 elseBody = ParseStatementBlock("Expected '{' to start switch else body.", "Expected '}' to close switch else body.");
                 sawElse = true;
