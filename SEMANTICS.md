@@ -186,8 +186,19 @@ Notes:
 - Arrays may appear in variable declarations and struct fields.
 - Arrays do not implicitly decay to pointers in general expression or assignment contexts.
 - Arrays decay to `*T` only when passed to a function parameter of type `*T`.
+- Arrays also coerce to `[]T` when assigned, initialized, returned, used in struct literals, or passed to a function expecting that matching slice type.
 - `&array` is an explicit way to obtain a pointer to the first element, with type `*T`.
 - Indexing an array or pointer produces an element value of type `T`.
+
+### Slice Types
+
+- `[]T` is a non-owning slice of contiguous elements of type `T`.
+- A slice value exposes `.ptr` with type `*T` and `.len` with type `i64`.
+- Indexing a slice with `slice[index]` produces an element value of type `T`.
+- Slice indexing currently performs no runtime bounds checks; the current C codegen lowers it directly to raw `ptr[index]`.
+- Slices alias their backing storage, so writes through `slice[index]` or `slice.ptr[...]` mutate the underlying array or buffer view.
+- Slice fields are ordinary writable fields today, including `.len` and `.ptr`.
+- Slices currently lower to generated C structs containing `ptr` and `len` fields.
 
 ### Function Types
 
@@ -584,7 +595,14 @@ Important consequence:
 
 - `expr[index]` is parsed for any postfix expression.
 - If the target type is an array, indexing yields the element type.
+- If the target type is a slice, indexing yields the slice element type.
 - If the target type is a pointer, indexing yields the pointed-to type, decreasing pointer level by one when necessary.
+
+### Field Access
+
+- Normal field access on structs uses the declared struct fields.
+- Slice values additionally expose `.ptr` and `.len` as built-in fields.
+- No other built-in field names currently exist.
 
 ### Decay
 
@@ -592,6 +610,12 @@ Important consequence:
 - That decay applies only when the parameter type is exactly `*T` for the array element type `T`.
 - Arrays do not decay to `*void` implicitly.
 - Outside call position, arrays remain arrays unless explicitly addressed or indexed.
+
+### Slice Coercions
+
+- A fixed-size array `[N]T` may coerce to `[]T` when the element types match exactly.
+- That coercion keeps a pointer to the original array storage and initializes the slice length to `N`.
+- There is currently no implicit pointer-to-slice or string-to-slice coercion.
 
 ### Literals
 

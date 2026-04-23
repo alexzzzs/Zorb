@@ -23,6 +23,7 @@ public class CGenerator
     private readonly SymbolTable _symbolTable;
     private readonly Dictionary<string, TypeNode> _localVars = new();
     private readonly HashSet<string> _generatedResultTypes = new();
+    private readonly HashSet<string> _generatedSliceTypes = new();
     private readonly StringBuilder _dynamicStructs = new();
     private List<Node> _allNodes = new();
     private int _tempCounter;
@@ -108,6 +109,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         
         _dynamicStructs.Clear();
         _generatedResultTypes.Clear();
+        _generatedSliceTypes.Clear();
         _allNodes = allNodes;
         _tempCounter = 0;
         _insideFunctionBody = false;
@@ -313,7 +315,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         _localVars.Clear();
         foreach (var p in fn.Parameters) _localVars[p.Name] = p.TypeName;
 
-        if (fn.ReturnType.IsErrorUnion)
+        if (fn.ReturnType.Name != "void" || fn.ReturnType.IsPointer || fn.ReturnType.IsSlice || fn.ReturnType.ArraySize != null || fn.ReturnType.IsErrorUnion || fn.ReturnType.IsFunction)
         {
             _localVars["__return_type"] = fn.ReturnType;
         }
@@ -367,6 +369,14 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             return $"struct {resultName} {name}";
         }
 
+        if (type.IsSlice)
+        {
+            var sliceName = GetSliceStructName(type);
+            GenerateSliceStruct(type, sliceName);
+            if (string.IsNullOrEmpty(name)) return "struct " + sliceName;
+            return $"struct {sliceName} {name}";
+        }
+
         if (type.IsFunction)
         {
             var ret = MapType(type.ReturnType ?? new TypeNode { Name = "void" });
@@ -407,6 +417,12 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
     private string GetResultTypeName(TypeNode innerType)
     {
+        if (innerType.IsSlice)
+        {
+            var elementType = GetSliceElementType(innerType);
+            return "slice_" + GetResultTypeName(elementType);
+        }
+
         var baseName = innerType.Name switch
         {
             "i8" => "i8",
@@ -438,24 +454,26 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             return;
         _generatedResultTypes.Add(resultName);
 
-        var cInnerType = innerType.Name switch
-        {
-            "i8" => "int8_t",
-            "i16" => "int16_t",
-            "i32" => "int32_t",
-            "i64" => "int64_t",
-            "u8" => "uint8_t",
-            "u16" => "uint16_t",
-            "u32" => "uint32_t",
-            "u64" => "uint64_t",
-            "bool" => "int32_t",
-            "string" => "char*",
-            "void" => "int8_t",
-            "char" => "char",
-            _ => "struct " + FlattenName(innerType.NamespacePath, innerType.Name)
-        };
+        var cInnerType = innerType.IsSlice
+            ? MapType(innerType)
+            : innerType.Name switch
+            {
+                "i8" => "int8_t",
+                "i16" => "int16_t",
+                "i32" => "int32_t",
+                "i64" => "int64_t",
+                "u8" => "uint8_t",
+                "u16" => "uint16_t",
+                "u32" => "uint32_t",
+                "u64" => "uint64_t",
+                "bool" => "int32_t",
+                "string" => "char*",
+                "void" => "int8_t",
+                "char" => "char",
+                _ => "struct " + FlattenName(innerType.NamespacePath, innerType.Name)
+            };
 
-        if (innerType.IsPointer && innerType.Name != "string")
+        if (!innerType.IsSlice && innerType.IsPointer && innerType.Name != "string")
         {
             var pointerLevel = innerType.PointerLevel > 0 ? innerType.PointerLevel : 1;
             cInnerType += new string('*', pointerLevel);
@@ -467,6 +485,24 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         _dynamicStructs.AppendLine(structCode);
         
         _structs.Insert(0, new StructNode { Name = resultName, Fields = new List<(string, TypeNode)> { ("value", innerType), ("error", new TypeNode { Name = "i32" }) } });
+    }
+
+    private void GenerateSliceStruct(TypeNode sliceType, string sliceName)
+    {
+        if (_generatedSliceTypes.Contains(sliceName))
+            return;
+        _generatedSliceTypes.Add(sliceName);
+
+        var elementType = GetSliceElementType(sliceType);
+        var pointerType = AddressOfType(elementType);
+        var structCode = $"struct {sliceName} {{\n    {MapType(pointerType, "ptr")};\n    int64_t len;\n}};\n";
+
+        _dynamicStructs.AppendLine(structCode);
+    }
+
+    private string GetSliceStructName(TypeNode sliceType)
+    {
+        return "Slice_" + GetResultTypeName(GetSliceElementType(sliceType));
     }
 
     private string FlattenName(List<string> path, string name, string? prefix = null)
@@ -568,16 +604,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             var constKeyword = vd.IsConst ? "const " : "";
             if (vd.Value != null)
             {
-                var generated = GenerateExpressionWithPrelude(vd.Value);
+                var generated = CoerceExpressionToTargetType(vd.TypeName, vd.Value, GenerateExpressionWithPrelude(vd.Value));
                 var valueCode = generated.Code;
-                var valueType = generated.Type ?? GetExprType(vd.Value);
-                if (valueType != null && valueType.IsErrorUnion && !vd.TypeName.IsErrorUnion)
-                {
-                    var innerType = valueType.ErrorInnerType ?? valueType;
-                    var resultName = "Result_" + GetResultTypeName(innerType);
-                    GenerateResultStruct(innerType, resultName);
-                    valueCode = $"({valueCode}).value";
-                }
                 var declaration = isFuncPtr
                     ? $"{constKeyword}{cType} = {valueCode}{alignment};"
                     : $"{constKeyword}{cType} {safeName} = {valueCode}{alignment};";
@@ -654,17 +682,8 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             var generatedTarget = GenerateExpressionWithPrelude(assign.Target);
             var targetType = GetExprType(assign.Target);
             var valueExpr = assign.Value;
-            var generatedValue = GenerateExpressionWithPrelude(valueExpr);
-            var valueType = generatedValue.Type ?? GetExprType(valueExpr);
+            var generatedValue = CoerceExpressionToTargetType(targetType, valueExpr, GenerateExpressionWithPrelude(valueExpr));
             var valueCode = generatedValue.Code;
-            
-            if (valueType != null && valueType.IsErrorUnion && (targetType == null || !targetType.IsErrorUnion))
-            {
-                var innerType = valueType.ErrorInnerType ?? valueType;
-                var resultName = "Result_" + GetResultTypeName(innerType);
-                GenerateResultStruct(innerType, resultName);
-                valueCode = $"({valueCode}).value";
-            }
 
             if (targetType?.ArraySize is not null)
             {
@@ -686,10 +705,9 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             if (ret.Value == null)
                 return _currentFunctionLowersToHostedMain ? "return 0;" : "return;";
 
-            var generated = GenerateExpressionWithPrelude((Expr)ret.Value);
-            var valueCode = generated.Code;
-
             var fnReturnType = _localVars.TryGetValue("__return_type", out var rt) ? rt : null;
+            var generated = CoerceExpressionToTargetType(fnReturnType, (Expr)ret.Value, GenerateExpressionWithPrelude((Expr)ret.Value));
+            var valueCode = generated.Code;
             if (fnReturnType != null && fnReturnType.IsErrorUnion)
             {
                 var innerType = fnReturnType.ErrorInnerType ?? fnReturnType;
@@ -806,6 +824,55 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             $"\"{operand.Constraint}\"({GenerateExpression(operand.Expression)})"));
     }
 
+    private List<TypeNode> GetCallParameterTypes(CallExpr call)
+    {
+        if (call.TargetExpr != null)
+        {
+            if (!string.IsNullOrEmpty(call.ResolvedTargetQualifiedName) &&
+                _symbolTable.TryLookup(call.ResolvedTargetQualifiedName, out var resolvedInfo))
+            {
+                return resolvedInfo!.Kind == SymbolKind.Function
+                    ? resolvedInfo.Parameters!.Select(parameter => parameter.TypeName.Clone()).ToList()
+                    : resolvedInfo.Type.ParamTypes.Select(type => type.Clone()).ToList();
+            }
+
+            var qualifiedName = TryGetQualifiedName(call.TargetExpr);
+            if (!string.IsNullOrEmpty(qualifiedName) &&
+                _symbolTable.TryLookup(qualifiedName, out var qualifiedInfo))
+            {
+                return qualifiedInfo!.Kind == SymbolKind.Function
+                    ? qualifiedInfo.Parameters!.Select(parameter => parameter.TypeName.Clone()).ToList()
+                    : qualifiedInfo.Type.ParamTypes.Select(type => type.Clone()).ToList();
+            }
+
+            var targetType = GetExprType(call.TargetExpr);
+            if (targetType != null && targetType.IsFunction)
+                return targetType.ParamTypes.Select(type => type.Clone()).ToList();
+
+            return new List<TypeNode>();
+        }
+
+        var fullName = call.NamespacePath.Any()
+            ? string.Join(".", call.NamespacePath) + "." + call.Name
+            : call.Name;
+
+        if (_symbolTable.TryLookup(fullName, out var info))
+        {
+            return info!.Kind == SymbolKind.Function
+                ? info.Parameters!.Select(parameter => parameter.TypeName.Clone()).ToList()
+                : info.Type.ParamTypes.Select(type => type.Clone()).ToList();
+        }
+
+        if (_symbolTable.TryLookup(call.Name, out var bareInfo))
+        {
+            return bareInfo!.Kind == SymbolKind.Function
+                ? bareInfo.Parameters!.Select(parameter => parameter.TypeName.Clone()).ToList()
+                : bareInfo.Type.ParamTypes.Select(type => type.Clone()).ToList();
+        }
+
+        return new List<TypeNode>();
+    }
+
     private string GenerateExpression(Expr expr)
     {
         var generated = GenerateExpressionWithPrelude(expr);
@@ -838,9 +905,12 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             case CallExpr call:
                 var callPrelude = new StringBuilder();
                 var generatedArgs = new List<string>();
-                foreach (var arg in call.Args)
+                var parameterTypes = GetCallParameterTypes(call);
+                for (int i = 0; i < call.Args.Count; i++)
                 {
-                    var generatedArg = GenerateExpressionWithPrelude(arg);
+                    var arg = call.Args[i];
+                    var parameterType = i < parameterTypes.Count ? parameterTypes[i] : null;
+                    var generatedArg = CoerceExpressionToTargetType(parameterType, arg, GenerateExpressionWithPrelude(arg));
                     callPrelude.Append(generatedArg.Prelude);
                     generatedArgs.Add(generatedArg.Code);
                 }
@@ -921,7 +991,11 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                     GetExprType(expr));
             case StructLiteralExpr structLiteral:
                 var generatedFields = structLiteral.Fields
-                    .Select(field => (Field: field, FieldType: GetStructFieldType(structLiteral.TypeName, field.Name), Generated: GenerateExpressionWithPrelude(field.Value)))
+                    .Select(field =>
+                    {
+                        var fieldType = GetStructFieldType(structLiteral.TypeName, field.Name);
+                        return (Field: field, FieldType: fieldType, Generated: CoerceExpressionToTargetType(fieldType, field.Value, GenerateExpressionWithPrelude(field.Value)));
+                    })
                     .ToList();
 
                 if (generatedFields.All(field => CanInlineStructLiteralField(field.Field, field.FieldType, field.Generated)))
@@ -975,9 +1049,13 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
             case IndexExpr idx:
                 var generatedTargetExpr = GenerateExpressionWithPrelude(idx.Target);
                 var generatedIndex = GenerateExpressionWithPrelude(idx.Index);
+                var indexedTargetType = GetExprType(idx.Target);
+                var targetCode = indexedTargetType != null && indexedTargetType.IsSlice
+                    ? $"{generatedTargetExpr.Code}.ptr"
+                    : generatedTargetExpr.Code;
                 return new GeneratedExpression(
                     generatedTargetExpr.Prelude + generatedIndex.Prelude,
-                    $"{generatedTargetExpr.Code}[{generatedIndex.Code}]",
+                    $"{targetCode}[{generatedIndex.Code}]",
                     GetExprType(expr));
             case FieldExpr field:
                 string GetFullName(Expr e)
@@ -993,8 +1071,10 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 }
 
                 var generatedFieldTarget = GenerateExpressionWithPrelude(field.Target);
-                var targetCode = generatedFieldTarget.Code;
+                var fieldTargetCode = generatedFieldTarget.Code;
                 var targetType = GetExprType(field.Target);
+                if (targetType != null && targetType.IsSlice)
+                    return new GeneratedExpression(generatedFieldTarget.Prelude, $"{fieldTargetCode}.{field.Field}", GetExprType(expr));
                 bool isPointerTarget = false;
 
                 // FIX: Error Unions are always structs in C, never pointers, even if their inner type is a pointer.
@@ -1016,9 +1096,9 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 }
                 if (isPointerTarget)
                 {
-                    return new GeneratedExpression(generatedFieldTarget.Prelude, $"{targetCode}->{field.Field}", GetExprType(expr));
+                    return new GeneratedExpression(generatedFieldTarget.Prelude, $"{fieldTargetCode}->{field.Field}", GetExprType(expr));
                 }
-                return new GeneratedExpression(generatedFieldTarget.Prelude, $"{targetCode}.{field.Field}", GetExprType(expr));
+                return new GeneratedExpression(generatedFieldTarget.Prelude, $"{fieldTargetCode}.{field.Field}", GetExprType(expr));
             case CastExpr cast:
                 var generatedCastExpr = GenerateExpressionWithPrelude(cast.Expr);
                 var exprCode = generatedCastExpr.Code;
@@ -1101,6 +1181,34 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 return null;
             case IdentifierExpr ident:
                 return GetVarType(ident.Name);
+            case IndexExpr idx:
+                var indexedTargetType = GetExprType(idx.Target);
+                if (indexedTargetType == null)
+                    return null;
+                if (indexedTargetType.IsSlice)
+                    return GetSliceElementType(indexedTargetType);
+                if (indexedTargetType.ArraySize != null)
+                {
+                    var elementType = indexedTargetType.Clone();
+                    elementType.ArraySize = null;
+                    return elementType;
+                }
+                if (indexedTargetType.IsPointer)
+                {
+                    var level = indexedTargetType.PointerLevel > 0 ? indexedTargetType.PointerLevel : 1;
+                    if (level > 1)
+                    {
+                        var pointerElementType = indexedTargetType.Clone();
+                        pointerElementType.PointerLevel = level - 1;
+                        return pointerElementType;
+                    }
+
+                    var pointeeType = indexedTargetType.Clone();
+                    pointeeType.IsPointer = false;
+                    pointeeType.PointerLevel = 0;
+                    return pointeeType;
+                }
+                return null;
             case FieldExpr field:
                 var qualifiedName = TryGetQualifiedName(expr);
                 if (!string.IsNullOrEmpty(qualifiedName) &&
@@ -1112,6 +1220,14 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
                 var targetType = GetExprType(field.Target);
                 if (targetType == null) return null;
+                if (targetType.IsSlice)
+                {
+                    if (field.Field == "len")
+                        return new TypeNode { Name = "i64" };
+                    if (field.Field == "ptr")
+                        return AddressOfType(GetSliceElementType(targetType));
+                    return null;
+                }
                 return GetStructFieldType(targetType, field.Field);
             case BinaryExpr bin:
                 if (bin.Operator is "==" or "!=" or ">" or "<" or ">=" or "<=" or "&&" or "||")
@@ -1210,6 +1326,92 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         return result;
     }
 
+    private static TypeNode GetSliceElementType(TypeNode sliceType)
+    {
+        var elementType = sliceType.Clone();
+        elementType.IsSlice = false;
+        elementType.ArraySize = null;
+        return elementType;
+    }
+
+    private static bool CanCoerceArrayToSlice(TypeNode targetType, TypeNode sourceType)
+    {
+        if (!targetType.IsSlice || sourceType.IsSlice || sourceType.ArraySize == null)
+            return false;
+
+        if (sourceType.IsErrorUnion || sourceType.IsFunction)
+            return false;
+
+        var targetElement = GetSliceElementType(targetType);
+        var sourceElement = sourceType.Clone();
+        sourceElement.ArraySize = null;
+
+        return SameType(targetElement, sourceElement);
+    }
+
+    private GeneratedExpression CoerceExpressionToTargetType(TypeNode? targetType, Expr sourceExpr, GeneratedExpression generated)
+    {
+        var sourceType = generated.Type ?? GetExprType(sourceExpr);
+        var code = generated.Code;
+
+        if (sourceType != null && sourceType.IsErrorUnion && (targetType == null || !targetType.IsErrorUnion))
+        {
+            var innerType = sourceType.ErrorInnerType ?? sourceType;
+            var resultName = "Result_" + GetResultTypeName(innerType);
+            GenerateResultStruct(innerType, resultName);
+            code = $"({code}).value";
+            sourceType = innerType.Clone();
+        }
+
+        if (targetType != null && sourceType != null && CanCoerceArrayToSlice(targetType, sourceType))
+        {
+            if (sourceType.ArraySize is not int arrayLength)
+                throw new Exception("Array-to-slice coercion requires a fixed-size array source.");
+
+            var sliceName = GetSliceStructName(targetType);
+            GenerateSliceStruct(targetType, sliceName);
+            code = $"(struct {sliceName}){{ .ptr = {generated.Code}, .len = {arrayLength} }}";
+            return new GeneratedExpression(generated.Prelude, code, targetType.Clone());
+        }
+
+        return new GeneratedExpression(generated.Prelude, code, sourceType);
+    }
+
+    private static bool SameType(TypeNode? left, TypeNode? right)
+    {
+        if (left == null || right == null)
+            return left == right;
+
+        if (left.Name != right.Name ||
+            left.IsSlice != right.IsSlice ||
+            left.IsPointer != right.IsPointer ||
+            left.PointerLevel != right.PointerLevel ||
+            left.ArraySize != right.ArraySize ||
+            left.IsErrorUnion != right.IsErrorUnion ||
+            left.IsFunction != right.IsFunction ||
+            !left.NamespacePath.SequenceEqual(right.NamespacePath))
+        {
+            return false;
+        }
+
+        if (left.IsErrorUnion && !SameType(left.ErrorInnerType, right.ErrorInnerType))
+            return false;
+
+        if (left.IsFunction)
+        {
+            if (!SameType(left.ReturnType, right.ReturnType) || left.ParamTypes.Count != right.ParamTypes.Count)
+                return false;
+
+            for (int i = 0; i < left.ParamTypes.Count; i++)
+            {
+                if (!SameType(left.ParamTypes[i], right.ParamTypes[i]))
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
     private static string FormatConditionExpression(string code)
     {
         if (code.Length >= 2 && code[0] == '(' && code[^1] == ')')
@@ -1294,6 +1496,15 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
     private TypeNode? GetStructFieldType(TypeNode structType, string fieldName)
     {
+        if (structType.IsSlice)
+        {
+            if (fieldName == "len")
+                return new TypeNode { Name = "i64" };
+            if (fieldName == "ptr")
+                return AddressOfType(GetSliceElementType(structType));
+            return null;
+        }
+
         var fullName = structType.NamespacePath.Any()
             ? string.Join(".", structType.NamespacePath) + "." + structType.Name
             : structType.Name;
