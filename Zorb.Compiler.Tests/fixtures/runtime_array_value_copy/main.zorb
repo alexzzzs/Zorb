@@ -10,7 +10,7 @@ fn _start() {
     assigned_copy = source
     source[1] = 111
 
-    std.io.write(1, &init_copy, 4)
-    std.io.write(1, &assigned_copy, 4)
+    std.io.write(1, init_copy)
+    std.io.write(1, assigned_copy)
     std.os.exit(0)
 }

@@ -775,10 +775,16 @@ public class TypeChecker
             case IndexExpr idx:
                 CheckExpression(idx.Target);
                 CheckExpression(idx.Index);
+                var indexTargetType = GetExpressionType(idx.Target, reportErrors: false);
+                if (indexTargetType != null && indexTargetType.ArraySize == null && !indexTargetType.IsPointer && !indexTargetType.IsSlice)
+                    _errors.Error(idx.Target, $"Cannot index expression of type '{FormatType(indexTargetType)}'.");
                 break;
 
             case FieldExpr field:
                 CheckExpression(field.Target);
+                var fieldTargetType = GetExpressionType(field.Target, reportErrors: false);
+                if (fieldTargetType != null && fieldTargetType.IsSlice && field.Field is not ("ptr" or "len"))
+                    _errors.Error(field, $"Slice values expose only '.ptr' and '.len', not '{field.Field}'.");
                 break;
 
             case UnaryExpr un:
@@ -939,7 +945,7 @@ public class TypeChecker
         if (type == null)
             return false;
 
-        if (type.IsErrorUnion || type.IsFunction || type.ArraySize != null || type.Name == "void")
+        if (type.IsErrorUnion || type.IsFunction || type.IsSlice || type.ArraySize != null || type.Name == "void")
             return false;
 
         if (type.IsPointer)
@@ -1278,6 +1284,9 @@ public class TypeChecker
             if (CanDecayArrayToPointer(paramType, argType))
                 continue;
 
+            if (CanCoerceToSlice(paramType, argType))
+                continue;
+
             if (!IsAssignableTo(paramType, call.Args[i], argType))
             {
                 _errors.Error(call, $"Argument {i + 1} of '{errorName}' expects type '{FormatType(paramType)}', got '{FormatType(argType)}'.");
@@ -1379,6 +1388,13 @@ public class TypeChecker
                         Name = targetType.Name,
                         NamespacePath = new List<string>(targetType.NamespacePath)
                     };
+                if (targetType.IsSlice)
+                {
+                    var elementType = targetType.Clone();
+                    elementType.IsSlice = false;
+                    elementType.ArraySize = null;
+                    return elementType;
+                }
                 if (targetType.IsPointer)
                 {
                     int level = targetType.PointerLevel > 0 ? targetType.PointerLevel : 1;
@@ -1427,6 +1443,24 @@ public class TypeChecker
                 string structName = ft.NamespacePath.Any() 
                     ? string.Join(".", ft.NamespacePath) + "." + ft.Name 
                     : ft.Name;
+
+                if (ft.IsSlice)
+                {
+                    if (field.Field == "len")
+                        return new TypeNode { Name = "i64" };
+
+                    if (field.Field == "ptr")
+                    {
+                        var elementType = ft.Clone();
+                        elementType.IsSlice = false;
+                        elementType.ArraySize = null;
+                        return AddressOfType(elementType);
+                    }
+
+                    if (reportErrors)
+                        _errors.Error(field, $"Slice values expose only '.ptr' and '.len', not '{field.Field}'.");
+                    return new TypeNode { Name = "i32" };
+                }
 
                 if (_numericTypes.Contains(structName))
                 {
@@ -1520,6 +1554,7 @@ public class TypeChecker
     {
         var type = GetExpressionType(expr);
         return type != null
+            && !type.IsSlice
             && !type.IsPointer
             && !type.IsErrorUnion
             && !type.IsFunction
@@ -1536,6 +1571,7 @@ public class TypeChecker
     private bool IsNumericType(TypeNode? type)
     {
         return type != null
+            && !type.IsSlice
             && !type.IsPointer
             && !type.IsErrorUnion
             && !type.IsFunction
@@ -1546,6 +1582,7 @@ public class TypeChecker
     private static bool IsBoolType(TypeNode? type)
     {
         return type != null
+            && !type.IsSlice
             && !type.IsPointer
             && !type.IsErrorUnion
             && !type.IsFunction
@@ -1555,7 +1592,7 @@ public class TypeChecker
 
     private static bool IsStringType(TypeNode? type)
     {
-        return type != null && !type.IsPointer && !type.IsErrorUnion && type.Name == "string";
+        return type != null && !type.IsSlice && !type.IsPointer && !type.IsErrorUnion && type.Name == "string";
     }
 
     private static string FormatType(TypeNode? type)
@@ -1594,12 +1631,15 @@ public class TypeChecker
         if (type.ArraySize != null)
             baseName = $"[{type.ArraySize}]{baseName}";
 
+        if (type.IsSlice)
+            baseName = $"[]{baseName}";
+
         return baseName;
     }
 
     private static bool CanDecayArrayToPointer(TypeNode target, TypeNode source)
     {
-        if (!target.IsPointer || source.ArraySize == null)
+        if (target.IsSlice || !target.IsPointer || source.ArraySize == null)
             return false;
 
         if (source.IsPointer || source.IsErrorUnion || source.IsFunction)
@@ -1610,6 +1650,23 @@ public class TypeChecker
             return false;
 
         return target.Name == source.Name && target.NamespacePath.SequenceEqual(source.NamespacePath);
+    }
+
+    private static bool CanCoerceToSlice(TypeNode target, TypeNode source)
+    {
+        if (!target.IsSlice || source.IsSlice || source.ArraySize == null)
+            return false;
+
+        if (source.IsPointer || source.IsErrorUnion || source.IsFunction)
+            return false;
+
+        var targetElement = target.Clone();
+        targetElement.IsSlice = false;
+
+        var sourceElement = source.Clone();
+        sourceElement.ArraySize = null;
+
+        return SameType(targetElement, sourceElement);
     }
 
     private static TypeNode AddressOfType(TypeNode operandType)
@@ -1661,10 +1718,15 @@ public class TypeChecker
         if (SameType(target, source))
             return true;
 
+        if (CanCoerceToSlice(target, source))
+            return true;
+
         if (target.IsPointer && target.Name == "void" && source.IsPointer)
             return true;
 
-        if (!target.IsPointer && !source.IsPointer && _numericTypes.Contains(target.Name) && _numericTypes.Contains(source.Name))
+        if (!target.IsSlice && !source.IsSlice &&
+            !target.IsPointer && !source.IsPointer &&
+            _numericTypes.Contains(target.Name) && _numericTypes.Contains(source.Name))
         {
             if (TryGetIntegerLiteralValue(sourceExpr, out var literalValue))
                 return NumericLiteralFits(target, literalValue);
@@ -1672,7 +1734,8 @@ public class TypeChecker
             return IsWideningNumericConversion(target, source);
         }
 
-        if (!_numericTypes.Contains(target.Name) && !_numericTypes.Contains(source.Name))
+        if (!target.IsSlice && !source.IsSlice &&
+            !_numericTypes.Contains(target.Name) && !_numericTypes.Contains(source.Name))
             return target.Name == source.Name && target.NamespacePath.SequenceEqual(source.NamespacePath);
 
         return false;
@@ -1765,6 +1828,7 @@ public class TypeChecker
             return left == right;
 
         if (left.Name != right.Name ||
+            left.IsSlice != right.IsSlice ||
             left.IsPointer != right.IsPointer ||
             left.PointerLevel != right.PointerLevel ||
             left.ArraySize != right.ArraySize ||

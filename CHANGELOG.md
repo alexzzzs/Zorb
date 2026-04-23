@@ -9,10 +9,15 @@ All notable changes to this project will be documented in this file.
 - New hardening fixtures covering `continue`, local `const` declarations, and exported `const` globals.
 - Additional hardening fixtures covering imports of exported vs. private symbols, and unknown-attribute parsing.
 - Direct CLI argument-regression coverage for help/version paths plus invalid option combinations.
+- Slice types written as `[]T`, including `.ptr` and `.len` field access plus slice indexing.
+- Array-to-slice coercions for assignment, initialization, struct literals, returns, and function-call arguments when the element types match.
+- New slice-focused fixtures covering postfix-syntax rejection, slice parameter lowering, and runtime slice indexing.
 
 ### Changed
 
 - The compiler version now advances to the `0.1.5-dev` line after the `0.1.4` release.
+- `std.io.write` now takes a `[]u8` buffer instead of raw pointer-and-length arguments, and the string and integer formatting helpers now build on slice-based buffer flows.
+- `std.str.reverse` and `std.str.from_i64` now consume `[]u8` buffers instead of separate pointer-and-length arguments.
 
 ### Fixed
 

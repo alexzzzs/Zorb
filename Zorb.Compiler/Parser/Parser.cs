@@ -348,9 +348,16 @@ public List<Node> ParseProgram()
 
     private TypeNode ParseType()
     {
+        bool isSlice = false;
         int? arraySize = null;
         
-        if (Current.Type == TokenType.LBracket && Peek(1).Type == TokenType.Number)
+        if (Current.Type == TokenType.LBracket && Peek(1).Type == TokenType.RBracket)
+        {
+            Advance();
+            Advance();
+            isSlice = true;
+        }
+        else if (Current.Type == TokenType.LBracket && Peek(1).Type == TokenType.Number)
         {
             Advance();
             arraySize = int.Parse(Expect(TokenType.Number, "Expected array size after '[' in type.").Value);
@@ -372,7 +379,7 @@ public List<Node> ParseProgram()
             TypeNode retType = new() { Name = "void" };
             if (Match(TokenType.Arrow)) retType = ParseType();
 
-            var fnTypeNode = new TypeNode { IsFunction = true, ParamTypes = paramsList, ReturnType = retType };
+            var fnTypeNode = new TypeNode { IsFunction = true, ParamTypes = paramsList, ReturnType = retType, IsSlice = isSlice };
             if (arraySize.HasValue)
             {
                 fnTypeNode.ArraySize = arraySize;
@@ -401,20 +408,21 @@ public List<Node> ParseProgram()
         var name = path.Last();
         path.RemoveAt(path.Count - 1);
 
-        if (Current.Type == TokenType.LBracket && Peek(1).Type == TokenType.Number)
+        if (Current.Type == TokenType.LBracket && (Peek(1).Type == TokenType.Number || Peek(1).Type == TokenType.RBracket))
         {
             ErrorReporter.Error(
-                "Array types must be written as '[N]T', not 'T[N]'. For example, use '[4]u8' instead of 'u8[4]'.",
+                "Array and slice types must be written as '[N]T' or '[]T', not postfix forms like 'T[N]' or 'T[]'.",
                 Current.Line,
                 Current.Column,
                 _fileName);
-            throw new ZorbCompilerException("Invalid postfix array type syntax.");
+            throw new ZorbCompilerException("Invalid postfix array or slice type syntax.");
         }
 
         var typeNode = new TypeNode
         {
             Name = name,
             NamespacePath = path,
+            IsSlice = isSlice,
             IsPointer = pointer,
             PointerLevel = pointerLevel,
             ArraySize = arraySize
@@ -426,6 +434,7 @@ public List<Node> ParseProgram()
             {
                 Name = name,
                 NamespacePath = new List<string>(path),
+                IsSlice = isSlice,
                 IsPointer = pointer,
                 PointerLevel = pointerLevel,
                 ArraySize = arraySize,
@@ -434,6 +443,7 @@ public List<Node> ParseProgram()
                 {
                     Name = name,
                     NamespacePath = new List<string>(path),
+                    IsSlice = isSlice,
                     IsPointer = pointer,
                     PointerLevel = pointerLevel,
                     ArraySize = arraySize

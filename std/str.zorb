@@ -14,9 +14,9 @@ fn std.str.len(s: string) -> i64 {
     return len
 }
 
-export fn std.str.reverse(buf: *u8, len: i64) {
+export fn std.str.reverse(buf: []u8) {
     i: i64 = 0
-    j: i64 = len - 1
+    j: i64 = buf.len - 1
     while i < j {
         temp: u8 = buf[i]
         buf[i] = buf[j]
@@ -26,7 +26,7 @@ export fn std.str.reverse(buf: *u8, len: i64) {
     }
 }
 
-export fn std.str.from_i64(value: i64, buf: *u8) -> i64 {
+export fn std.str.from_i64(value: i64, buf: []u8) -> i64 {
     if value == 0 {
         buf[0] = cast(u8, 48) // '0'
         buf[1] = cast(u8, 0) 
@@ -54,7 +54,9 @@ export fn std.str.from_i64(value: i64, buf: *u8) -> i64 {
         i = i + 1
     }
 
-    std.str.reverse(buf, i)
+    digits: []u8 = buf
+    digits.len = i
+    std.str.reverse(digits)
     buf[i] = cast(u8, 0)
     return i
 }
