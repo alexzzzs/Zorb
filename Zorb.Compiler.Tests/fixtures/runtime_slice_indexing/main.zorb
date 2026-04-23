@@ -1,0 +1,11 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn _start() {
+    source: [5]u8 = [5]u8{ 72, 105, 33, 10, 88 }
+    view: []u8 = source
+    view.len = 4
+    view[1] = 111
+    std.io.write(1, view)
+    std.os.exit(0)
+}

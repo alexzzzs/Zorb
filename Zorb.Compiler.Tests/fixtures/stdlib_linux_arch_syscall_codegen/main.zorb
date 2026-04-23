@@ -3,6 +3,9 @@ import "../../../std/io.zorb"
 import "../../../std/async.zorb"
 
 fn main() {
-    std.io.write(1, cast(*u8, "x"), 1)
+    msg: []u8
+    msg.ptr = cast(*u8, "x")
+    msg.len = 1
+    std.io.write(1, msg)
     std.os.exit(0)
 }

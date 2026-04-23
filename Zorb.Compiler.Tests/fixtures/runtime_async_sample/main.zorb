@@ -5,18 +5,18 @@ import "../../../std/task.zorb"
 import "../../../std/async.zorb"
 
 fn job(arg: *void) {
-    std.io.write(1, cast(*u8, "ok\n"), 3)
+    std.io.print("ok\n")
 }
 
 fn _start() {
     heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(131072) catch |init_err| {
-        std.io.write(1, cast(*u8, "init failed\n"), 12)
+        std.io.print("init failed\n")
         std.os.exit(init_err)
         return
     }
     std.async.init()
     spawn_result: i32 = std.task.spawn(&heap, job, cast(*void, 0)) catch |spawn_err| {
-        std.io.write(1, cast(*u8, "spawn failed\n"), 13)
+        std.io.print("spawn failed\n")
         std.os.exit(1)
         return
     }

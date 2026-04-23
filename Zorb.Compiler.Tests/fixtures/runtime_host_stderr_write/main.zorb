@@ -2,6 +2,9 @@ import "../../../std/io.zorb"
 import "../../../std/os.zorb"
 
 fn _start() {
-    std.io.write(2, cast(*u8, "stderr ok\n"), 10)
+    msg: []u8
+    msg.ptr = cast(*u8, "stderr ok\n")
+    msg.len = 10
+    std.io.write(2, msg)
     std.os.exit(0)
 }

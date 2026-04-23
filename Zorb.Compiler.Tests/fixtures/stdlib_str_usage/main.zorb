@@ -2,7 +2,9 @@ import "../../../std/str.zorb"
 
 fn main() -> i64 {
     buf: [32]u8
-    len: i64 = std.str.from_i64(-42, &buf)
-    std.str.reverse(&buf, len)
-    return std.str.len(cast(string, &buf))
+    digits: []u8 = buf
+    len: i64 = std.str.from_i64(-42, digits)
+    digits.len = len
+    std.str.reverse(digits)
+    return std.str.len(cast(string, digits.ptr))
 }

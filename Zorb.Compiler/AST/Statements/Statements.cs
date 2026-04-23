@@ -10,6 +10,7 @@ public class TypeNode
 {
     public string Name { get; set; } = "i32";
     public List<string> NamespacePath { get; set; } = new();
+    public bool IsSlice { get; set; }
     public bool IsPointer { get; set; }
     public int PointerLevel { get; set; }
     public int? ArraySize { get; set; }
@@ -26,6 +27,7 @@ public class TypeNode
         {
             Name = Name,
             NamespacePath = new List<string>(NamespacePath),
+            IsSlice = IsSlice,
             IsPointer = IsPointer,
             PointerLevel = PointerLevel,
             ArraySize = ArraySize,

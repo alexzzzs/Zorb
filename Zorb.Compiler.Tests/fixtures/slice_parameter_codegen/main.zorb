@@ -1,0 +1,8 @@
+fn use(buf: []u8) -> i64 {
+    return buf.len
+}
+
+fn main() {
+    buf: [4]u8
+    len: i64 = use(buf)
+}

@@ -18,7 +18,7 @@ The compiler supports a focused language subset:
 - globals, `const` declarations, and error declarations
 - `if`, `else`, `while`, `continue`, `break`, and `return`
 - logical `&&`, `||`, and unary `!` on `bool`
-- pointers, fixed-size arrays, function types, and error unions
+- pointers, fixed-size arrays, slice types, function types, and error unions
 - typed struct literals, typed array literals, and local array value copies
 - imports, including `import "file.zorb" as alias`
 - inline assembly
@@ -30,7 +30,7 @@ Cross-platform stdlib helpers currently include:
 
 - `std.os.is_linux()`, `std.os.is_windows()`, `std.os.platform_name()`
 - `std.os.is_x86_64()`, `std.os.is_aarch64()`, `std.os.arch_name()`
-- `std.io.print(...)`, `std.io.println(...)`, `std.io.eprint(...)`, `std.io.eprintln(...)`
+- `std.io.print(...)`, `std.io.println(...)`, `std.io.eprint(...)`, `std.io.eprintln(...)`, and slice-based `std.io.write(fd, buf)`
 - `std.task.is_supported()` and `std.async.is_supported()` for checking runtime capability before using task or async features
 
 ## Build
@@ -221,6 +221,19 @@ fn main() {
     mask: [4]u8 = [4]u8{ 1, 1, 0, 0 }
     copy: [4]u8 = mask
     ready: bool = (pair.left == 1 && copy[0] == 1) || false
+}
+```
+
+Slice-backed buffer flow:
+
+```zorb
+import "std/io.zorb"
+
+fn main() {
+    buf: [4]u8 = [4]u8{ 79, 75, 10, 0 }
+    view: []u8 = buf
+    view.len = 3
+    std.io.write(1, view)
 }
 ```
 
