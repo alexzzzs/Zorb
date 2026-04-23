@@ -143,8 +143,40 @@ static void RunCliArgumentValidationTests(string fixtureRoot)
     var compilerInvocation = GetCompilerInvocation(projectRoot);
     var sampleInput = Path.Combine(fixtureRoot, "runtime_hello_world", "main.zorb");
 
-    var cases = new[]
+    foreach (var testCase in GetCliArgumentCases(sampleInput))
     {
+        var result = RunProcessWithTimeout(
+            compilerInvocation.FileName,
+            CombineCommandArguments(compilerInvocation.ArgumentsPrefix, testCase.Arguments),
+            projectRoot,
+            TimeSpan.FromSeconds(30));
+
+        if (result.ExitCode != testCase.ExpectedExitCode)
+            throw new Exception($"CLI arg case '{testCase.Name}' exit code mismatch. Expected {testCase.ExpectedExitCode}, got {result.ExitCode}.");
+
+        var actualStdOut = NormalizeNewlines(result.StdOut);
+        var actualStdErr = NormalizeNewlines(result.StdErr);
+
+        if (!string.IsNullOrEmpty(testCase.ExpectedStdOutSubstring) &&
+            !actualStdOut.Contains(testCase.ExpectedStdOutSubstring, StringComparison.Ordinal))
+        {
+            throw new Exception(
+                $"CLI arg case '{testCase.Name}' stdout did not contain expected text '{testCase.ExpectedStdOutSubstring}'.{Environment.NewLine}Actual stdout:{Environment.NewLine}{actualStdOut}");
+        }
+
+        if (!string.IsNullOrEmpty(testCase.ExpectedStdErrSubstring) &&
+            !actualStdErr.Contains(testCase.ExpectedStdErrSubstring, StringComparison.Ordinal))
+        {
+            throw new Exception(
+                $"CLI arg case '{testCase.Name}' stderr did not contain expected text '{testCase.ExpectedStdErrSubstring}'.{Environment.NewLine}Actual stderr:{Environment.NewLine}{actualStdErr}");
+        }
+    }
+}
+
+static CliArgumentCase[] GetCliArgumentCases(string sampleInput)
+{
+    return
+    [
         new CliArgumentCase(
             "help",
             "--help",
@@ -182,6 +214,12 @@ static void RunCliArgumentValidationTests(string fixtureRoot)
             "Usage:",
             "Option --keep-c is only valid with build or run."),
         new CliArgumentCase(
+            "emit_check_output_rejected",
+            $"\"{sampleInput}\" --check -o out.c",
+            1,
+            "Usage:",
+            "Option -o/--output is not valid with --check."),
+        new CliArgumentCase(
             "run_output_rejected",
             $"run \"{sampleInput}\" -o out",
             1,
@@ -193,36 +231,7 @@ static void RunCliArgumentValidationTests(string fixtureRoot)
             1,
             "Usage:",
             "Option --check cannot be combined with build or run.")
-    };
-
-    foreach (var testCase in cases)
-    {
-        var result = RunProcessWithTimeout(
-            compilerInvocation.FileName,
-            CombineCommandArguments(compilerInvocation.ArgumentsPrefix, testCase.Arguments),
-            projectRoot,
-            TimeSpan.FromSeconds(30));
-
-        if (result.ExitCode != testCase.ExpectedExitCode)
-            throw new Exception($"CLI arg case '{testCase.Name}' exit code mismatch. Expected {testCase.ExpectedExitCode}, got {result.ExitCode}.");
-
-        var actualStdOut = NormalizeNewlines(result.StdOut);
-        var actualStdErr = NormalizeNewlines(result.StdErr);
-
-        if (!string.IsNullOrEmpty(testCase.ExpectedStdOutSubstring) &&
-            !actualStdOut.Contains(testCase.ExpectedStdOutSubstring, StringComparison.Ordinal))
-        {
-            throw new Exception(
-                $"CLI arg case '{testCase.Name}' stdout did not contain expected text '{testCase.ExpectedStdOutSubstring}'.{Environment.NewLine}Actual stdout:{Environment.NewLine}{actualStdOut}");
-        }
-
-        if (!string.IsNullOrEmpty(testCase.ExpectedStdErrSubstring) &&
-            !actualStdErr.Contains(testCase.ExpectedStdErrSubstring, StringComparison.Ordinal))
-        {
-            throw new Exception(
-                $"CLI arg case '{testCase.Name}' stderr did not contain expected text '{testCase.ExpectedStdErrSubstring}'.{Environment.NewLine}Actual stderr:{Environment.NewLine}{actualStdErr}");
-        }
-    }
+    ];
 }
 
 static CliWorkflowCase[] GetCliWorkflowCases()

@@ -427,7 +427,7 @@ public class TypeChecker
         foreach (var node in nodes)
         {
             if (node is ImportNode importNode) ProcessImport(importNode, currentDir);
-            else if (node is VariableDeclarationNode varDecl && varDecl.Value != null)
+            else if (node is VariableDeclarationNode varDecl)
             {
                 CheckVariableInitializer(varDecl);
             }
@@ -764,7 +764,7 @@ public class TypeChecker
                 }
                 else if (!CheckVisibility(ident.Name))
                 {
-                    _errors.Error($"'{ident.Name}' is not visible. Did you forget an import?");
+                    _errors.Error(ident, $"'{ident.Name}' is not visible. Did you forget an import?");
                 }
                 break;
 
