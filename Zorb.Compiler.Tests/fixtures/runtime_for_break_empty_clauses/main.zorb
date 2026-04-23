@@ -1,0 +1,15 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn _start() {
+    count: i64 = 0
+
+    for ; true; {
+        count = count + 1
+        break
+    }
+
+    std.io.print_i64(count)
+    std.io.print("\n")
+    std.os.exit(0)
+}

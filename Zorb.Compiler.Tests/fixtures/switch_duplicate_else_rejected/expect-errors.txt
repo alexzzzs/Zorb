@@ -1,0 +1,1 @@
+Switch statements may contain only one 'else' branch.

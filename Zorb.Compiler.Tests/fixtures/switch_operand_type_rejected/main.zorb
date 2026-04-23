@@ -1,0 +1,8 @@
+fn main() {
+    message: string = "hello"
+
+    switch message {
+        case "hello" {
+        }
+    }
+}

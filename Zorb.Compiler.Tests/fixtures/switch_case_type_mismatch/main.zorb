@@ -1,0 +1,8 @@
+fn main() {
+    value: bool = true
+
+    switch value {
+        case 1 {
+        }
+    }
+}

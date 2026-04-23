@@ -1,0 +1,8 @@
+fn main() {
+    switch 1 {
+        else {
+        }
+        else {
+        }
+    }
+}

@@ -377,6 +377,12 @@ namespace Zorb.Compiler.Lexer;
                     tokens.Add(new Token(TokenType.If, "", loc.Item1, loc.Item2));
                 else if (text == "while")
                     tokens.Add(new Token(TokenType.While, "", loc.Item1, loc.Item2));
+                else if (text == "for")
+                    tokens.Add(new Token(TokenType.For, "", loc.Item1, loc.Item2));
+                else if (text == "switch")
+                    tokens.Add(new Token(TokenType.Switch, "", loc.Item1, loc.Item2));
+                else if (text == "case")
+                    tokens.Add(new Token(TokenType.Case, "", loc.Item1, loc.Item2));
                 else if (text == "return")
                     tokens.Add(new Token(TokenType.Return, "", loc.Item1, loc.Item2));
                 else if (text == "struct")

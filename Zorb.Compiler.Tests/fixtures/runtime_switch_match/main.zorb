@@ -1,0 +1,26 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+error Fail = 707
+
+fn classify(code: i32) -> i64 {
+    switch code {
+        case 1 {
+            return 1
+        }
+        case error.Fail {
+            return 7
+        }
+        else {
+            return 0
+        }
+    }
+}
+
+fn _start() {
+    std.io.print_i64(classify(error.Fail))
+    std.io.print("\n")
+    std.io.print_i64(classify(2))
+    std.io.print("\n")
+    std.os.exit(0)
+}
