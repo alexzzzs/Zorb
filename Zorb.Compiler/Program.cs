@@ -109,9 +109,9 @@ SECTIONS
             }
 
             var target = ResolveCompilationTarget(options);
-            EnsureTargetSupportedForCurrentHost(options.Mode, target);
             if (!ValidateTargetSpecificOptions(options, target))
                 return 1;
+            EnsureTargetSupportedForCurrentHost(options.Mode, target);
 
             var outputPath = ResolveOutputPath(options, target);
             var compilation = CompileInput(options, target);
@@ -727,7 +727,9 @@ SECTIONS
                 generator.BuiltinIsBareMetal = false;
                 generator.BuiltinIsX86_64 = null;
                 generator.BuiltinIsAArch64 = null;
-                generator.EmitLinuxSyscallWrapper = false;
+                // Keep the syscall compatibility macro available so dead Linux-only
+                // branches in shared stdlib code still parse on Windows hosts.
+                generator.EmitLinuxSyscallWrapper = true;
                 break;
 
             default:
