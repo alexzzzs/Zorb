@@ -16,7 +16,7 @@ The compiler supports a focused language subset:
 - functions, `extern fn`, and namespaced declarations
 - `struct` types
 - globals, `const` declarations, and error declarations
-- `if`, `else`, `while`, `continue`, `break`, and `return`
+- `if`, `else`, `while`, `for`, `switch`, `continue`, `break`, and `return`
 - logical `&&`, `||`, and unary `!` on `bool`
 - pointers, fixed-size arrays, slice types, function types, and error unions
 - typed struct literals, typed array literals, and local array value copies
@@ -224,6 +224,28 @@ fn main() {
 }
 ```
 
+`for` loops and `switch` branches:
+
+```zorb
+fn classify(value: i64) -> i64 {
+    switch value {
+        case 0 {
+            return 10
+        }
+        else {
+            return 20
+        }
+    }
+}
+
+fn main() {
+    total: i64 = 0
+    for i: i64 = 0; i < 3; i = i + 1 {
+        total = total + classify(i)
+    }
+}
+```
+
 Slice-backed buffer flow:
 
 ```zorb
@@ -245,6 +267,7 @@ Current checked-in examples:
 - [`examples/basics/error_catch.zorb`](./examples/basics/error_catch.zorb): error unions with `catch`, `std.io`, and `std.os`.
 - [`examples/basics/platform_info.zorb`](./examples/basics/platform_info.zorb): cross-platform stdlib helpers for platform detection, stdout, and stderr.
 - [`examples/basics/literals.zorb`](./examples/basics/literals.zorb): typed struct and array literals combined with logical operators.
+- [`examples/basics/switch_for.zorb`](./examples/basics/switch_for.zorb): `for` loops and `switch` with an `else` branch.
 - [`examples/advanced/threads.zorb`](./examples/advanced/threads.zorb): lower-level task/thread setup using inline assembly and Linux syscalls.
 
 ## Project Shape

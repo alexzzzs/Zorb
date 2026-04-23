@@ -1,0 +1,28 @@
+import "../../std/io.zorb"
+import "../../std/os.zorb"
+
+fn classify(value: i64) -> i64 {
+    switch value {
+        case 0 {
+            return 10
+        }
+        case 1 {
+            return 20
+        }
+        else {
+            return 30
+        }
+    }
+}
+
+fn _start() {
+    total: i64 = 0
+
+    for i: i64 = 0; i < 3; i = i + 1 {
+        total = total + classify(i)
+    }
+
+    std.io.print_i64(total)
+    std.io.print("\n")
+    std.os.exit(0)
+}

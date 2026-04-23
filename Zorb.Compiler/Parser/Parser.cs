@@ -96,6 +96,8 @@ private void Synchronize()
             case TokenType.Import:
             case TokenType.If:
             case TokenType.While:
+            case TokenType.For:
+            case TokenType.Switch:
             case TokenType.Return:
             case TokenType.Const:
             case TokenType.Error:
@@ -647,6 +649,12 @@ public List<Node> ParseProgram()
         if (Current.Type == TokenType.While)
             return ParseWhile();
 
+        if (Current.Type == TokenType.For)
+            return ParseFor();
+
+        if (Current.Type == TokenType.Switch)
+            return ParseSwitch();
+
         if (Current.Type == TokenType.Return)
             return ParseReturn();
 
@@ -762,21 +770,92 @@ public List<Node> ParseProgram()
 
     private Statement ParseWhile()
     {
-        Expect(TokenType.While);
+        var startToken = Expect(TokenType.While);
 
         var condition = ParseExpression();
 
-        Expect(TokenType.LBrace, "Expected '{' to start while body.");
+        var stmt = new WhileStmt
+        {
+            Condition = condition,
+            Body = ParseStatementBlock("Expected '{' to start while body.", "Expected '}' to close while body.")
+        };
+        StampNode(stmt, startToken);
+        return stmt;
+    }
 
-        var body = new List<Statement>();
+    private Statement ParseFor()
+    {
+        var startToken = Expect(TokenType.For);
+
+        Statement? initializer = null;
+        if (Current.Type != TokenType.Semicolon)
+            initializer = ParseForClauseStatement();
+        Expect(TokenType.Semicolon, "Expected ';' after for-loop initializer.");
+
+        Expr? condition = null;
+        if (Current.Type != TokenType.Semicolon)
+            condition = ParseExpression();
+        Expect(TokenType.Semicolon, "Expected ';' after for-loop condition.");
+
+        Statement? update = null;
+        if (Current.Type != TokenType.LBrace)
+            update = ParseForClauseStatement();
+
+        var stmt = new ForStmt
+        {
+            Initializer = initializer,
+            Condition = condition,
+            Update = update,
+            Body = ParseStatementBlock("Expected '{' to start for-loop body.", "Expected '}' to close for-loop body.")
+        };
+        StampNode(stmt, startToken);
+        return stmt;
+    }
+
+    private Statement ParseSwitch()
+    {
+        var startToken = Expect(TokenType.Switch);
+        var expression = ParseExpression();
+        Expect(TokenType.LBrace, "Expected '{' to start switch body.");
+
+        var cases = new List<SwitchCase>();
+        var elseBody = new List<Statement>();
+        var sawElse = false;
+
         while (Current.Type != TokenType.RBrace && Current.Type != TokenType.Eof)
         {
-            body.Add(ParseStatement());
+            if (Match(TokenType.Case))
+            {
+                var caseValue = ParseExpression();
+                var caseBody = ParseStatementBlock("Expected '{' to start case body.", "Expected '}' to close case body.");
+                cases.Add(new SwitchCase { Value = caseValue, Body = caseBody });
+                continue;
+            }
+
+            if (Match(TokenType.Else))
+            {
+                if (sawElse)
+                    ErrorReporter.Error("Switch statements may contain only one 'else' branch.", Current.Line, Current.Column, _fileName);
+
+                elseBody = ParseStatementBlock("Expected '{' to start switch else body.", "Expected '}' to close switch else body.");
+                sawElse = true;
+                continue;
+            }
+
+            ErrorReporter.Error($"Expected 'case' or 'else' in switch body, got {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
+            Advance();
         }
 
-        Expect(TokenType.RBrace, "Expected '}' to close while body.");
+        Expect(TokenType.RBrace, "Expected '}' to close switch body.");
 
-        return new WhileStmt { Condition = condition, Body = body };
+        var stmt = new SwitchStmt
+        {
+            Expression = expression,
+            Cases = cases,
+            ElseBody = elseBody
+        };
+        StampNode(stmt, startToken);
+        return stmt;
     }
 
     private Statement ParseAssignment()
@@ -785,6 +864,58 @@ public List<Node> ParseProgram()
         Expect(TokenType.Equals);
         var value = ParseExpression();
         return new AssignStmt { Target = target, Value = value };
+    }
+
+    private Statement ParseForClauseStatement()
+    {
+        var attributes = ParseAttributes();
+
+        if (Current.Type == TokenType.Const)
+        {
+            var varDecl = (VariableDeclarationNode)ParseVarDecl(false);
+            varDecl.Attributes = attributes;
+            return varDecl;
+        }
+
+        if (Current.Type == TokenType.Identifier && Peek(1).Type == TokenType.Colon)
+        {
+            var varDecl = (VariableDeclarationNode)ParseVarDecl(false);
+            varDecl.Attributes = attributes;
+            return varDecl;
+        }
+
+        if (attributes.Count > 0)
+        {
+            ErrorReporter.Error("Attributes in for-loop clauses are only supported on variable declarations.", Current.Line, Current.Column, _fileName);
+        }
+
+        if (Current.Type == TokenType.Identifier && (Peek(1).Type == TokenType.Equals || Peek(1).Type == TokenType.LBracket))
+            return ParseAssignment();
+
+        var expr = ParseExpression();
+
+        if (Current.Type == TokenType.Equals)
+        {
+            Advance();
+            var value = ParseExpression();
+            return new AssignStmt { Target = expr, Value = value };
+        }
+
+        return new ExpressionStatement { Expression = expr };
+    }
+
+    private List<Statement> ParseStatementBlock(string openMessage, string closeMessage)
+    {
+        Expect(TokenType.LBrace, openMessage);
+
+        var body = new List<Statement>();
+        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.Eof)
+        {
+            body.Add(ParseStatement());
+        }
+
+        Expect(TokenType.RBrace, closeMessage);
+        return body;
     }
 
     private List<AsmOperand> ParseAsmConstraints()
