@@ -195,6 +195,9 @@ Notes:
 - `[]T` is a non-owning slice of contiguous elements of type `T`.
 - A slice value exposes `.ptr` with type `*T` and `.len` with type `i64`.
 - Indexing a slice with `slice[index]` produces an element value of type `T`.
+- Slice indexing currently performs no runtime bounds checks; the current C codegen lowers it directly to raw `ptr[index]`.
+- Slices alias their backing storage, so writes through `slice[index]` or `slice.ptr[...]` mutate the underlying array or buffer view.
+- Slice fields are ordinary writable fields today, including `.len` and `.ptr`.
 - Slices currently lower to generated C structs containing `ptr` and `len` fields.
 
 ### Function Types

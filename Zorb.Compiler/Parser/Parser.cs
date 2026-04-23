@@ -531,6 +531,7 @@ public List<Node> ParseProgram()
             {
                 Name = innerType.Name,
                 NamespacePath = innerType.NamespacePath,
+                IsSlice = innerType.IsSlice,
                 IsPointer = innerType.IsPointer,
                 PointerLevel = innerType.PointerLevel,
                 ArraySize = innerType.ArraySize,

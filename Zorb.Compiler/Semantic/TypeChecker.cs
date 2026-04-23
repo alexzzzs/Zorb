@@ -1642,7 +1642,7 @@ public class TypeChecker
         if (target.IsSlice || !target.IsPointer || source.ArraySize == null)
             return false;
 
-        if (source.IsPointer || source.IsErrorUnion || source.IsFunction)
+        if (source.IsErrorUnion || source.IsFunction)
             return false;
 
         var targetLevel = target.PointerLevel > 0 ? target.PointerLevel : 1;
@@ -1717,6 +1717,15 @@ public class TypeChecker
 
         if (SameType(target, source))
             return true;
+
+        var targetIsFixedArray = target.ArraySize != null;
+        var sourceIsFixedArray = source.ArraySize != null;
+        if (targetIsFixedArray || sourceIsFixedArray)
+        {
+            // Once exact fixed-array identity fails, the only remaining implicit path is array-to-slice coercion.
+            if (!(target.IsSlice && sourceIsFixedArray))
+                return false;
+        }
 
         if (CanCoerceToSlice(target, source))
             return true;

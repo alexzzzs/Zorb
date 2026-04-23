@@ -315,7 +315,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         _localVars.Clear();
         foreach (var p in fn.Parameters) _localVars[p.Name] = p.TypeName;
 
-        if (fn.ReturnType.IsErrorUnion)
+        if (fn.ReturnType.Name != "void" || fn.ReturnType.IsPointer || fn.ReturnType.IsSlice || fn.ReturnType.ArraySize != null || fn.ReturnType.IsErrorUnion || fn.ReturnType.IsFunction)
         {
             _localVars["__return_type"] = fn.ReturnType;
         }
@@ -1339,7 +1339,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
         if (!targetType.IsSlice || sourceType.IsSlice || sourceType.ArraySize == null)
             return false;
 
-        if (sourceType.IsErrorUnion || sourceType.IsFunction || sourceType.IsPointer)
+        if (sourceType.IsErrorUnion || sourceType.IsFunction)
             return false;
 
         var targetElement = GetSliceElementType(targetType);
