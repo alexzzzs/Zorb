@@ -641,6 +641,11 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
     {
         if (stmt is ExpressionStatement es)
         {
+            if (es.Expression is BuiltinExpr { Name: "Builtin.CompileError" } compileErrorExpr)
+            {
+                return $"#error \"{EscapeCString(compileErrorExpr.Message ?? string.Empty)}\"";
+            }
+
             var generated = GenerateExpressionWithPrelude(es.Expression);
             if (string.IsNullOrEmpty(generated.Prelude))
                 return generated.Code + ";";
@@ -1029,6 +1034,15 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 condition = binary.Operator == "&&"
                     ? $"({leftCondition}) && ({rightCondition})"
                     : $"({leftCondition}) || ({rightCondition})";
+                return true;
+            }
+        }
+
+        if (expr is UnaryExpr unary && unary.Operator == "!")
+        {
+            if (TryGetPlatformPreprocessorCondition(unary.Operand, out var operandCondition))
+            {
+                condition = $"!({operandCondition})";
                 return true;
             }
         }

@@ -1663,6 +1663,7 @@ public class TypeChecker
                     "Builtin.IsBareMetal" => new TypeNode { Name = "bool" },
                     "Builtin.IsX86_64" => new TypeNode { Name = "bool" },
                     "Builtin.IsAArch64" => new TypeNode { Name = "bool" },
+                    "Builtin.CompileError" => new TypeNode { Name = "void" },
                     _ => new TypeNode { Name = "i32" }
                 };
 

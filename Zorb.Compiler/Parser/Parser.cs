@@ -1568,6 +1568,22 @@ public List<Node> ParseProgram()
                 StampNode(expr, startToken);
                 return expr;
             }
+            if (builtinName == "CompileError")
+            {
+                Expect(TokenType.LParen, "Expected '(' after 'Builtin.CompileError'.");
+                var messageExpr = ParseExpression();
+                Expect(TokenType.RParen, "Expected ')' to close Builtin.CompileError argument list.");
+
+                if (messageExpr is not StringExpr message)
+                {
+                    ErrorReporter.Error("Builtin.CompileError expects a string literal message.", startToken.Line, startToken.Column, _fileName);
+                    return null!;
+                }
+
+                var expr = new BuiltinExpr { Name = "Builtin.CompileError", Message = message.Value };
+                StampNode(expr, startToken);
+                return expr;
+            }
             if (string.Equals(builtinName, "sizeof", StringComparison.Ordinal))
             {
                 Expect(TokenType.LParen, "Expected '(' after 'Builtin.sizeof'.");

@@ -80,6 +80,7 @@ public class BuiltinExpr : Expr
 {
     public string Name { get; set; } = null!;
     public bool Value { get; set; }
+    public string? Message { get; set; }
 }
 
 public class ErrorNamespaceExpr : Expr { }
