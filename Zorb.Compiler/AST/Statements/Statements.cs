@@ -34,6 +34,8 @@ public class TypeNode
             IsPointer = IsPointer,
             PointerLevel = PointerLevel,
             ArraySize = ArraySize,
+            // ArraySizeExpr is intentionally aliased: expression trees are treated as immutable
+            // after parse, while semantic checking mutates only the resolved ArraySize value.
             ArraySizeExpr = ArraySizeExpr,
             IsErrorUnion = IsErrorUnion,
             ErrorInnerType = ErrorInnerType?.Clone(),

@@ -1,1 +1,1 @@
-alignment must be a constant integer expression.
+Alignment must be a constant integer expression.

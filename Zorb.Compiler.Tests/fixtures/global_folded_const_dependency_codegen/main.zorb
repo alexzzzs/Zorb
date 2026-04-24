@@ -1,0 +1,4 @@
+const a: i64 = 2 + 2
+const b: i64 = a + 1
+
+buf: [b]u8 = [b]u8{0, 0, 0, 0, 0}

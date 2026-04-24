@@ -28,7 +28,7 @@ public class CGenerator
     private readonly HashSet<string> _generatedSliceTypes = new();
     private readonly StringBuilder _dynamicStructs = new();
     private List<Node> _allNodes = new();
-    private IReadOnlyDictionary<string, List<Node>>? _parsedFilesByPath;
+    private IReadOnlyDictionary<string, IReadOnlyList<Node>>? _parsedFilesByPath;
     private int _tempCounter;
     private bool _insideFunctionBody;
     public bool PreserveStart { get; set; }
@@ -136,7 +136,7 @@ static void __zorb_slice_oob(void) {
         _symbolTable = symbolTable;
     }
 
-    public string Generate(List<Node> nodes, IReadOnlyDictionary<string, List<Node>>? parsedFilesByPath = null)
+    public string Generate(List<Node> nodes, IReadOnlyDictionary<string, IReadOnlyList<Node>>? parsedFilesByPath = null)
     {
         var allNodes = new List<Node>();
         var processed = new HashSet<string>();
@@ -282,10 +282,13 @@ static void __zorb_slice_oob(void) {
                 processed.Add(fullPath);
 
                 var dir = Path.GetDirectoryName(fullPath) ?? ".";
-                if (_parsedFilesByPath == null || !_parsedFilesByPath.TryGetValue(fullPath, out var subNodes))
+                if (_parsedFilesByPath == null)
+                    throw new ZorbCompilerException("Parsed import graph is not available.");
+
+                if (!_parsedFilesByPath.TryGetValue(fullPath, out var subNodes))
                     throw new ZorbCompilerException($"Parsed import graph is missing '{fullPath}'.");
                 
-                CollectNodes(subNodes, result, processed, emittedItems, dir);
+                CollectNodes(subNodes.ToList(), result, processed, emittedItems, dir);
             }
             else
             {
