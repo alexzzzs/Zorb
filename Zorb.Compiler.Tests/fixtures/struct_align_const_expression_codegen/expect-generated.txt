@@ -1,0 +1,4 @@
+struct __attribute__((aligned(16))) Block {
+    uint8_t value;
+};
+sizeof(struct Block)

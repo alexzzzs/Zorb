@@ -15,6 +15,7 @@ public class TypeNode
     public bool IsPointer { get; set; }
     public int PointerLevel { get; set; }
     public int? ArraySize { get; set; }
+    public Expr? ArraySizeExpr { get; set; }
     public bool IsErrorUnion { get; set; }
     public TypeNode? ErrorInnerType { get; set; }
 
@@ -33,6 +34,9 @@ public class TypeNode
             IsPointer = IsPointer,
             PointerLevel = PointerLevel,
             ArraySize = ArraySize,
+            // ArraySizeExpr is intentionally aliased: expression trees are treated as immutable
+            // after parse, while semantic checking mutates only the resolved ArraySize value.
+            ArraySizeExpr = ArraySizeExpr,
             IsErrorUnion = IsErrorUnion,
             ErrorInnerType = ErrorInnerType?.Clone(),
             IsFunction = IsFunction,
@@ -61,6 +65,7 @@ public class StructField : Node
     public string Name { get; set; } = null!;
     public TypeNode TypeName { get; set; } = null!;
     public List<string> Attributes { get; set; } = new();
+    public Expr? OffsetExpr { get; set; }
 }
 
 public class FunctionDecl : Node
@@ -73,6 +78,7 @@ public class FunctionDecl : Node
     public List<Statement> Body { get; set; } = new();
     public bool IsExtern { get; set; }
     public List<string> Attributes { get; set; } = new();
+    public Expr? AlignExpr { get; set; }
 }
 
 public class BlockNode : Node
@@ -93,6 +99,7 @@ public class VariableDeclarationNode : Statement
     public Expr? Value { get; set; }
     public List<string> Attributes { get; set; } = new();
     public bool IsConst { get; set; }
+    public Expr? AlignExpr { get; set; }
 }
 
 public class ExpressionStatement : Statement
@@ -151,6 +158,7 @@ public class StructNode : Node
     public string Name { get; set; } = null!;
     public List<string> Attributes { get; set; } = new();
     public List<StructField> Fields { get; set; } = new();
+    public Expr? AlignExpr { get; set; }
 }
 
 public class ImportNode : Statement

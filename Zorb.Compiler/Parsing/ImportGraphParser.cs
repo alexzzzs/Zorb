@@ -8,20 +8,33 @@ namespace Zorb.Compiler.Parsing;
 
 public static class ImportGraphParser
 {
+    private static StringComparer PathComparer =>
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
     public static ParseGraphResult ParseWithImports(string entryPath)
     {
-        var normalizedEntryPath = Path.GetFullPath(entryPath);
-        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var normalizedEntryPath = NormalizeImportGraphPath(entryPath);
+        var visited = new HashSet<string>(PathComparer);
+        var files = new Dictionary<string, List<Node>>(PathComparer);
         var errors = new List<string>();
-        var entryNodes = ParseRecursive(normalizedEntryPath, visited, errors);
+        var entryNodes = ParseRecursive(normalizedEntryPath, visited, files, errors);
 
-        return new ParseGraphResult(entryNodes, errors);
+        var readOnlyFiles = files.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<Node>)pair.Value.AsReadOnly(),
+            PathComparer);
+
+        return new ParseGraphResult(normalizedEntryPath, entryNodes, readOnlyFiles, errors);
     }
 
-    private static List<Node> ParseRecursive(string path, HashSet<string> visited, List<string> errors)
+    private static List<Node> ParseRecursive(string path, HashSet<string> visited, Dictionary<string, List<Node>> files, List<string> errors)
     {
+        path = NormalizeImportGraphPath(path);
+
         if (!visited.Add(path))
-            return new List<Node>();
+            return files.TryGetValue(path, out var existingNodes) ? existingNodes : new List<Node>();
 
         if (!File.Exists(path))
             return new List<Node>();
@@ -42,6 +55,7 @@ public static class ImportGraphParser
 
         var parser = new Parser.Parser(tokens, path);
         var nodes = parser.ParseProgram();
+        files[path] = nodes;
         errors.AddRange(parser.ErrorReporter.Errors);
 
         if (parser.ErrorReporter.HasErrors)
@@ -57,11 +71,20 @@ public static class ImportGraphParser
                 ? import.Path
                 : Path.Combine(currentDir, import.Path));
 
-            ParseRecursive(importPath, visited, errors);
+            ParseRecursive(importPath, visited, files, errors);
         }
 
         return nodes;
     }
+
+    private static string NormalizeImportGraphPath(string path)
+    {
+        return Path.GetFullPath(path);
+    }
 }
 
-public sealed record ParseGraphResult(List<Node> EntryNodes, List<string> Errors);
+public sealed record ParseGraphResult(
+    string EntryPath,
+    List<Node> EntryNodes,
+    IReadOnlyDictionary<string, IReadOnlyList<Node>> Files,
+    List<string> Errors);
