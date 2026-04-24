@@ -1,0 +1,8 @@
+import "../../../std/os.zorb"
+
+fn _start() {
+    source: [3]u8 = [3]u8{ 65, 66, 67 }
+    view: []u8 = source
+    value: u8 = view[3]
+    std.os.exit(0)
+}

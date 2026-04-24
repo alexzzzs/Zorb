@@ -72,6 +72,32 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 #define __syscall7(n, a, b, c, d, e, f) __zorb_syscall((int64_t)n, (int64_t)a, (int64_t)b, (int64_t)c, (int64_t)d, (int64_t)e, (int64_t)f)
 
 
+
+#if __zorb_builtin_is_windows
+extern void ExitProcess(unsigned int);
+#endif
+
+static void __zorb_slice_oob(void) {
+#if __zorb_builtin_is_windows
+    ExitProcess(1);
+#elif __zorb_builtin_is_bare_metal
+    while (1) {
+#if defined(__x86_64__) || defined(_M_X64)
+        __asm__ volatile ("cli; hlt" ::: "memory");
+#else
+        __asm__ volatile ("" ::: "memory");
+#endif
+    }
+#elif defined(__x86_64__)
+    syscall(60, 1);
+#elif defined(__aarch64__)
+    syscall(93, 1);
+#else
+    __builtin_trap();
+#endif
+}
+
+
 int64_t add(int64_t a, int64_t b);
 int64_t main();
 

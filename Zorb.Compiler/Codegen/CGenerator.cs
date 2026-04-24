@@ -99,6 +99,33 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
 ";
 
+    private const string RuntimeFailureHelpers = @"
+#if __zorb_builtin_is_windows
+extern void ExitProcess(unsigned int);
+#endif
+
+static void __zorb_slice_oob(void) {
+#if __zorb_builtin_is_windows
+    ExitProcess(1);
+#elif __zorb_builtin_is_bare_metal
+    while (1) {
+#if defined(__x86_64__) || defined(_M_X64)
+        __asm__ volatile (""cli; hlt"" ::: ""memory"");
+#else
+        __asm__ volatile ("""" ::: ""memory"");
+#endif
+    }
+#elif defined(__x86_64__)
+    syscall(60, 1);
+#elif defined(__aarch64__)
+    syscall(93, 1);
+#else
+    __builtin_trap();
+#endif
+}
+
+";
+
     public CGenerator() : this(".", new SymbolTable()) {}
 
     public CGenerator(string currentDir) : this(currentDir, new SymbolTable()) {}
@@ -187,6 +214,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
         if (EmitLinuxSyscallWrapper)
             sb.AppendLine(LinuxSyscallWrapper);
+        sb.AppendLine(RuntimeFailureHelpers);
 
         // Emit AST structs first (must be before prototypes)
         var emittedStructs = new HashSet<string>();
@@ -1283,6 +1311,23 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
                 var generatedTargetExpr = GenerateExpressionWithPrelude(idx.Target);
                 var generatedIndex = GenerateExpressionWithPrelude(idx.Index);
                 var indexedTargetType = GetExprType(idx.Target);
+                if (indexedTargetType != null && indexedTargetType.IsSlice)
+                {
+                    var sliceTemp = NewTemp("slice");
+                    var indexTemp = NewTemp("index");
+                    var sliceType = indexedTargetType.Clone();
+                    var indexPrelude = new StringBuilder();
+                    indexPrelude.Append(generatedTargetExpr.Prelude);
+                    indexPrelude.Append(generatedIndex.Prelude);
+                    indexPrelude.AppendLine($"{MapType(sliceType)} {sliceTemp} = {generatedTargetExpr.Code};");
+                    indexPrelude.AppendLine($"int64_t {indexTemp} = (int64_t)({generatedIndex.Code});");
+                    indexPrelude.AppendLine($"if ({indexTemp} < 0 || {indexTemp} >= {sliceTemp}.len) __zorb_slice_oob();");
+                    return new GeneratedExpression(
+                        indexPrelude.ToString(),
+                        $"{sliceTemp}.ptr[{indexTemp}]",
+                        GetExprType(expr));
+                }
+
                 var targetCode = indexedTargetType != null && indexedTargetType.IsSlice
                     ? $"{generatedTargetExpr.Code}.ptr"
                     : generatedTargetExpr.Code;
