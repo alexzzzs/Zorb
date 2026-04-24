@@ -5,7 +5,7 @@ import "errors.zorb"
 export struct std.os {}
 
 import c "windows.h"
-extern fn ExitProcess(uExitCode: u32) -> i32
+extern fn ExitProcess(uExitCode: u32) -> void
 extern fn VirtualAlloc(addr: *u8, size: i64, type: u32, protect: u32) -> *u8
 
 export fn std.os.is_linux() -> bool {

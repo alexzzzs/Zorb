@@ -1,0 +1,5 @@
+import "../../../std/os.zorb"
+
+fn _start() {
+    std.os.exit(0)
+}

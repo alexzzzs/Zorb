@@ -74,7 +74,7 @@ static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int
 
 
 #if __zorb_builtin_is_windows
-extern void ExitProcess(unsigned int);
+extern void ExitProcess(uint32_t);
 #endif
 
 static void __zorb_slice_oob(void) {
