@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.1.5] - April 24, 2026
 
 ### Added
 
@@ -24,7 +24,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- The compiler version now advances to the `0.1.5-dev` line after the `0.1.4` release.
+- The compiler version now advances to the `0.1.6-dev` line after the `0.1.5` release.
 - `std.io.write` now takes a `[]u8` buffer instead of raw pointer-and-length arguments, and the string and integer formatting helpers now build on slice-based buffer flows.
 - `std.str.reverse` and `std.str.from_i64` now consume `[]u8` buffers instead of separate pointer-and-length arguments.
 - The documentation now distinguishes `freestanding-linux` from true bare-metal output instead of using "freestanding" loosely for both.
@@ -39,6 +39,8 @@ All notable changes to this project will be documented in this file.
 - The CLI now rejects ignored or contradictory option combinations such as `--keep-c` outside build/run, `-o` with `run`, and `--check` with build/run.
 - The generated C backend no longer assumes Linux syscall wrappers or hosted entrypoint lowering for every target.
 - Explicit-layout structs now fail during semantic checking when their offsets are incomplete or incompatible with the compiler's byte-precise layout model.
+
+## [Unreleased]
 
 ## [0.1.4] - 2026-04-23
 
