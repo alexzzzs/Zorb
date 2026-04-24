@@ -8,7 +8,6 @@ using Zorb.Compiler.AST;
 using Zorb.Compiler.AST.Expressions;
 using Zorb.Compiler.AST.Statements;
 using Zorb.Compiler.Layouts;
-using Zorb.Compiler.Lexer;
 using Zorb.Compiler.Semantic;
 using Zorb.Compiler.Utils;
 
@@ -29,6 +28,7 @@ public class CGenerator
     private readonly HashSet<string> _generatedSliceTypes = new();
     private readonly StringBuilder _dynamicStructs = new();
     private List<Node> _allNodes = new();
+    private IReadOnlyDictionary<string, List<Node>>? _parsedFilesByPath;
     private int _tempCounter;
     private bool _insideFunctionBody;
     public bool PreserveStart { get; set; }
@@ -136,7 +136,7 @@ static void __zorb_slice_oob(void) {
         _symbolTable = symbolTable;
     }
 
-    public string Generate(List<Node> nodes)
+    public string Generate(List<Node> nodes, IReadOnlyDictionary<string, List<Node>>? parsedFilesByPath = null)
     {
         var allNodes = new List<Node>();
         var processed = new HashSet<string>();
@@ -146,6 +146,7 @@ static void __zorb_slice_oob(void) {
         _generatedResultTypes.Clear();
         _generatedSliceTypes.Clear();
         _allNodes = allNodes;
+        _parsedFilesByPath = parsedFilesByPath;
         _tempCounter = 0;
         _insideFunctionBody = false;
         _continueTargets.Clear();
@@ -255,6 +256,7 @@ static void __zorb_slice_oob(void) {
         // Emit functions
         sb.Append(funcsSb.ToString());
 
+        _parsedFilesByPath = null;
         return sb.ToString();
     }
 
@@ -280,7 +282,8 @@ static void __zorb_slice_oob(void) {
                 processed.Add(fullPath);
 
                 var dir = Path.GetDirectoryName(fullPath) ?? ".";
-                var subNodes = ParseFile(fullPath, dir, processed);
+                if (_parsedFilesByPath == null || !_parsedFilesByPath.TryGetValue(fullPath, out var subNodes))
+                    throw new ZorbCompilerException($"Parsed import graph is missing '{fullPath}'.");
                 
                 CollectNodes(subNodes, result, processed, emittedItems, dir);
             }
@@ -289,29 +292,6 @@ static void __zorb_slice_oob(void) {
                 result.Add(node);
             }
         }
-    }
-
-    private List<Node> ParseFile(string path, string dir, HashSet<string> processed)
-    {
-        if (!File.Exists(path))
-            throw new System.Exception($"Import file not found: {path}");
-
-        var source = File.ReadAllText(path);
-        List<Token> tokens;
-        try
-        {
-            var lexer = new Zorb.Compiler.Lexer.Lexer(source, path);
-            tokens = lexer.Tokenize();
-        }
-        catch (LexerException ex)
-        {
-            throw new ZorbCompilerException($"{ex.File}:{ex.Line}:{ex.Column}: error: {ex.Message}");
-        }
-        var errorReporter = new ErrorReporter();
-        var parser = new Zorb.Compiler.Parser.Parser(tokens, path, errorReporter);
-        var nodes = parser.ParseProgram();
-        errorReporter.ThrowIfErrors();
-        return nodes;
     }
 
     private string GenerateStruct(StructNode s, string? prefix)

@@ -25,8 +25,10 @@ public class TypeChecker
     private readonly HashSet<string> _numericTypes = new() { "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64" };
     private readonly HashSet<string> _processedImports = new();
     private readonly Stack<Dictionary<string, HashSet<string>>> _importAliasScopes = new();
+    private readonly Stack<Dictionary<string, long>> _constValueScopes = new();
     private readonly Dictionary<string, string> _errorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<long, string> _errorValues = new();
+    private IReadOnlyDictionary<string, List<Node>>? _parsedFilesByPath;
     private string _currentDir = ".";
     private FunctionDecl? _currentFunction;
     private int _loopDepth;
@@ -101,6 +103,9 @@ public class TypeChecker
 
     private void NormalizeTypeReferenceInPlace(TypeNode type)
     {
+        if (type.ArraySizeExpr != null)
+            type.ArraySizeExpr = NormalizeAliasReferences(type.ArraySizeExpr);
+
         if (type.IsFunction)
         {
             if (type.ReturnType != null)
@@ -388,17 +393,21 @@ public class TypeChecker
         };
     }
 
-    public void Check(List<Node> nodes, string currentDir = ".")
+    public void Check(List<Node> nodes, string currentDir = ".", IReadOnlyDictionary<string, List<Node>>? parsedFilesByPath = null)
     {
         _currentDir = currentDir;
+        _parsedFilesByPath = parsedFilesByPath;
         _fileScopes.Push(new HashSet<string>());
         _importAliasScopes.Push(new Dictionary<string, HashSet<string>>(StringComparer.Ordinal));
+        _constValueScopes.Push(new Dictionary<string, long>(StringComparer.Ordinal));
         InitializeBuiltins();
 
         CheckNodes(nodes, currentDir);
         
+        _constValueScopes.Pop();
         _importAliasScopes.Pop();
         _fileScopes.Pop();
+        _parsedFilesByPath = null;
     }
 
     public void CheckNodes(List<Node> nodes, string currentDir = ".")
@@ -438,8 +447,6 @@ public class TypeChecker
                         _errors.Error(sn, $"Unknown type '{fieldFullName}' in struct '{fullName}'");
                     }
                 }
-
-                ValidateStructAttributes(sn, fullName);
             }
             else if (node is VariableDeclarationNode vd) {
                 NormalizeTypeReferenceInPlace(vd.TypeName);
@@ -447,6 +454,7 @@ public class TypeChecker
                 RegisterErrorDeclaration(vd);
                 MakeVisible(vd.Name);
                 if (!_symbolTable.IsDefined(vd.Name)) _symbolTable.DefineVariable(vd.Name, vd.TypeName);
+                TryRecordConstValue(vd);
             }
         }
 
@@ -456,14 +464,29 @@ public class TypeChecker
             if (node is ImportNode importNode) ProcessImport(importNode, currentDir);
             else if (node is VariableDeclarationNode varDecl)
             {
+                ResolveAlignmentAttribute(varDecl.Attributes, varDecl.AlignExpr, varDecl, $"Variable '{varDecl.Name}' alignment");
+                ValidateTypeReference(varDecl.TypeName, varDecl);
                 CheckVariableInitializer(varDecl);
+            }
+            else if (node is StructNode structNode)
+            {
+                ResolveStructAttributes(structNode);
+                foreach (var field in structNode.Fields)
+                    ValidateTypeReference(field.TypeName, field);
+                var fullName = structNode.NamespacePath.Any() ? string.Join(".", structNode.NamespacePath) + "." + structNode.Name : structNode.Name;
+                ValidateStructAttributes(structNode, fullName);
             }
             else if (node is FunctionDecl functionDecl)
             {
+                ResolveAlignmentAttribute(functionDecl.Attributes, functionDecl.AlignExpr, functionDecl, "Function alignment");
+                ValidateTypeReference(functionDecl.ReturnType, functionDecl);
+                foreach (var param in functionDecl.Parameters)
+                    ValidateTypeReference(param.TypeName, functionDecl);
+
                 if (functionDecl.IsExtern) continue;
 
                 _currentFunction = functionDecl;
-                _symbolTable.PushScope();
+                PushScopedState();
 
                 foreach (var param in functionDecl.Parameters)
                     _symbolTable.DefineParameter(param.Name, param.TypeName);
@@ -474,7 +497,7 @@ public class TypeChecker
                     _errors.Error(functionDecl, $"Function '{functionDecl.Name}' may exit without returning a value");
                 }
 
-                _symbolTable.PopScope();
+                PopScopedState();
                 _currentFunction = null;
             }
         }
@@ -507,20 +530,28 @@ public class TypeChecker
         }
 
         var dir = Path.GetDirectoryName(fullPath) ?? ".";
-        var source = File.ReadAllText(fullPath);
-        List<Token> tokens;
-        try
+        List<Node> importedNodes;
+        if (_parsedFilesByPath != null && _parsedFilesByPath.TryGetValue(fullPath, out var preParsedNodes))
         {
-            var lexer = new Zorb.Compiler.Lexer.Lexer(source, fullPath);
-            tokens = lexer.Tokenize();
+            importedNodes = preParsedNodes;
         }
-        catch (LexerException ex)
+        else
         {
-            _errors.Error(ex.Message, ex.Line, ex.Column, ex.File);
-            return;
+            var source = File.ReadAllText(fullPath);
+            List<Token> tokens;
+            try
+            {
+                var lexer = new Zorb.Compiler.Lexer.Lexer(source, fullPath);
+                tokens = lexer.Tokenize();
+            }
+            catch (LexerException ex)
+            {
+                _errors.Error(ex.Message, ex.Line, ex.Column, ex.File);
+                return;
+            }
+            var parser = new Zorb.Compiler.Parser.Parser(tokens, fullPath, _errors);
+            importedNodes = parser.ParseProgram();
         }
-        var parser = new Zorb.Compiler.Parser.Parser(tokens, fullPath, _errors);
-        var importedNodes = parser.ParseProgram();
 
         var exports = new List<string>();
         foreach (var node in importedNodes)
@@ -696,7 +727,7 @@ public class TypeChecker
                 return FlowOutcome.FallsThrough;
 
             case ForStmt forStmt:
-                _symbolTable.PushScope();
+                PushScopedState();
                 try
                 {
                     if (forStmt.Initializer != null)
@@ -726,7 +757,7 @@ public class TypeChecker
                 }
                 finally
                 {
-                    _symbolTable.PopScope();
+                    PopScopedState();
                 }
                 return FlowOutcome.FallsThrough;
 
@@ -782,7 +813,7 @@ public class TypeChecker
     private FlowOutcome CheckBlock(List<Statement> statements, bool pushScope = true)
     {
         if (pushScope)
-            _symbolTable.PushScope();
+            PushScopedState();
 
         var flow = FlowOutcome.FallsThrough;
         foreach (var stmt in statements)
@@ -794,18 +825,150 @@ public class TypeChecker
         }
 
         if (pushScope)
-            _symbolTable.PopScope();
+            PopScopedState();
 
         return flow;
     }
 
     private void CheckVariableDeclaration(VariableDeclarationNode varDecl)
     {
+        ResolveAlignmentAttribute(varDecl.Attributes, varDecl.AlignExpr, varDecl, $"Variable '{varDecl.Name}' alignment");
         ValidateTypeReference(varDecl.TypeName, varDecl);
         ValidateVariableAttributes(varDecl, isGlobal: false);
         _symbolTable.DefineVariable(varDecl.Name, varDecl.TypeName);
 
         CheckVariableInitializer(varDecl);
+        TryRecordConstValue(varDecl);
+    }
+
+    private void PushScopedState()
+    {
+        _symbolTable.PushScope();
+        _constValueScopes.Push(new Dictionary<string, long>(StringComparer.Ordinal));
+    }
+
+    private void PopScopedState()
+    {
+        _symbolTable.PopScope();
+        if (_constValueScopes.Count > 1)
+            _constValueScopes.Pop();
+    }
+
+    private bool TryLookupConstValue(string name, out long value)
+    {
+        foreach (var scope in _constValueScopes)
+        {
+            if (scope.TryGetValue(name, out value))
+                return true;
+        }
+
+        value = 0;
+        return false;
+    }
+
+    private void TryRecordConstValue(VariableDeclarationNode declaration)
+    {
+        if (!declaration.IsConst || declaration.Value == null || _constValueScopes.Count == 0)
+            return;
+
+        if (!IsIntegerTypeName(declaration.TypeName.Name) ||
+            declaration.TypeName.IsPointer ||
+            declaration.TypeName.IsSlice ||
+            declaration.TypeName.IsFunction ||
+            declaration.TypeName.IsErrorUnion ||
+            declaration.TypeName.ArraySize != null)
+        {
+            return;
+        }
+
+        if (!TryEvaluateConstIntExpr(declaration.Value, out var value, out _))
+            return;
+
+        _constValueScopes.Peek()[declaration.Name] = value;
+    }
+
+    private static bool IsIntegerTypeName(string typeName)
+    {
+        return typeName is "i8" or "i16" or "i32" or "i64" or "u8" or "u16" or "u32" or "u64";
+    }
+
+    private static bool IsIntegerScalarType(TypeNode type)
+    {
+        return IsIntegerTypeName(type.Name)
+            && !type.IsPointer
+            && !type.IsSlice
+            && !type.IsFunction
+            && !type.IsErrorUnion
+            && type.ArraySize == null;
+    }
+
+    private void ResolveStructAttributes(StructNode structNode)
+    {
+        ResolveAlignmentAttribute(structNode.Attributes, structNode.AlignExpr, structNode, $"Struct '{structNode.Name}' alignment");
+        foreach (var field in structNode.Fields)
+            ResolveOffsetAttribute(field);
+    }
+
+    private void ResolveOffsetAttribute(StructField field)
+    {
+        if (field.OffsetExpr == null)
+            return;
+
+        field.OffsetExpr = NormalizeAliasReferences(field.OffsetExpr);
+        CheckExpression(field.OffsetExpr);
+
+        var offsetType = GetExpressionType(field.OffsetExpr, reportErrors: false);
+        if (offsetType == null || !IsNumericType(offsetType))
+        {
+            _errors.Error(field.OffsetExpr, $"Offset must have integer type, got '{FormatType(offsetType)}'.");
+            return;
+        }
+
+        if (!TryEvaluateConstIntExpr(field.OffsetExpr, out var resolvedOffset, out var constError))
+        {
+            _errors.Error(field.OffsetExpr, constError ?? "Offset must be a constant integer expression.");
+            return;
+        }
+
+        if (resolvedOffset < 0 || resolvedOffset > int.MaxValue)
+        {
+            _errors.Error(field.OffsetExpr, $"Offset '{resolvedOffset}' does not fit in compiler-supported byte offsets.");
+            return;
+        }
+
+        field.Attributes.RemoveAll(attr => attr.StartsWith("offset(", StringComparison.Ordinal));
+        field.Attributes.Add($"offset({resolvedOffset})");
+    }
+
+    private void ResolveAlignmentAttribute(List<string> attributes, Expr? alignExpr, Node context, string description)
+    {
+        if (alignExpr == null)
+            return;
+
+        alignExpr = NormalizeAliasReferences(alignExpr);
+        CheckExpression(alignExpr);
+
+        var alignType = GetExpressionType(alignExpr, reportErrors: false);
+        if (alignType == null || !IsNumericType(alignType))
+        {
+            _errors.Error(alignExpr, $"{description} must have integer type, got '{FormatType(alignType)}'.");
+            return;
+        }
+
+        if (!TryEvaluateConstIntExpr(alignExpr, out var resolvedAlignment, out var constError))
+        {
+            _errors.Error(alignExpr, constError ?? $"{description} must be a constant integer expression.");
+            return;
+        }
+
+        if (resolvedAlignment <= 0 || resolvedAlignment > int.MaxValue)
+        {
+            _errors.Error(alignExpr, $"{description} '{resolvedAlignment}' does not fit in compiler-supported alignments.");
+            return;
+        }
+
+        attributes.RemoveAll(attr => attr.StartsWith("align(", StringComparison.Ordinal));
+        attributes.Add($"align({resolvedAlignment})");
     }
 
     private void ValidateVariableAttributes(VariableDeclarationNode varDecl, bool isGlobal)
@@ -944,11 +1107,11 @@ public class TypeChecker
                     break;
                 }
 
-                _symbolTable.PushScope();
+                PushScopedState();
                 _symbolTable.DefineVariable(catchExpr.ErrorVar, new TypeNode { Name = "i32" });
                 foreach (var stmt in catchExpr.CatchBody)
                     CheckStatement(stmt);
-                _symbolTable.PopScope();
+                PopScopedState();
                 break;
 
             case SizeofExpr sizeofExpr:
@@ -1055,6 +1218,26 @@ public class TypeChecker
         if (!IsAssignableTo(varDecl.TypeName, varDecl.Value, exprType))
         {
             _errors.Error(varDecl, $"Cannot assign expression of type '{FormatType(exprType)}' to variable '{varDecl.Name}' of type '{FormatType(varDecl.TypeName)}'.");
+            return;
+        }
+
+        if (_currentFunction == null && IsIntegerScalarType(varDecl.TypeName))
+        {
+            if (TryEvaluateConstIntExpr(varDecl.Value, out var foldedValue, out var constError))
+            {
+                varDecl.Value = new NumberExpr
+                {
+                    Value = foldedValue,
+                    File = varDecl.Value.File,
+                    Line = varDecl.Value.Line,
+                    Column = varDecl.Value.Column,
+                    Length = varDecl.Value.Length
+                };
+            }
+            else if (constError != null)
+            {
+                _errors.Error(varDecl.Value, constError);
+            }
         }
     }
 
@@ -1098,6 +1281,32 @@ public class TypeChecker
         else
         {
             NormalizeTypeReferenceInPlace(type);
+        }
+
+        if (type.ArraySizeExpr != null)
+        {
+            type.ArraySizeExpr = NormalizeAliasReferences(type.ArraySizeExpr);
+            CheckExpression(type.ArraySizeExpr);
+
+            var sizeType = GetExpressionType(type.ArraySizeExpr, reportErrors: false);
+            if (sizeType == null || !IsNumericType(sizeType))
+            {
+                _errors.Error(type.ArraySizeExpr, $"Array size must have integer type, got '{FormatType(sizeType)}'.");
+            }
+            else if (TryEvaluateConstIntExpr(type.ArraySizeExpr, out var resolvedSize, out var constError))
+            {
+                if (resolvedSize < int.MinValue || resolvedSize > int.MaxValue)
+                    _errors.Error(type.ArraySizeExpr, $"Array size '{resolvedSize}' does not fit in compiler-supported array bounds.");
+                else
+                    type.ArraySize = (int)resolvedSize;
+            }
+            else
+            {
+                _errors.Error(type.ArraySizeExpr, constError ?? "Array size must be a constant integer expression.");
+            }
+
+            if (type.IsErrorUnion && type.ErrorInnerType != null)
+                type.ErrorInnerType.ArraySize = type.ArraySize;
         }
 
         if (type.IsFunction)
@@ -1970,6 +2179,99 @@ public class TypeChecker
                 return true;
             default:
                 value = 0;
+                return false;
+        }
+    }
+
+    private bool TryEvaluateConstIntExpr(Expr expr, out long value, out string? error)
+    {
+        switch (expr)
+        {
+            case NumberExpr number:
+                value = number.Value;
+                error = null;
+                return true;
+
+            case IdentifierExpr identifier:
+                identifier.Name = ResolveQualifiedName(identifier.Name);
+                if (TryLookupConstValue(identifier.Name, out value))
+                {
+                    error = null;
+                    return true;
+                }
+
+                value = 0;
+                error = null;
+                return false;
+
+            case UnaryExpr { Operator: "-", Operand: var operand }:
+                if (!TryEvaluateConstIntExpr(operand, out var innerValue, out error))
+                {
+                    value = 0;
+                    return false;
+                }
+
+                try
+                {
+                    value = checked(-innerValue);
+                    error = null;
+                    return true;
+                }
+                catch (OverflowException)
+                {
+                    value = 0;
+                    error = "Constant integer expression overflowed i64.";
+                    return false;
+                }
+
+            case BinaryExpr binary when NumericOperators.Contains(binary.Operator):
+                if (!TryEvaluateConstIntExpr(binary.Left, out var left, out error))
+                {
+                    value = 0;
+                    return false;
+                }
+
+                if (!TryEvaluateConstIntExpr(binary.Right, out var right, out error))
+                {
+                    value = 0;
+                    return false;
+                }
+
+                try
+                {
+                    value = binary.Operator switch
+                    {
+                        "+" => checked(left + right),
+                        "-" => checked(left - right),
+                        "*" => checked(left * right),
+                        "/" => right == 0 ? throw new DivideByZeroException() : left / right,
+                        "%" => right == 0 ? throw new DivideByZeroException() : left % right,
+                        "<<" => checked(left << checked((int)right)),
+                        ">>" => left >> checked((int)right),
+                        "&" => left & right,
+                        "|" => left | right,
+                        "^" => left ^ right,
+                        _ => throw new InvalidOperationException()
+                    };
+                    error = null;
+                    return true;
+                }
+                catch (DivideByZeroException)
+                {
+                    value = 0;
+                    error = "Constant integer expression divides by zero.";
+                    return false;
+                }
+                catch (OverflowException)
+                {
+                    value = 0;
+                    error = "Constant integer expression overflowed i64.";
+                    return false;
+                }
+
+            default:
+                value = 0;
+                error = null;
                 return false;
         }
     }

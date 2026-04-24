@@ -1,0 +1,10 @@
+const base: i64 = 4;
+
+[layout(explicit)]
+struct Header {
+    [offset(base * 2)] value: u32
+}
+
+fn main() -> i64 {
+    return Builtin.sizeof(Header)
+}

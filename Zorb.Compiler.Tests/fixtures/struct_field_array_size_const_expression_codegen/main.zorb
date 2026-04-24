@@ -1,0 +1,9 @@
+const count: i64 = 2 + 2
+
+struct Packet {
+    bytes: [count]u8
+}
+
+fn main() -> i64 {
+    return Builtin.sizeof(Packet)
+}

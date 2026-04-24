@@ -1,0 +1,2 @@
+__attribute__((aligned(16))) int64_t answer()
+return 42;

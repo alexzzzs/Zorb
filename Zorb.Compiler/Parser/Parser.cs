@@ -11,6 +11,9 @@ namespace Zorb.Compiler.Parser;
 
 public class Parser
 {
+    private sealed record AttributeParseResult(List<string> Attributes, Expr? AlignExpr);
+    private sealed record FieldAttributeParseResult(List<string> Attributes, Expr? OffsetExpr);
+
     private readonly List<Token> _tokens;
     private readonly string _fileName;
     private readonly ErrorReporter _errorReporter;
@@ -350,7 +353,8 @@ public List<Node> ParseProgram()
             {
                 Name = fieldName,
                 TypeName = fieldType,
-                Attributes = fieldAttributes
+                Attributes = fieldAttributes.Attributes,
+                OffsetExpr = fieldAttributes.OffsetExpr
             };
             StampNode(field, fieldNameToken);
             fields.Add(field);
@@ -364,7 +368,7 @@ public List<Node> ParseProgram()
 
         Expect(TokenType.RBrace, "Expected '}' to close struct body.");
 
-        return new StructNode { NamespacePath = path, Name = name, Attributes = attributes, Fields = fields };
+        return new StructNode { NamespacePath = path, Name = name, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr, Fields = fields };
     }
 
     private VariableDeclarationNode ParseErrorDecl()
@@ -390,6 +394,7 @@ public List<Node> ParseProgram()
         var isVolatile = MatchContextualKeyword("volatile", TokenType.Volatile);
         bool isSlice = false;
         int? arraySize = null;
+        Expr? arraySizeExpr = null;
         
         if (Current.Type == TokenType.LBracket && Peek(1).Type == TokenType.RBracket)
         {
@@ -397,10 +402,12 @@ public List<Node> ParseProgram()
             Advance();
             isSlice = true;
         }
-        else if (Current.Type == TokenType.LBracket && Peek(1).Type == TokenType.Number)
+        else if (Current.Type == TokenType.LBracket)
         {
             Advance();
-            arraySize = int.Parse(Expect(TokenType.Number, "Expected array size after '[' in type.").Value);
+            arraySizeExpr = ParseExpression();
+            if (arraySizeExpr is NumberExpr number && number.Value >= int.MinValue && number.Value <= int.MaxValue)
+                arraySize = (int)number.Value;
             Expect(TokenType.RBracket, "Expected ']' after array size in type.");
         }
 
@@ -424,6 +431,7 @@ public List<Node> ParseProgram()
             {
                 fnTypeNode.ArraySize = arraySize;
             }
+            fnTypeNode.ArraySizeExpr = arraySizeExpr;
             return fnTypeNode;
         }
 
@@ -448,7 +456,7 @@ public List<Node> ParseProgram()
         var name = path.Last();
         path.RemoveAt(path.Count - 1);
 
-        if (Current.Type == TokenType.LBracket && (Peek(1).Type == TokenType.Number || Peek(1).Type == TokenType.RBracket))
+        if (Current.Type == TokenType.LBracket && Current.Line == Previous.Line)
         {
             ErrorReporter.Error(
                 "Array and slice types must be written as '[N]T' or '[]T', not postfix forms like 'T[N]' or 'T[]'.",
@@ -466,7 +474,8 @@ public List<Node> ParseProgram()
             IsSlice = isSlice,
             IsPointer = pointer,
             PointerLevel = pointerLevel,
-            ArraySize = arraySize
+            ArraySize = arraySize,
+            ArraySizeExpr = arraySizeExpr
         };
 
         if (isErrorUnion)
@@ -480,6 +489,7 @@ public List<Node> ParseProgram()
                 IsPointer = pointer,
                 PointerLevel = pointerLevel,
                 ArraySize = arraySize,
+                ArraySizeExpr = arraySizeExpr,
                 IsErrorUnion = true,
                 ErrorInnerType = new TypeNode
                 {
@@ -489,7 +499,8 @@ public List<Node> ParseProgram()
                     IsSlice = isSlice,
                     IsPointer = pointer,
                     PointerLevel = pointerLevel,
-                    ArraySize = arraySize
+                    ArraySize = arraySize,
+                    ArraySizeExpr = arraySizeExpr
                 }
             };
         }
@@ -544,7 +555,7 @@ public List<Node> ParseProgram()
             };
         }
 
-        FunctionDecl function = new FunctionDecl { NamespacePath = path, Name = name, Parameters = parameters, ReturnType = returnType, IsExtern = isExtern, Attributes = attributes };
+        FunctionDecl function = new FunctionDecl { NamespacePath = path, Name = name, Parameters = parameters, ReturnType = returnType, IsExtern = isExtern, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr };
 
         if (isExtern)
         {
@@ -592,14 +603,15 @@ public List<Node> ParseProgram()
         return parameters;
     }
 
-    private List<string> ParseAttributes()
+    private AttributeParseResult ParseAttributes()
     {
         var attributes = new List<string>();
+        Expr? alignExpr = null;
         while (Current.Type == TokenType.LBracket)
         {
             if (Peek(1).Type == TokenType.Number)
             {
-                return attributes;
+                return new AttributeParseResult(attributes, alignExpr);
             }
 
             Advance();
@@ -609,9 +621,8 @@ public List<Node> ParseProgram()
                 {
                     Advance();
                     Expect(TokenType.LParen);
-                    var numToken = Expect(TokenType.Number);
+                    alignExpr = ParseExpression();
                     Expect(TokenType.RParen);
-                    attributes.Add($"align({numToken.Value})");
                 }
                 else if (MatchContextualKeyword("section", TokenType.Section))
                 {
@@ -646,12 +657,13 @@ public List<Node> ParseProgram()
             }
             Expect(TokenType.RBracket, "Expected ']' to close attribute list.");
         }
-        return attributes;
+        return new AttributeParseResult(attributes, alignExpr);
     }
 
-    private List<string> ParseFunctionAttributes()
+    private AttributeParseResult ParseFunctionAttributes()
     {
         var attributes = new List<string>();
+        Expr? alignExpr = null;
         while (Current.Type == TokenType.LBracket)
         {
             Advance();
@@ -661,9 +673,8 @@ public List<Node> ParseProgram()
                 {
                     Advance();
                     Expect(TokenType.LParen);
-                    var numToken = Expect(TokenType.Number);
+                    alignExpr = ParseExpression();
                     Expect(TokenType.RParen);
-                    attributes.Add($"align({numToken.Value})");
                 }
                 else if (MatchContextualKeyword("abi", TokenType.Abi))
                 {
@@ -702,12 +713,13 @@ public List<Node> ParseProgram()
             Expect(TokenType.RBracket, "Expected ']' to close function attribute list.");
         }
 
-        return attributes;
+        return new AttributeParseResult(attributes, alignExpr);
     }
 
-    private List<string> ParseStructAttributes()
+    private AttributeParseResult ParseStructAttributes()
     {
         var attributes = new List<string>();
+        Expr? alignExpr = null;
         while (Current.Type == TokenType.LBracket)
         {
             Advance();
@@ -728,9 +740,8 @@ public List<Node> ParseProgram()
                 {
                     Advance();
                     Expect(TokenType.LParen);
-                    var numToken = Expect(TokenType.Number);
+                    alignExpr = ParseExpression();
                     Expect(TokenType.RParen);
-                    attributes.Add($"align({numToken.Value})");
                 }
                 else
                 {
@@ -750,12 +761,13 @@ public List<Node> ParseProgram()
             Expect(TokenType.RBracket, "Expected ']' to close struct attribute list.");
         }
 
-        return attributes;
+        return new AttributeParseResult(attributes, alignExpr);
     }
 
-    private List<string> ParseFieldAttributes()
+    private FieldAttributeParseResult ParseFieldAttributes()
     {
         var attributes = new List<string>();
+        Expr? offsetExpr = null;
         while (Current.Type == TokenType.LBracket)
         {
             Advance();
@@ -764,9 +776,8 @@ public List<Node> ParseProgram()
                 if (MatchContextualKeyword("offset", TokenType.Offset))
                 {
                     Expect(TokenType.LParen, "Expected '(' after 'offset' attribute.");
-                    var offsetToken = Expect(TokenType.Number, "Expected byte offset inside offset(...).");
+                    offsetExpr = ParseExpression();
                     Expect(TokenType.RParen, "Expected ')' to close offset attribute.");
-                    attributes.Add($"offset({offsetToken.Value})");
                 }
                 else
                 {
@@ -786,7 +797,7 @@ public List<Node> ParseProgram()
             Expect(TokenType.RBracket, "Expected ']' to close struct field attribute list.");
         }
 
-        return attributes;
+        return new FieldAttributeParseResult(attributes, offsetExpr);
     }
 
     private string ParseAbiAttribute(Token abiToken)
@@ -830,10 +841,11 @@ public List<Node> ParseProgram()
         return $"abi({abiToken.Value})";
     }
 
-    private static void ApplyVariableAttributes(VariableDeclarationNode varDecl, List<string> attributes)
+    private static void ApplyVariableAttributes(VariableDeclarationNode varDecl, AttributeParseResult attributes)
     {
-        varDecl.Attributes = attributes;
-        if (attributes.Contains("volatile"))
+        varDecl.Attributes = attributes.Attributes;
+        varDecl.AlignExpr = attributes.AlignExpr;
+        if (attributes.Attributes.Contains("volatile"))
             varDecl.TypeName.IsVolatile = true;
     }
 
@@ -1091,7 +1103,7 @@ public List<Node> ParseProgram()
             return varDecl;
         }
 
-        if (attributes.Count > 0)
+        if (attributes.Attributes.Count > 0 || attributes.AlignExpr != null)
         {
             ErrorReporter.Error("Attributes in for-loop clauses are only supported on variable declarations.", Current.Line, Current.Column, _fileName);
         }
@@ -1492,7 +1504,7 @@ public List<Node> ParseProgram()
     {
         var startToken = Current;
         var typeName = ParseType();
-        if (typeName.ArraySize == null)
+        if (typeName.ArraySize == null && typeName.ArraySizeExpr == null)
             ErrorReporter.Error("Array literals must use an array type like '[4]u8'.", startToken.Line, startToken.Column, _fileName);
 
         Expect(TokenType.LBrace, "Expected '{' to start array literal.");

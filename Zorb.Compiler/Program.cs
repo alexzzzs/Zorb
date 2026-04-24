@@ -164,7 +164,7 @@ SECTIONS
         var ast = parseResult.EntryNodes;
 
         var typeChecker = new TypeChecker();
-        typeChecker.Check(ast, currentDir);
+        typeChecker.Check(ast, currentDir, parseResult.Files);
         if (typeChecker.Errors.Errors.Count > 0)
         {
             Console.Error.WriteLine("Semantic check failed.");
@@ -186,7 +186,7 @@ SECTIONS
                 currentDir,
                 ast,
                 typeChecker,
-                generator.Generate(ast));
+                generator.Generate(ast, parseResult.Files));
         }
         catch (Exception ex)
         {

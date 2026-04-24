@@ -187,8 +187,10 @@ Notes:
 ### Array Types
 
 - `[N]T` is a fixed-size array type.
-- `N` must currently be a numeric literal in the type syntax.
+- `N` must be a constant integer expression that resolves at semantic-check time.
+- Constant-evaluated integer contexts reject division by zero and `i64` overflow.
 - Arrays may appear in variable declarations and struct fields.
+- Struct field array sizes are resolved through the same constant-integer rules as variable declarations.
 - Arrays do not implicitly decay to pointers in general expression or assignment contexts.
 - Arrays decay to `*T` only when passed to a function parameter of type `*T`.
 - Arrays also coerce to `[]T` when assigned, initialized, returned, used in struct literals, or passed to a function expecting that matching slice type.
@@ -348,6 +350,7 @@ Current behavior:
 - Recognized variable attributes are `align(N)`, `section("name")`, and `volatile`.
 - Recognized struct attributes are `packed`, `align(N)`, and `layout(explicit)`.
 - Recognized struct-field attributes are `offset(N)`.
+- `N` in `align(N)` and `offset(N)` may be any constant integer expression that resolves during semantic checking.
 - `abi(name)` currently accepts `sysv`, `sysv64`, `ms`, and `win64`.
 - `section("name")` is currently intended for functions and global variables.
 - Unknown attributes are parser errors.
@@ -595,6 +598,7 @@ When a variable has an initializer:
 - the initializer type must be assignable to the declared type
 - local fixed-size arrays may be initialized from another value of the same array type
 - global fixed-size arrays currently require array-literal initializers so code generation can emit static C initializers
+- global integer initializers that are constant integer expressions may be folded during semantic checking
 
 ### Numeric Conversions
 

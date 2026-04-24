@@ -1,0 +1,5 @@
+len: i64 = 4
+
+struct Packet {
+    bytes: [len]u8
+}

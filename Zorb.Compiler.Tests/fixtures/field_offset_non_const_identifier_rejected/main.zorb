@@ -1,0 +1,6 @@
+amount: i64 = 4;
+
+[layout(explicit)]
+struct Header {
+    [offset(amount)] value: u32
+}

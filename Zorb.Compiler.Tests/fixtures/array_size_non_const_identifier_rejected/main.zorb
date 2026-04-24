@@ -1,0 +1,4 @@
+fn main() {
+    n: i32 = 4
+    buf: [n]u8
+}
