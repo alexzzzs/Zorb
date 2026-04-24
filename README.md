@@ -286,6 +286,8 @@ fn main() {
 }
 ```
 
+Slice indexing is runtime-bounds-checked before reads or writes.
+
 Representative larger examples live in [`examples/`](./examples) and the executable fixture corpus under [`Zorb.Compiler.Tests/fixtures/`](./Zorb.Compiler.Tests/fixtures).
 
 Current checked-in examples:
