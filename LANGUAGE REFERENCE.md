@@ -1,7 +1,5 @@
 # Zorb Language Reference
 
-This reference describes the Zorb language implemented by this repository's current compiler. It is based on the lexer, parser, semantic checker, C generator, standard library, and fixture suite, rather than only on examples.
-
 Zorb is a small ahead-of-time systems language that currently lowers to C. Its current design favors explicit types, limited implicit conversion, direct target access, and a small standard library implemented in Zorb itself.
 
 ## Source Files And Compilation Model
