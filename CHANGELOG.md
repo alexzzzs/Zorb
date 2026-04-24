@@ -42,6 +42,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- A concrete `0.2` milestone roadmap in `ROADMAP.md`, centered on semantic tightening, constant evaluation, and a first dogfood lexer target.
+- Constant integer expression support for fixed-size array types, so array sizes can now resolve from expressions such as local or global `const` values instead of raw numeric literals only.
+- Constant integer expression support for compile-time-only attribute arguments, including `align(...)` on variables, functions, and structs plus `offset(...)` on explicit-layout struct fields.
+- Constant-folding support for global integer initializers, with semantic rejection for division by zero and `i64` overflow in those constant-evaluated contexts.
+- New fixture coverage for constant-expression array sizes, folded global integer initializers, constant-expression `align(...)` and `offset(...)` attributes, and the matching non-constant rejection paths.
+
+### Changed
+
+- Semantic analysis and code generation now reuse the shared parsed import graph instead of reparsing imported files during later phases.
+- Struct field array sizes now resolve through the same constant-integer rules as variable declarations.
+- Function signatures now go through the same pass-2 type-validation path as other declared types, keeping type-resolution behavior more consistent across declarations.
+- The semantics documentation now reflects constant-expression array sizes, constant-expression attribute arguments, and folded global integer initializer behavior.
+
+### Fixed
+
+- Imported modules no longer lose semantic normalization work during code generation because the backend now emits from the same parsed import graph the checker already consumed.
+- Constant-expression failures in compile-time-only contexts now surface during semantic checking instead of falling through toward invalid generated C.
+
 ## [0.1.4] - 2026-04-23
 
 ### Added

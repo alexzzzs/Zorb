@@ -1,0 +1,4 @@
+const words: i64 = 4
+
+[align(words * 4)]
+buf: [1]u8 = [1]u8{0}

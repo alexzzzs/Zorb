@@ -1,0 +1,6 @@
+const units: i64 = 8
+
+[align(units * 2)]
+fn answer() -> i64 {
+    return 42
+}

@@ -1,0 +1,3 @@
+const count: i64 = 2 + 2
+
+buf: [count]u8 = [count]u8{1, 2, 3, 4}

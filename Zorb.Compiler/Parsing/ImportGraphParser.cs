@@ -12,16 +12,17 @@ public static class ImportGraphParser
     {
         var normalizedEntryPath = Path.GetFullPath(entryPath);
         var visited = new HashSet<string>(StringComparer.Ordinal);
+        var files = new Dictionary<string, List<Node>>(StringComparer.Ordinal);
         var errors = new List<string>();
-        var entryNodes = ParseRecursive(normalizedEntryPath, visited, errors);
+        var entryNodes = ParseRecursive(normalizedEntryPath, visited, files, errors);
 
-        return new ParseGraphResult(entryNodes, errors);
+        return new ParseGraphResult(normalizedEntryPath, entryNodes, files, errors);
     }
 
-    private static List<Node> ParseRecursive(string path, HashSet<string> visited, List<string> errors)
+    private static List<Node> ParseRecursive(string path, HashSet<string> visited, Dictionary<string, List<Node>> files, List<string> errors)
     {
         if (!visited.Add(path))
-            return new List<Node>();
+            return files.TryGetValue(path, out var existingNodes) ? existingNodes : new List<Node>();
 
         if (!File.Exists(path))
             return new List<Node>();
@@ -42,6 +43,7 @@ public static class ImportGraphParser
 
         var parser = new Parser.Parser(tokens, path);
         var nodes = parser.ParseProgram();
+        files[path] = nodes;
         errors.AddRange(parser.ErrorReporter.Errors);
 
         if (parser.ErrorReporter.HasErrors)
@@ -57,11 +59,15 @@ public static class ImportGraphParser
                 ? import.Path
                 : Path.Combine(currentDir, import.Path));
 
-            ParseRecursive(importPath, visited, errors);
+            ParseRecursive(importPath, visited, files, errors);
         }
 
         return nodes;
     }
 }
 
-public sealed record ParseGraphResult(List<Node> EntryNodes, List<string> Errors);
+public sealed record ParseGraphResult(
+    string EntryPath,
+    List<Node> EntryNodes,
+    IReadOnlyDictionary<string, List<Node>> Files,
+    List<string> Errors);

@@ -658,19 +658,21 @@ static void RunFixture(string fixtureDir, bool updateSnapshots)
 
 static FixtureCompilation CompileFixture(string mainPath, string fixtureDir)
 {
-    var ast = ParseFile(mainPath, out var parseErrors);
+    var parseResult = ParseFile(mainPath);
+    var ast = parseResult.EntryNodes;
+    var parseErrors = parseResult.Errors;
     if (parseErrors.Count > 0)
         return new FixtureCompilation(ast, parseErrors, new TypeChecker(), "", FixturePhase.Parse, null);
 
     var checker = new TypeChecker();
-    checker.Check(ast, fixtureDir);
+    checker.Check(ast, fixtureDir, parseResult.Files);
     if (checker.Errors.Errors.Count > 0)
         return new FixtureCompilation(ast, parseErrors, checker, "", FixturePhase.Semantic, null);
 
     try
     {
         var generator = new CGenerator(fixtureDir, checker.SymbolTable);
-        var generated = generator.Generate(ast);
+        var generated = generator.Generate(ast, parseResult.Files);
         return new FixtureCompilation(ast, parseErrors, checker, generated, FixturePhase.Success, null);
     }
     catch (Exception ex)
@@ -710,12 +712,14 @@ static void RunRuntimeExpectationsIfPresent(string fixtureDir, string mainPath)
 
 static FixtureCompilation CompileRuntimeFixture(string mainPath, string fixtureDir, bool preserveStart, bool noStdLib)
 {
-    var ast = ParseFile(mainPath, out var parseErrors);
+    var parseResult = ParseFile(mainPath);
+    var ast = parseResult.EntryNodes;
+    var parseErrors = parseResult.Errors;
     if (parseErrors.Count > 0)
         return new FixtureCompilation(ast, parseErrors, new TypeChecker(), "", FixturePhase.Parse, null);
 
     var checker = new TypeChecker();
-    checker.Check(ast, fixtureDir);
+    checker.Check(ast, fixtureDir, parseResult.Files);
     if (checker.Errors.Errors.Count > 0)
         return new FixtureCompilation(ast, parseErrors, checker, "", FixturePhase.Semantic, null);
 
@@ -726,7 +730,7 @@ static FixtureCompilation CompileRuntimeFixture(string mainPath, string fixtureD
             PreserveStart = preserveStart,
             NoStdLib = noStdLib
         };
-        var generated = generator.Generate(ast);
+        var generated = generator.Generate(ast, parseResult.Files);
         return new FixtureCompilation(ast, parseErrors, checker, generated, FixturePhase.Success, null);
     }
     catch (Exception ex)
@@ -735,11 +739,9 @@ static FixtureCompilation CompileRuntimeFixture(string mainPath, string fixtureD
     }
 }
 
-static List<Node> ParseFile(string path, out List<string> errors)
+static ParseGraphResult ParseFile(string path)
 {
-    var parseResult = ImportGraphParser.ParseWithImports(path);
-    errors = parseResult.Errors;
-    return parseResult.EntryNodes;
+    return ImportGraphParser.ParseWithImports(path);
 }
 
 static List<string> ReadExpectationLines(string fixtureDir, string fileName)
