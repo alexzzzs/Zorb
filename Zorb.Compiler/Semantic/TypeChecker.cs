@@ -28,7 +28,7 @@ public class TypeChecker
     private readonly Stack<Dictionary<string, long>> _constValueScopes = new();
     private readonly Dictionary<string, string> _errorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<long, string> _errorValues = new();
-    private IReadOnlyDictionary<string, List<Node>>? _parsedFilesByPath;
+    private IReadOnlyDictionary<string, IReadOnlyList<Node>>? _parsedFilesByPath;
     private string _currentDir = ".";
     private FunctionDecl? _currentFunction;
     private int _loopDepth;
@@ -393,7 +393,7 @@ public class TypeChecker
         };
     }
 
-    public void Check(List<Node> nodes, string currentDir = ".", IReadOnlyDictionary<string, List<Node>>? parsedFilesByPath = null)
+    public void Check(IReadOnlyList<Node> nodes, string currentDir = ".", IReadOnlyDictionary<string, IReadOnlyList<Node>>? parsedFilesByPath = null)
     {
         _currentDir = currentDir;
         _parsedFilesByPath = parsedFilesByPath;
@@ -410,7 +410,7 @@ public class TypeChecker
         _parsedFilesByPath = null;
     }
 
-    public void CheckNodes(List<Node> nodes, string currentDir = ".")
+    public void CheckNodes(IReadOnlyList<Node> nodes, string currentDir = ".")
     {
         // Pass 1: Register all declarations so they are visible within the current file
         foreach (var node in nodes)
@@ -464,7 +464,7 @@ public class TypeChecker
             if (node is ImportNode importNode) ProcessImport(importNode, currentDir);
             else if (node is VariableDeclarationNode varDecl)
             {
-                ResolveAlignmentAttribute(varDecl.Attributes, varDecl.AlignExpr, varDecl, $"Variable '{varDecl.Name}' alignment");
+                ResolveAlignmentAttribute(varDecl.Attributes, varDecl.AlignExpr, varDecl, $"Variable '{varDecl.Name}' Alignment");
                 ValidateTypeReference(varDecl.TypeName, varDecl);
                 CheckVariableInitializer(varDecl);
             }
@@ -478,7 +478,7 @@ public class TypeChecker
             }
             else if (node is FunctionDecl functionDecl)
             {
-                ResolveAlignmentAttribute(functionDecl.Attributes, functionDecl.AlignExpr, functionDecl, "Function alignment");
+                ResolveAlignmentAttribute(functionDecl.Attributes, functionDecl.AlignExpr, functionDecl, "Function Alignment");
                 ValidateTypeReference(functionDecl.ReturnType, functionDecl);
                 foreach (var param in functionDecl.Parameters)
                     ValidateTypeReference(param.TypeName, functionDecl);
@@ -530,7 +530,7 @@ public class TypeChecker
         }
 
         var dir = Path.GetDirectoryName(fullPath) ?? ".";
-        List<Node> importedNodes;
+        IReadOnlyList<Node> importedNodes;
         if (_parsedFilesByPath != null && _parsedFilesByPath.TryGetValue(fullPath, out var preParsedNodes))
         {
             importedNodes = preParsedNodes;
@@ -832,7 +832,7 @@ public class TypeChecker
 
     private void CheckVariableDeclaration(VariableDeclarationNode varDecl)
     {
-        ResolveAlignmentAttribute(varDecl.Attributes, varDecl.AlignExpr, varDecl, $"Variable '{varDecl.Name}' alignment");
+        ResolveAlignmentAttribute(varDecl.Attributes, varDecl.AlignExpr, varDecl, $"Variable '{varDecl.Name}' Alignment");
         ValidateTypeReference(varDecl.TypeName, varDecl);
         ValidateVariableAttributes(varDecl, isGlobal: false);
         _symbolTable.DefineVariable(varDecl.Name, varDecl.TypeName);
@@ -904,7 +904,7 @@ public class TypeChecker
 
     private void ResolveStructAttributes(StructNode structNode)
     {
-        ResolveAlignmentAttribute(structNode.Attributes, structNode.AlignExpr, structNode, $"Struct '{structNode.Name}' alignment");
+        ResolveAlignmentAttribute(structNode.Attributes, structNode.AlignExpr, structNode, $"Struct '{structNode.Name}' Alignment");
         foreach (var field in structNode.Fields)
             ResolveOffsetAttribute(field);
     }
@@ -1233,6 +1233,7 @@ public class TypeChecker
                     Column = varDecl.Value.Column,
                     Length = varDecl.Value.Length
                 };
+                TryRecordConstValue(varDecl);
             }
             else if (constError != null)
             {
@@ -1295,7 +1296,9 @@ public class TypeChecker
             }
             else if (TryEvaluateConstIntExpr(type.ArraySizeExpr, out var resolvedSize, out var constError))
             {
-                if (resolvedSize < int.MinValue || resolvedSize > int.MaxValue)
+                if (resolvedSize < 0)
+                    _errors.Error(type.ArraySizeExpr, $"Array size '{resolvedSize}' must be non-negative.");
+                else if (resolvedSize > int.MaxValue)
                     _errors.Error(type.ArraySizeExpr, $"Array size '{resolvedSize}' does not fit in compiler-supported array bounds.");
                 else
                     type.ArraySize = (int)resolvedSize;

@@ -98,6 +98,17 @@ Unary operators:
 - Hex integer literals of the form `0x...` or `0X...` are supported.
 - All parsed numeric literals are currently represented as signed 64-bit integers in the AST.
 
+### Constant Integer Evaluation
+
+- Constant integer evaluation applies in every compile-time-only integer context.
+- Those contexts currently include:
+  - array size expressions
+  - struct field array sizes
+  - `align(...)` attribute arguments
+  - `offset(...)` attribute arguments
+  - folded global integer initializers
+- Constant integer evaluation rejects division by zero and `i64` overflow.
+
 ### String Literals
 
 - Double-quoted string literals are supported.
@@ -188,7 +199,7 @@ Notes:
 
 - `[N]T` is a fixed-size array type.
 - `N` must be a constant integer expression that resolves at semantic-check time.
-- Constant-evaluated integer contexts reject division by zero and `i64` overflow.
+- See [Constant Integer Evaluation](#constant-integer-evaluation) for the shared compile-time rules that govern `N`.
 - Arrays may appear in variable declarations and struct fields.
 - Struct field array sizes are resolved through the same constant-integer rules as variable declarations.
 - Arrays do not implicitly decay to pointers in general expression or assignment contexts.
@@ -350,7 +361,7 @@ Current behavior:
 - Recognized variable attributes are `align(N)`, `section("name")`, and `volatile`.
 - Recognized struct attributes are `packed`, `align(N)`, and `layout(explicit)`.
 - Recognized struct-field attributes are `offset(N)`.
-- `N` in `align(N)` and `offset(N)` may be any constant integer expression that resolves during semantic checking.
+- `N` in `align(N)` and `offset(N)` may be any constant integer expression that resolves during semantic checking. See [Constant Integer Evaluation](#constant-integer-evaluation).
 - `abi(name)` currently accepts `sysv`, `sysv64`, `ms`, and `win64`.
 - `section("name")` is currently intended for functions and global variables.
 - Unknown attributes are parser errors.

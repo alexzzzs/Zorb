@@ -1,2 +1,2 @@
 uint8_t __zorb_pad_0[8];
-_Static_assert(offsetof(struct Header, value) == 8
+_Static_assert(offsetof(struct Header, value) == 8, "offset mismatch for Header.value");

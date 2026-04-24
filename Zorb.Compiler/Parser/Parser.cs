@@ -550,6 +550,7 @@ public List<Node> ParseProgram()
                 IsPointer = innerType.IsPointer,
                 PointerLevel = innerType.PointerLevel,
                 ArraySize = innerType.ArraySize,
+                ArraySizeExpr = innerType.ArraySizeExpr,
                 IsErrorUnion = true,
                 ErrorInnerType = innerType
             };

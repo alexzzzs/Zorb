@@ -8,19 +8,31 @@ namespace Zorb.Compiler.Parsing;
 
 public static class ImportGraphParser
 {
+    private static StringComparer PathComparer =>
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
     public static ParseGraphResult ParseWithImports(string entryPath)
     {
-        var normalizedEntryPath = Path.GetFullPath(entryPath);
-        var visited = new HashSet<string>(StringComparer.Ordinal);
-        var files = new Dictionary<string, List<Node>>(StringComparer.Ordinal);
+        var normalizedEntryPath = NormalizeImportGraphPath(entryPath);
+        var visited = new HashSet<string>(PathComparer);
+        var files = new Dictionary<string, List<Node>>(PathComparer);
         var errors = new List<string>();
         var entryNodes = ParseRecursive(normalizedEntryPath, visited, files, errors);
 
-        return new ParseGraphResult(normalizedEntryPath, entryNodes, files, errors);
+        var readOnlyFiles = files.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<Node>)pair.Value.AsReadOnly(),
+            PathComparer);
+
+        return new ParseGraphResult(normalizedEntryPath, entryNodes, readOnlyFiles, errors);
     }
 
     private static List<Node> ParseRecursive(string path, HashSet<string> visited, Dictionary<string, List<Node>> files, List<string> errors)
     {
+        path = NormalizeImportGraphPath(path);
+
         if (!visited.Add(path))
             return files.TryGetValue(path, out var existingNodes) ? existingNodes : new List<Node>();
 
@@ -64,10 +76,15 @@ public static class ImportGraphParser
 
         return nodes;
     }
+
+    private static string NormalizeImportGraphPath(string path)
+    {
+        return Path.GetFullPath(path);
+    }
 }
 
 public sealed record ParseGraphResult(
     string EntryPath,
     List<Node> EntryNodes,
-    IReadOnlyDictionary<string, List<Node>> Files,
+    IReadOnlyDictionary<string, IReadOnlyList<Node>> Files,
     List<string> Errors);
