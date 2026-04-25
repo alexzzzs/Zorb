@@ -529,8 +529,6 @@ public List<Node> ParseProgram()
 
         var startToken = Current;
         bool isExtern = Match(TokenType.Extern);
-        if (!isExtern)
-            startToken = Current;
         Expect(TokenType.Fn, "Expected 'fn' after 'extern'.");
 
         var path = new List<string>();
@@ -1358,7 +1356,6 @@ public List<Node> ParseProgram()
             }
             else if (Current.Type == TokenType.LParen)
             {
-                var callStartToken = Current;
                 var calleeLocation = expr;
                 Advance();
                 var args = new List<Expr>();
@@ -1376,13 +1373,15 @@ public List<Node> ParseProgram()
                 Expect(TokenType.RParen, "Missing closing ')' in function call");
 
                 var lastToken = Previous;
-                var totalSpan = (lastToken.Column + lastToken.Length) - callStartToken.Column;
 
                 var callExpr = expr is IdentifierExpr id
                     ? new CallExpr { NamespacePath = new List<string>(), Name = id.Name, Args = args }
                     : new CallExpr { Name = "", Args = args, TargetExpr = expr };
 
                 StampNode(callExpr, calleeLocation);
+                var totalSpan = calleeLocation.Line == lastToken.Line
+                    ? (lastToken.Column + lastToken.Length) - calleeLocation.Column
+                    : Math.Max(callExpr.Length, lastToken.Length);
                 callExpr.Length = Math.Max(callExpr.Length, totalSpan);
                 expr = callExpr;
             }
