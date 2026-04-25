@@ -1,0 +1,11 @@
+fn offset_forward(buf: *u8, offset: i64) -> *u8 {
+    return buf + offset
+}
+
+fn offset_commuted(buf: *u8, offset: i64) -> *u8 {
+    return offset + buf
+}
+
+fn offset_backward(buf: *u8, offset: i64) -> *u8 {
+    return buf - offset
+}
