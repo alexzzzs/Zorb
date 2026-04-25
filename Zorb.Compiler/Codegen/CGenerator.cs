@@ -45,6 +45,8 @@ public class CGenerator
         return $"Error_{errorCode}";
     }
 
+    private static bool IsNumericType(TypeNode? type) => TypePredicates.IsNumericType(type);
+
     private static bool IsLinux => RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 
     private const string LinuxSyscallWrapper = @"
@@ -397,6 +399,8 @@ static void __zorb_slice_oob(void) {
             else if (attr.StartsWith("align(") && attr.EndsWith(")"))
                 attrs.Add($"aligned({attr.Substring(6, attr.Length - 7)})");
         }
+        if (PreserveStart && fn.NamespacePath.Count == 0 && rawName == "_start" && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            attrs.Add("force_align_arg_pointer");
         var attrStr = attrs.Count > 0 ? $"__attribute__(({string.Join(", ", attrs)})) " : "";
 
         if (fn.IsExtern)
@@ -1494,7 +1498,19 @@ static void __zorb_slice_oob(void) {
             case BinaryExpr bin:
                 if (bin.Operator is "==" or "!=" or ">" or "<" or ">=" or "<=" or "&&" or "||")
                     return new TypeNode { Name = "bool" };
-                return GetExprType(bin.Left);
+
+                var leftType = GetExprType(bin.Left);
+                var rightType = GetExprType(bin.Right);
+                if (leftType != null && rightType != null)
+                {
+                    if (bin.Operator == "+" && IsNumericType(leftType) && rightType.IsPointer)
+                        return rightType.Clone();
+
+                    if ((bin.Operator == "+" || bin.Operator == "-") && leftType.IsPointer && IsNumericType(rightType))
+                        return leftType.Clone();
+                }
+
+                return leftType;
             case CallExpr call:
                 if (call.TargetExpr != null)
                 {

@@ -1370,6 +1370,9 @@ public class TypeChecker
 
         if (NumericOperators.Contains(bin.Operator))
         {
+            if (IsPointerArithmetic(bin.Operator, leftType, rightType))
+                return;
+
             if (!IsNumericType(leftType))
             {
                 _errors.Error($"Left operand of '{bin.Operator}' must be numeric type");
@@ -1418,6 +1421,18 @@ public class TypeChecker
 
         if (leftType.IsPointer && rightType.IsPointer && SameType(leftType, rightType))
             return true;
+
+        return false;
+    }
+
+    private bool IsPointerArithmetic(string op, TypeNode leftType, TypeNode rightType)
+    {
+        if (op == "+")
+            return (leftType.IsPointer && IsNumericType(rightType)) ||
+                (IsNumericType(leftType) && rightType.IsPointer);
+
+        if (op == "-")
+            return leftType.IsPointer && IsNumericType(rightType);
 
         return false;
     }
@@ -1662,7 +1677,19 @@ public class TypeChecker
             case BinaryExpr bin:
                 if (ComparisonOperators.Contains(bin.Operator) || LogicalOperators.Contains(bin.Operator))
                     return new TypeNode { Name = "bool" };
-                return GetExpressionType(bin.Left, reportErrors);
+
+                var leftType = GetExpressionType(bin.Left, reportErrors);
+                var rightType = GetExpressionType(bin.Right, reportErrors);
+                if (leftType != null && rightType != null)
+                {
+                    if (bin.Operator == "+" && IsNumericType(leftType) && rightType.IsPointer)
+                        return rightType.Clone();
+
+                    if ((bin.Operator == "+" || bin.Operator == "-") && leftType.IsPointer && IsNumericType(rightType))
+                        return leftType.Clone();
+                }
+
+                return leftType ?? GetExpressionType(bin.Left, reportErrors);
 
             case CallExpr call:
                 // Resolve return type for qualified names and function pointers.
@@ -1902,7 +1929,7 @@ public class TypeChecker
     private bool IsNumericType(Expr expr)
     {
         var type = GetExpressionType(expr);
-        return type != null && _numericTypes.Contains(type.Name);
+        return TypePredicates.IsNumericType(type);
     }
 
     private bool IsBoolType(Expr expr)
@@ -1923,16 +1950,7 @@ public class TypeChecker
         return type?.IsPointer == true;
     }
 
-    private bool IsNumericType(TypeNode? type)
-    {
-        return type != null
-            && !type.IsSlice
-            && !type.IsPointer
-            && !type.IsErrorUnion
-            && !type.IsFunction
-            && type.ArraySize == null
-            && _numericTypes.Contains(type.Name);
-    }
+    private static bool IsNumericType(TypeNode? type) => TypePredicates.IsNumericType(type);
 
     private static bool IsBoolType(TypeNode? type)
     {
