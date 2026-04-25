@@ -1,1 +1,1 @@
-Struct 'Box' is not visible from this file. It may be private or not re-exported by an import.
+main.zorb:4:5: error: Struct 'Box' is not visible from this file. It may be private or not re-exported by an import.

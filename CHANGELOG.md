@@ -63,6 +63,7 @@ All notable changes to this project will be documented in this file.
 - Type mismatch, operator, visibility, and import diagnostics now include more specific context, including actual operand types and private or non-re-exported symbol wording.
 - Pointer-alignment diagnostics that were previously reported as semantic errors now emit warnings and allow compilation to continue.
 - The semantic checker now warns about unreachable statements after `return`, `break`, or `continue`.
+- The semantic checker now rejects duplicate switch case values, duplicate struct fields, duplicate local declarations, duplicate parameters, invalid assignment targets, and assignments to `const` declarations.
 
 ### Fixed
 

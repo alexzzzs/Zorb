@@ -59,35 +59,17 @@ public class ErrorReporter
 
     public void Warning(Node node, string message)
     {
-        _warnings.Add($"{node.File}:{node.Line}:{node.Column}: warning: {message}");
+        ReportWarning(node, message);
     }
 
     public void ReportError(Node node, string message)
     {
-        _errors.Add($"{node.File}:{node.Line}:{node.Column}: error: {message}");
+        ReportDiagnostic(_errors, node, message, "error", Red);
+    }
 
-        Console.WriteLine($"{White}{node.File}:{node.Line}:{node.Column}: {Red}error: {White}{message}{Reset}");
-
-        try
-        {
-            var lines = File.ReadLines(node.File).ToList();
-            if (node.Line > 0 && node.Line <= lines.Count)
-            {
-                string sourceLine = lines[node.Line - 1];
-
-                Console.WriteLine($"{Cyan}{node.Line,4} | {Reset}{sourceLine}");
-
-                string padding = new string(' ', node.Column - 1);
-                string underline = new string('^', Math.Max(1, node.Length));
-
-                Console.WriteLine($"{Cyan}     | {Red}{padding}{underline}{Reset}");
-            }
-        }
-        catch (Exception)
-        {
-            Console.WriteLine($"{Red}Could not load source snippet.{Reset}");
-        }
-        Console.WriteLine();
+    public void ReportWarning(Node node, string message)
+    {
+        ReportDiagnostic(_warnings, node, message, "warning", "\u001b[33;1m");
     }
 
     public void ReportAll()
@@ -114,15 +96,55 @@ public class ErrorReporter
 
     private static bool HasLocationPrefix(string error)
     {
-        var firstColon = error.IndexOf(':');
-        if (firstColon <= 0)
+        var lastColon = error.LastIndexOf(':');
+        if (lastColon <= 0)
             return false;
 
-        var secondColon = error.IndexOf(':', firstColon + 1);
-        if (secondColon <= firstColon + 1)
+        var prevColon = error.LastIndexOf(':', lastColon - 1);
+        if (prevColon <= 0)
             return false;
 
-        return secondColon + 1 < error.Length && char.IsDigit(error[firstColon + 1]);
+        if (lastColon <= prevColon + 1)
+            return false;
+
+        if (!IsAllDigits(error[(prevColon + 1)..lastColon]))
+            return false;
+
+        var severityColon = error.IndexOf(": ", lastColon, StringComparison.Ordinal);
+        return severityColon > lastColon;
+    }
+
+    private static bool IsAllDigits(string text)
+    {
+        return text.Length > 0 && text.All(char.IsDigit);
+    }
+
+    private void ReportDiagnostic(List<string> sink, Node node, string message, string severity, string color)
+    {
+        sink.Add($"{node.File}:{node.Line}:{node.Column}: {severity}: {message}");
+
+        Console.WriteLine($"{White}{node.File}:{node.Line}:{node.Column}: {color}{severity}: {White}{message}{Reset}");
+
+        try
+        {
+            var lines = File.ReadLines(node.File).ToList();
+            if (node.Line > 0 && node.Line <= lines.Count)
+            {
+                string sourceLine = lines[node.Line - 1];
+
+                Console.WriteLine($"{Cyan}{node.Line,4} | {Reset}{sourceLine}");
+
+                string padding = new string(' ', Math.Max(0, node.Column - 1));
+                string underline = new string('^', Math.Max(1, node.Length));
+
+                Console.WriteLine($"{Cyan}     | {color}{padding}{underline}{Reset}");
+            }
+        }
+        catch (Exception)
+        {
+            Console.WriteLine($"{color}Could not load source snippet.{Reset}");
+        }
+        Console.WriteLine();
     }
 
     public void ThrowIfErrors()

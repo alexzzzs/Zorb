@@ -1,1 +1,1 @@
-Operator '!=' requires comparable operands, got 'bool' and 'i64'
+Operator '!=' requires comparable operands, got 'bool' and 'i64'. Expected numeric operands, bool operands, matching pointer types, or two strings.

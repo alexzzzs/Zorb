@@ -730,9 +730,10 @@ public class TypeChecker
                     return FlowOutcome.FallsThrough;
 
                 var elseFlow = CheckBlock(ifStmt.ElseBody);
-                return ifFlow == FlowOutcome.Returns && elseFlow == FlowOutcome.Returns
-                    ? FlowOutcome.Returns
-                    : FlowOutcome.FallsThrough;
+                if (ifFlow == elseFlow && ifFlow != FlowOutcome.FallsThrough)
+                    return ifFlow;
+
+                return FlowOutcome.FallsThrough;
 
             case WhileStmt whileStmt:
                 CheckExpression(whileStmt.Condition);
@@ -794,8 +795,8 @@ public class TypeChecker
                     _errors.Error(switchStmt.Expression, $"Switch expression must have numeric or bool type, got '{FormatType(switchType)}'.");
                 }
 
-                var allCaseBodiesReturn = true;
-                var seenCaseValues = new Dictionary<string, Expr>(StringComparer.Ordinal);
+                var seenCaseValues = new HashSet<string>(StringComparer.Ordinal);
+                var caseOutcomes = new List<FlowOutcome>();
                 foreach (var switchCase in switchStmt.Cases)
                 {
                     CheckExpression(switchCase.Value);
@@ -806,23 +807,25 @@ public class TypeChecker
                     }
 
                     if (TryGetSwitchCaseKey(switchCase.Value, out var caseKey) &&
-                        !seenCaseValues.TryAdd(caseKey, switchCase.Value))
+                        !seenCaseValues.Add(caseKey))
                     {
                         _errors.Error(switchCase.Value, $"Duplicate switch case value '{caseKey}'.");
                     }
 
                     var caseFlow = CheckBlock(switchCase.Body);
-                    if (caseFlow != FlowOutcome.Returns)
-                        allCaseBodiesReturn = false;
+                    caseOutcomes.Add(caseFlow);
                 }
 
                 if (switchStmt.ElseBody.Count == 0)
                     return FlowOutcome.FallsThrough;
 
                 var switchElseFlow = CheckBlock(switchStmt.ElseBody);
-                return allCaseBodiesReturn && switchElseFlow == FlowOutcome.Returns
-                    ? FlowOutcome.Returns
-                    : FlowOutcome.FallsThrough;
+                caseOutcomes.Add(switchElseFlow);
+
+                if (caseOutcomes.Count > 0 && caseOutcomes.All(outcome => outcome == caseOutcomes[0] && outcome != FlowOutcome.FallsThrough))
+                    return caseOutcomes[0];
+
+                return FlowOutcome.FallsThrough;
 
             case ContinueStmt continueStmt:
                 if (_loopDepth == 0)
