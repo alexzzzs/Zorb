@@ -15,9 +15,12 @@ public class ErrorReporter
     private const string White = "\u001b[37;1m";
 
     private readonly List<string> _errors = new();
+    private readonly List<string> _warnings = new();
     public bool HasErrors => _errors.Count > 0;
+    public bool HasWarnings => _warnings.Count > 0;
 
     public List<string> Errors => _errors;
+    public List<string> Warnings => _warnings;
 
     public void Error(string message)
     {
@@ -37,6 +40,26 @@ public class ErrorReporter
     public void Error(Node node, string message)
     {
         ReportError(node, message);
+    }
+
+    public void Warning(string message)
+    {
+        _warnings.Add(message);
+    }
+
+    public void Warning(string message, int line, int column)
+    {
+        _warnings.Add($"{message} at line {line}, column {column}");
+    }
+
+    public void Warning(string message, int line, int column, string file)
+    {
+        _warnings.Add($"{file}:{line}:{column}: warning: {message}");
+    }
+
+    public void Warning(Node node, string message)
+    {
+        _warnings.Add($"{node.File}:{node.Line}:{node.Column}: warning: {message}");
     }
 
     public void ReportError(Node node, string message)
@@ -69,10 +92,37 @@ public class ErrorReporter
 
     public void ReportAll()
     {
+        ReportWarnings();
+        ReportErrors();
+    }
+
+    public void ReportErrors()
+    {
         foreach (var error in _errors)
         {
-            Console.Error.WriteLine($"Error: {error}");
+            Console.Error.WriteLine(HasLocationPrefix(error) ? error : $"Error: {error}");
         }
+    }
+
+    public void ReportWarnings()
+    {
+        foreach (var warning in _warnings)
+        {
+            Console.Error.WriteLine(HasLocationPrefix(warning) ? warning : $"Warning: {warning}");
+        }
+    }
+
+    private static bool HasLocationPrefix(string error)
+    {
+        var firstColon = error.IndexOf(':');
+        if (firstColon <= 0)
+            return false;
+
+        var secondColon = error.IndexOf(':', firstColon + 1);
+        if (secondColon <= firstColon + 1)
+            return false;
+
+        return secondColon + 1 < error.Length && char.IsDigit(error[firstColon + 1]);
     }
 
     public void ThrowIfErrors()

@@ -20,6 +20,7 @@ public class SymbolInfo
     public TypeNode Type { get; set; } = null!;
     public List<Parameter>? Parameters { get; set; }
     public StructNode? StructDefinition { get; set; }
+    public bool IsConst { get; set; }
 }
 
 public class SymbolTable
@@ -45,13 +46,14 @@ public class SymbolTable
 
     public Dictionary<string, SymbolInfo> CurrentScope => _scopes.Peek();
 
-    public void DefineVariable(string name, TypeNode type)
+    public void DefineVariable(string name, TypeNode type, bool isConst = false)
     {
         var info = new SymbolInfo
         {
             Name = name,
             Kind = SymbolKind.Variable,
-            Type = type
+            Type = type,
+            IsConst = isConst
         };
         CurrentScope[name] = info;
     }

@@ -1,0 +1,1 @@
+main.zorb:6:5: error: Assignment target must be an identifier, field, or index expression.

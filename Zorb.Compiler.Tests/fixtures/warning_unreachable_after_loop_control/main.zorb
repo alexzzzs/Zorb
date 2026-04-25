@@ -1,0 +1,11 @@
+fn _start() {
+    while true {
+        break
+        after_break: i64 = 1
+    }
+
+    while true {
+        continue
+        after_continue: i64 = 2
+    }
+}

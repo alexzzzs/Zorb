@@ -1,4 +1,5 @@
-Right operand of '-' must be numeric type
-Right operand of '-' must be numeric type
-Left operand of '*' must be numeric type
-Left operand of '/' must be numeric type
+Left operand of '-' must be numeric, got '*u8'
+Right operand of '-' must be numeric, got '*u8'
+Right operand of '-' must be numeric, got '*u8'
+Left operand of '*' must be numeric, got '*u8'
+Left operand of '/' must be numeric, got '*u8'

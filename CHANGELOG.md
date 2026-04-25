@@ -49,6 +49,9 @@ All notable changes to this project will be documented in this file.
 - Constant integer expression support for compile-time-only attribute arguments, including `align(...)` on variables, functions, and structs plus `offset(...)` on explicit-layout struct fields.
 - Constant-folding support for global integer initializers, with semantic rejection for division by zero and `i64` overflow in those constant-evaluated contexts.
 - New fixture coverage for constant-expression array sizes, folded global integer initializers, constant-expression `align(...)` and `offset(...)` attributes, and the matching non-constant rejection paths.
+- New diagnostic fixture coverage for missing import files with file, line, and column reporting.
+- A non-fatal compiler warning system, including fixture support for expected warnings.
+- New diagnostics fixtures covering unreachable-code warnings, duplicate declaration errors, const assignment, invalid assignment targets, duplicate struct fields, and duplicate switch cases.
 
 ### Changed
 
@@ -56,11 +59,18 @@ All notable changes to this project will be documented in this file.
 - Struct field array sizes now resolve through the same constant-integer rules as variable declarations.
 - Function signatures now go through the same pass-2 type-validation path as other declared types, keeping type-resolution behavior more consistent across declarations.
 - The semantics documentation now reflects constant-expression array sizes, constant-expression attribute arguments, and folded global integer initializer behavior.
+- Semantic diagnostics now consistently report file, line, and column information for more expression and statement failures.
+- Type mismatch, operator, visibility, and import diagnostics now include more specific context, including actual operand types and private or non-re-exported symbol wording.
+- Pointer-alignment diagnostics that were previously reported as semantic errors now emit warnings and allow compilation to continue.
+- The semantic checker now warns about unreachable statements after `return`, `break`, or `continue`.
 
 ### Fixed
 
 - Imported modules no longer lose semantic normalization work during code generation because the backend now emits from the same parsed import graph the checker already consumed.
 - Constant-expression failures in compile-time-only contexts now surface during semantic checking instead of falling through toward invalid generated C.
+- Missing import-file diagnostics now point at the import declaration and are reported once.
+- Duplicate top-level declarations, duplicate parameters, and duplicate local declarations are now rejected instead of silently overwriting earlier symbols.
+- Assignments to `const` declarations, assignments to non-assignable expressions, duplicate struct fields, and duplicate constant switch cases are now rejected during semantic checking.
 
 ## [0.1.4] - 2026-04-23
 
