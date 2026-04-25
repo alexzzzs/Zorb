@@ -1,0 +1,251 @@
+import "../../../std/errors.zorb"
+import "../../../std/io.zorb"
+
+export const TokenEof: i64 = 0
+export const TokenIdentifier: i64 = 1
+export const TokenInteger: i64 = 2
+export const TokenString: i64 = 3
+export const TokenLParen: i64 = 4
+export const TokenRParen: i64 = 5
+export const TokenLBrace: i64 = 6
+export const TokenRBrace: i64 = 7
+export const TokenEqual: i64 = 8
+export const TokenPlus: i64 = 9
+export const TokenMinus: i64 = 10
+export const TokenStar: i64 = 11
+export const TokenSlash: i64 = 12
+export const TokenComma: i64 = 13
+export const TokenSemicolon: i64 = 14
+
+export struct DogfoodToken {
+    kind: i64,
+    start: i64,
+    length: i64
+}
+
+fn is_space(ch: u8) -> bool {
+    return ch == 32 || ch == 9 || ch == 10 || ch == 13
+}
+
+fn is_digit(ch: u8) -> bool {
+    return ch >= 48 && ch <= 57
+}
+
+fn is_alpha(ch: u8) -> bool {
+    return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122)
+}
+
+fn is_identifier_start(ch: u8) -> bool {
+    return is_alpha(ch) || ch == 95
+}
+
+fn is_identifier_continue(ch: u8) -> bool {
+    return is_identifier_start(ch) || is_digit(ch)
+}
+
+fn push_token(tokens: []DogfoodToken, count: i64, kind: i64, start: i64, length: i64) !i64 {
+    if count >= tokens.len {
+        return error.BufferTooSmall
+    }
+
+    tokens[count] = DogfoodToken{ kind: kind, start: start, length: length }
+    return count + 1
+}
+
+export fn DogfoodLex(source: []u8, tokens: []DogfoodToken) !i64 {
+    count: i64 = 0
+    index: i64 = 0
+
+    while index < source.len {
+        ch: u8 = source[index]
+
+        if is_space(ch) {
+            index = index + 1
+            continue
+        }
+
+        if ch == 47 && index + 1 < source.len && source[index + 1] == 47 {
+            index = index + 2
+            while index < source.len && source[index] != 10 {
+                index = index + 1
+            }
+            continue
+        }
+
+        start: i64 = index
+
+        if is_identifier_start(ch) {
+            index = index + 1
+            while index < source.len && is_identifier_continue(source[index]) {
+                index = index + 1
+            }
+            count = push_token(tokens, count, TokenIdentifier, start, index - start) catch |err| {
+                return error.BufferTooSmall
+            }
+            continue
+        }
+
+        if is_digit(ch) {
+            index = index + 1
+            while index < source.len && is_digit(source[index]) {
+                index = index + 1
+            }
+            count = push_token(tokens, count, TokenInteger, start, index - start) catch |err| {
+                return error.BufferTooSmall
+            }
+            continue
+        }
+
+        if ch == 34 {
+            index = index + 1
+            while index < source.len && source[index] != 34 {
+                index = index + 1
+            }
+            if index >= source.len {
+                return error.InvalidArgument
+            }
+            index = index + 1
+            count = push_token(tokens, count, TokenString, start, index - start) catch |err| {
+                return error.BufferTooSmall
+            }
+            continue
+        }
+
+        if ch == 40 {
+            index = index + 1
+            count = push_token(tokens, count, TokenLParen, start, 1) catch |err| { return error.BufferTooSmall }
+            continue
+        }
+        if ch == 41 {
+            index = index + 1
+            count = push_token(tokens, count, TokenRParen, start, 1) catch |err| { return error.BufferTooSmall }
+            continue
+        }
+        if ch == 123 {
+            index = index + 1
+            count = push_token(tokens, count, TokenLBrace, start, 1) catch |err| { return error.BufferTooSmall }
+            continue
+        }
+        if ch == 125 {
+            index = index + 1
+            count = push_token(tokens, count, TokenRBrace, start, 1) catch |err| { return error.BufferTooSmall }
+            continue
+        }
+        if ch == 61 {
+            index = index + 1
+            count = push_token(tokens, count, TokenEqual, start, 1) catch |err| { return error.BufferTooSmall }
+            continue
+        }
+        if ch == 43 {
+            index = index + 1
+            count = push_token(tokens, count, TokenPlus, start, 1) catch |err| { return error.BufferTooSmall }
+            continue
+        }
+        if ch == 45 {
+            index = index + 1
+            count = push_token(tokens, count, TokenMinus, start, 1) catch |err| { return error.BufferTooSmall }
+            continue
+        }
+        if ch == 42 {
+            index = index + 1
+            count = push_token(tokens, count, TokenStar, start, 1) catch |err| { return error.BufferTooSmall }
+            continue
+        }
+        if ch == 47 {
+            index = index + 1
+            count = push_token(tokens, count, TokenSlash, start, 1) catch |err| { return error.BufferTooSmall }
+            continue
+        }
+        if ch == 44 {
+            index = index + 1
+            count = push_token(tokens, count, TokenComma, start, 1) catch |err| { return error.BufferTooSmall }
+            continue
+        }
+        if ch == 59 {
+            index = index + 1
+            count = push_token(tokens, count, TokenSemicolon, start, 1) catch |err| { return error.BufferTooSmall }
+            continue
+        }
+
+        return error.InvalidArgument
+    }
+
+    count = push_token(tokens, count, TokenEof, source.len, 0) catch |err| {
+        return error.BufferTooSmall
+    }
+    return count
+}
+
+fn print_token_kind(kind: i64) {
+    switch kind {
+        case TokenEof {
+            std.io.print("eof")
+        }
+        case TokenIdentifier {
+            std.io.print("ident")
+        }
+        case TokenInteger {
+            std.io.print("int")
+        }
+        case TokenString {
+            std.io.print("string")
+        }
+        case TokenLParen {
+            std.io.print("lparen")
+        }
+        case TokenRParen {
+            std.io.print("rparen")
+        }
+        case TokenLBrace {
+            std.io.print("lbrace")
+        }
+        case TokenRBrace {
+            std.io.print("rbrace")
+        }
+        case TokenEqual {
+            std.io.print("equal")
+        }
+        case TokenPlus {
+            std.io.print("plus")
+        }
+        case TokenMinus {
+            std.io.print("minus")
+        }
+        case TokenStar {
+            std.io.print("star")
+        }
+        case TokenSlash {
+            std.io.print("slash")
+        }
+        case TokenComma {
+            std.io.print("comma")
+        }
+        case TokenSemicolon {
+            std.io.print("semicolon")
+        }
+        else {
+            std.io.print("unknown")
+        }
+    }
+}
+
+export fn DogfoodPrintTokens(source: []u8, tokens: []DogfoodToken, count: i64) {
+    index: i64 = 0
+    while index < count {
+        token: DogfoodToken = tokens[index]
+        print_token_kind(token.kind)
+        std.io.print(" ")
+        std.io.print_i64(token.start)
+        std.io.print(" ")
+        std.io.print_i64(token.length)
+        std.io.print(" ")
+
+        text: []u8
+        text.ptr = source.ptr + token.start
+        text.len = token.length
+        std.io.write(1, text)
+        std.io.print("\n")
+
+        index = index + 1
+    }
+}

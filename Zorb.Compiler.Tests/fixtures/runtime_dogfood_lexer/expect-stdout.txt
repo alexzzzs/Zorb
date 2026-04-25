@@ -1,0 +1,9 @@
+ident 0 3 let
+ident 4 6 answer
+equal 11 1 =
+int 13 2 42
+ident 27 5 print
+lparen 32 1 (
+ident 33 6 answer
+rparen 39 1 )
+eof 41 0 

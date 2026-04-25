@@ -1,0 +1,26 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+import "../../../std/str.zorb"
+import "../../../examples/dogfood/lexer/lexer.zorb"
+
+fn _start() {
+    source_text: string = "let answer = 42\n// comment\nprint(answer)\n"
+
+    source: []u8
+    source.ptr = cast(*u8, source_text)
+    source.len = std.str.len(source_text)
+
+    tokens_storage: [32]DogfoodToken
+    tokens: []DogfoodToken = tokens_storage
+
+    token_count: i64 = DogfoodLex(source, tokens) catch |err| {
+        std.io.print("lexer error ")
+        std.io.print_i64(err)
+        std.io.print("\n")
+        std.os.exit(err)
+        return
+    }
+
+    DogfoodPrintTokens(source, tokens, token_count)
+    std.os.exit(0)
+}

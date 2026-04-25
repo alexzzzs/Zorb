@@ -674,8 +674,10 @@ Important consequence:
 
 ### Pointer Arithmetic
 
-- There is no dedicated semantic rule for pointer arithmetic.
-- Arithmetic operators require numeric operands.
+- `pointer + integer` and `integer + pointer` produce a pointer of the same type as the pointer operand.
+- `pointer - integer` produces a pointer of the same type as the left operand.
+- Pointer-to-pointer arithmetic is not supported.
+- Other arithmetic operators require numeric operands.
 
 ## Arrays
 

@@ -1370,6 +1370,9 @@ public class TypeChecker
 
         if (NumericOperators.Contains(bin.Operator))
         {
+            if (IsPointerArithmetic(bin.Operator, leftType, rightType))
+                return;
+
             if (!IsNumericType(leftType))
             {
                 _errors.Error($"Left operand of '{bin.Operator}' must be numeric type");
@@ -1418,6 +1421,18 @@ public class TypeChecker
 
         if (leftType.IsPointer && rightType.IsPointer && SameType(leftType, rightType))
             return true;
+
+        return false;
+    }
+
+    private bool IsPointerArithmetic(string op, TypeNode leftType, TypeNode rightType)
+    {
+        if (op == "+")
+            return (leftType.IsPointer && IsNumericType(rightType)) ||
+                (IsNumericType(leftType) && rightType.IsPointer);
+
+        if (op == "-")
+            return leftType.IsPointer && IsNumericType(rightType);
 
         return false;
     }
@@ -1662,6 +1677,18 @@ public class TypeChecker
             case BinaryExpr bin:
                 if (ComparisonOperators.Contains(bin.Operator) || LogicalOperators.Contains(bin.Operator))
                     return new TypeNode { Name = "bool" };
+
+                var leftType = GetExpressionType(bin.Left, reportErrors);
+                var rightType = GetExpressionType(bin.Right, reportErrors);
+                if (leftType != null && rightType != null)
+                {
+                    if (bin.Operator == "+" && IsNumericType(leftType) && rightType.IsPointer)
+                        return rightType.Clone();
+
+                    if ((bin.Operator == "+" || bin.Operator == "-") && leftType.IsPointer && IsNumericType(rightType))
+                        return leftType.Clone();
+                }
+
                 return GetExpressionType(bin.Left, reportErrors);
 
             case CallExpr call:
