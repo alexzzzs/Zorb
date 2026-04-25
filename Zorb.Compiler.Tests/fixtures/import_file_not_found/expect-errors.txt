@@ -1,1 +1,1 @@
-main.zorb:1:1: error: Import file not found: 'missing.zorb' resolved to '/home/alex/Desktop/projects/glorbc/Zorb.Compiler.Tests/fixtures/import_file_not_found/missing.zorb'.
+main.zorb:1:1: error: Import file not found: 'missing.zorb' resolved to
