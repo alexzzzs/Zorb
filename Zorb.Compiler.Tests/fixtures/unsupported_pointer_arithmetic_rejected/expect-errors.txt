@@ -1,0 +1,4 @@
+Right operand of '-' must be numeric type
+Right operand of '-' must be numeric type
+Left operand of '*' must be numeric type
+Left operand of '/' must be numeric type

@@ -52,7 +52,63 @@ fn push_token(tokens: []DogfoodToken, count: i64, kind: i64, start: i64, length:
     return count + 1
 }
 
+fn push_data_token(tokens: []DogfoodToken, count: i64, kind: i64, start: i64, length: i64) !i64 {
+    if count >= tokens.len - 1 {
+        return error.BufferTooSmall
+    }
+
+    next_count: i64 = push_token(tokens, count, kind, start, length) catch |err| {
+        return error.BufferTooSmall
+    }
+    return next_count
+}
+
+fn punctuation_kind(ch: u8) -> i64 {
+    switch ch {
+        case 40 {
+            return TokenLParen
+        }
+        case 41 {
+            return TokenRParen
+        }
+        case 123 {
+            return TokenLBrace
+        }
+        case 125 {
+            return TokenRBrace
+        }
+        case 61 {
+            return TokenEqual
+        }
+        case 43 {
+            return TokenPlus
+        }
+        case 45 {
+            return TokenMinus
+        }
+        case 42 {
+            return TokenStar
+        }
+        case 47 {
+            return TokenSlash
+        }
+        case 44 {
+            return TokenComma
+        }
+        case 59 {
+            return TokenSemicolon
+        }
+        else {
+            return -1
+        }
+    }
+}
+
 export fn DogfoodLex(source: []u8, tokens: []DogfoodToken) !i64 {
+    if tokens.len <= 0 {
+        return error.BufferTooSmall
+    }
+
     count: i64 = 0
     index: i64 = 0
 
@@ -79,7 +135,7 @@ export fn DogfoodLex(source: []u8, tokens: []DogfoodToken) !i64 {
             while index < source.len && is_identifier_continue(source[index]) {
                 index = index + 1
             }
-            count = push_token(tokens, count, TokenIdentifier, start, index - start) catch |err| {
+            count = push_data_token(tokens, count, TokenIdentifier, start, index - start) catch |err| {
                 return error.BufferTooSmall
             }
             continue
@@ -90,7 +146,7 @@ export fn DogfoodLex(source: []u8, tokens: []DogfoodToken) !i64 {
             while index < source.len && is_digit(source[index]) {
                 index = index + 1
             }
-            count = push_token(tokens, count, TokenInteger, start, index - start) catch |err| {
+            count = push_data_token(tokens, count, TokenInteger, start, index - start) catch |err| {
                 return error.BufferTooSmall
             }
             continue
@@ -98,72 +154,28 @@ export fn DogfoodLex(source: []u8, tokens: []DogfoodToken) !i64 {
 
         if ch == 34 {
             index = index + 1
+            // Escaped quotes and backslashes are skipped while scanning. The token span includes both quotes.
             while index < source.len && source[index] != 34 {
+                if source[index] == 92 {
+                    index = index + 2
+                    continue
+                }
                 index = index + 1
             }
             if index >= source.len {
-                return error.InvalidArgument
+                return error.EndOfFile
             }
             index = index + 1
-            count = push_token(tokens, count, TokenString, start, index - start) catch |err| {
+            count = push_data_token(tokens, count, TokenString, start, index - start) catch |err| {
                 return error.BufferTooSmall
             }
             continue
         }
 
-        if ch == 40 {
+        kind: i64 = punctuation_kind(ch)
+        if kind >= 0 {
             index = index + 1
-            count = push_token(tokens, count, TokenLParen, start, 1) catch |err| { return error.BufferTooSmall }
-            continue
-        }
-        if ch == 41 {
-            index = index + 1
-            count = push_token(tokens, count, TokenRParen, start, 1) catch |err| { return error.BufferTooSmall }
-            continue
-        }
-        if ch == 123 {
-            index = index + 1
-            count = push_token(tokens, count, TokenLBrace, start, 1) catch |err| { return error.BufferTooSmall }
-            continue
-        }
-        if ch == 125 {
-            index = index + 1
-            count = push_token(tokens, count, TokenRBrace, start, 1) catch |err| { return error.BufferTooSmall }
-            continue
-        }
-        if ch == 61 {
-            index = index + 1
-            count = push_token(tokens, count, TokenEqual, start, 1) catch |err| { return error.BufferTooSmall }
-            continue
-        }
-        if ch == 43 {
-            index = index + 1
-            count = push_token(tokens, count, TokenPlus, start, 1) catch |err| { return error.BufferTooSmall }
-            continue
-        }
-        if ch == 45 {
-            index = index + 1
-            count = push_token(tokens, count, TokenMinus, start, 1) catch |err| { return error.BufferTooSmall }
-            continue
-        }
-        if ch == 42 {
-            index = index + 1
-            count = push_token(tokens, count, TokenStar, start, 1) catch |err| { return error.BufferTooSmall }
-            continue
-        }
-        if ch == 47 {
-            index = index + 1
-            count = push_token(tokens, count, TokenSlash, start, 1) catch |err| { return error.BufferTooSmall }
-            continue
-        }
-        if ch == 44 {
-            index = index + 1
-            count = push_token(tokens, count, TokenComma, start, 1) catch |err| { return error.BufferTooSmall }
-            continue
-        }
-        if ch == 59 {
-            index = index + 1
-            count = push_token(tokens, count, TokenSemicolon, start, 1) catch |err| { return error.BufferTooSmall }
+            count = push_data_token(tokens, count, kind, start, 1) catch |err| { return error.BufferTooSmall }
             continue
         }
 

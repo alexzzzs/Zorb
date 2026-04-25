@@ -1,0 +1,16 @@
+// These failures lock the pointer arithmetic contract documented in SEMANTICS.md Pointer Rules.
+fn bad_ptr_sub_ptr(left: *u8, right: *u8) -> *u8 {
+    return left - right
+}
+
+fn bad_int_minus_ptr(value: i64, ptr: *u8) -> *u8 {
+    return value - ptr
+}
+
+fn bad_ptr_mul(ptr: *u8, value: i64) -> *u8 {
+    return ptr * value
+}
+
+fn bad_ptr_div(ptr: *u8, value: i64) -> *u8 {
+    return ptr / value
+}

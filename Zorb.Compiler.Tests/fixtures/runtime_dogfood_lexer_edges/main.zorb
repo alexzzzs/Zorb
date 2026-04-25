@@ -1,0 +1,61 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+import "../../../examples/dogfood/lexer/lexer.zorb"
+
+fn print_error(label: string, err: i64) {
+    std.io.print(label)
+    std.io.print(" ")
+    std.io.print_i64(err)
+    std.io.print("\n")
+}
+
+fn _start() {
+    tiny_source_storage: [1]u8 = [1]u8{ 120 }
+    tiny_source: []u8 = tiny_source_storage
+    tiny_tokens_storage: [1]DogfoodToken
+    tiny_tokens: []DogfoodToken = tiny_tokens_storage
+    tiny_tokens[0] = DogfoodToken{ kind: 77, start: 0, length: 0 }
+
+    tiny_count: i64 = DogfoodLex(tiny_source, tiny_tokens) catch |err| {
+        saved: DogfoodToken = tiny_tokens[0]
+        print_error("small", err)
+        std.io.print("sentinel ")
+        std.io.print_i64(saved.kind)
+        std.io.print("\n")
+        0
+    }
+    if tiny_count != 0 {
+        std.os.exit(1)
+        return
+    }
+
+    unterminated_source_storage: [1]u8 = [1]u8{ 34 }
+    unterminated_source: []u8 = unterminated_source_storage
+    unterminated_tokens_storage: [4]DogfoodToken
+    unterminated_tokens: []DogfoodToken = unterminated_tokens_storage
+    unterminated_count: i64 = DogfoodLex(unterminated_source, unterminated_tokens) catch |err| {
+        print_error("unterminated", err)
+        0
+    }
+    if unterminated_count != 0 {
+        std.os.exit(1)
+        return
+    }
+
+    escaped_source_storage: [6]u8 = [6]u8{ 34, 97, 92, 34, 98, 34 }
+    escaped_source: []u8 = escaped_source_storage
+    escaped_tokens_storage: [4]DogfoodToken
+    escaped_tokens: []DogfoodToken = escaped_tokens_storage
+    escaped_count: i64 = DogfoodLex(escaped_source, escaped_tokens) catch |err| {
+        std.os.exit(cast(i32, err))
+        return
+    }
+    escaped_token: DogfoodToken = escaped_tokens[0]
+    std.io.print("escaped ")
+    std.io.print_i64(escaped_count)
+    std.io.print(" ")
+    std.io.print_i64(escaped_token.length)
+    std.io.print("\n")
+
+    std.os.exit(0)
+}
