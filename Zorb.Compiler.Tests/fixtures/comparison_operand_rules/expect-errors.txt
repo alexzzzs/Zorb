@@ -1,2 +1,2 @@
-Operator '==' requires numeric operands, bool operands, matching pointer types, or two strings
-Operator '<' requires numeric operands
+Operator '==' requires comparable operands, got '*u8' and '*i8'
+Operator '<' requires numeric operands, got 'string' and 'string'

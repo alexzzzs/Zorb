@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -44,7 +45,15 @@ public class Parser
         node.File = _fileName;
         node.Line = token.Line;
         node.Column = token.Column;
-        node.Length = token.Value.Length;
+        node.Length = Math.Max(1, token.Value.Length);
+    }
+
+    private static void StampNode(Node node, Node source)
+    {
+        node.File = source.File;
+        node.Line = source.Line;
+        node.Column = source.Column;
+        node.Length = Math.Max(1, source.Length);
     }
 
     private Token Peek(int offset)
@@ -280,13 +289,15 @@ public List<Node> ParseProgram()
 
     private ImportNode ParseImport()
     {
-        Expect(TokenType.Import);
+        var startToken = Expect(TokenType.Import);
 
         if (Current.Type == TokenType.Identifier && Current.Value == "c")
         {
             Advance();
             var headerToken = Expect(TokenType.String, "Expected C header string after 'import c'.");
-            return new ImportNode { Path = headerToken.Value, Alias = "c" };
+            var import = new ImportNode { Path = headerToken.Value, Alias = "c" };
+            StampNode(import, startToken);
+            return import;
         }
 
         var pathToken = Expect(TokenType.String, "Expected import path string after 'import'.");
@@ -298,7 +309,9 @@ public List<Node> ParseProgram()
             alias = Expect(TokenType.Identifier, "Expected alias name after 'as' in import.").Value;
         }
 
-        return new ImportNode { Path = pathToken.Value, Alias = alias };
+        var node = new ImportNode { Path = pathToken.Value, Alias = alias };
+        StampNode(node, startToken);
+        return node;
     }
 
     private TokenType PeekDeclarationAfterAttributeLists()
@@ -327,7 +340,7 @@ public List<Node> ParseProgram()
     private StructNode ParseStruct()
     {
         var attributes = ParseStructAttributes();
-        Expect(TokenType.Struct);
+        var startToken = Expect(TokenType.Struct);
 
         var path = new List<string>();
         path.Add(Expect(TokenType.Identifier, "Expected struct name after 'struct'.").Value);
@@ -368,7 +381,9 @@ public List<Node> ParseProgram()
 
         Expect(TokenType.RBrace, "Expected '}' to close struct body.");
 
-        return new StructNode { NamespacePath = path, Name = name, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr, Fields = fields };
+        var node = new StructNode { NamespacePath = path, Name = name, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr, Fields = fields };
+        StampNode(node, startToken);
+        return node;
     }
 
     private VariableDeclarationNode ParseErrorDecl()
@@ -512,6 +527,7 @@ public List<Node> ParseProgram()
     {
         var attributes = ParseFunctionAttributes();
 
+        var startToken = Current;
         bool isExtern = Match(TokenType.Extern);
         Expect(TokenType.Fn, "Expected 'fn' after 'extern'.");
 
@@ -557,6 +573,7 @@ public List<Node> ParseProgram()
         }
 
         FunctionDecl function = new FunctionDecl { NamespacePath = path, Name = name, Parameters = parameters, ReturnType = returnType, IsExtern = isExtern, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr };
+        StampNode(function, startToken);
 
         if (isExtern)
         {
@@ -911,28 +928,36 @@ public List<Node> ParseProgram()
         {
             Advance();
             var value = ParseExpression();
-            return new AssignStmt { Target = expr, Value = value };
+            var stmt = new AssignStmt { Target = expr, Value = value };
+            StampNode(stmt, expr);
+            return stmt;
         }
 
-        return new ExpressionStatement { Expression = expr };
+        var exprStmt = new ExpressionStatement { Expression = expr };
+        StampNode(exprStmt, expr);
+        return exprStmt;
     }
 
     private Statement ParseReturn()
     {
-        Expect(TokenType.Return);
+        var startToken = Expect(TokenType.Return);
         
         if (Current.Type == TokenType.Semicolon || Current.Type == TokenType.RBrace)
         {
-            return new ReturnNode { Value = null };
+            var emptyReturn = new ReturnNode { Value = null };
+            StampNode(emptyReturn, startToken);
+            return emptyReturn;
         }
         
         var value = ParseExpression();
-        return new ReturnNode { Value = value };
+        var node = new ReturnNode { Value = value };
+        StampNode(node, startToken);
+        return node;
     }
 
     private Statement ParseIf()
     {
-        Expect(TokenType.If);
+        var startToken = Expect(TokenType.If);
 
         var condition = ParseExpression();
 
@@ -974,7 +999,9 @@ public List<Node> ParseProgram()
             }
         }
 
-        return new IfStmt { Condition = condition, Body = body, ElseBody = elseBody };
+        var stmt = new IfStmt { Condition = condition, Body = body, ElseBody = elseBody };
+        StampNode(stmt, startToken);
+        return stmt;
     }
 
     private Statement ParseWhile()
@@ -1083,7 +1110,9 @@ public List<Node> ParseProgram()
         var target = ParsePostfix();
         Expect(TokenType.Equals);
         var value = ParseExpression();
-        return new AssignStmt { Target = target, Value = value };
+        var stmt = new AssignStmt { Target = target, Value = value };
+        StampNode(stmt, target);
+        return stmt;
     }
 
     private Statement ParseForClauseStatement()
@@ -1118,10 +1147,14 @@ public List<Node> ParseProgram()
         {
             Advance();
             var value = ParseExpression();
-            return new AssignStmt { Target = expr, Value = value };
+            var stmt = new AssignStmt { Target = expr, Value = value };
+            StampNode(stmt, expr);
+            return stmt;
         }
 
-        return new ExpressionStatement { Expression = expr };
+        var exprStmt = new ExpressionStatement { Expression = expr };
+        StampNode(exprStmt, expr);
+        return exprStmt;
     }
 
     private List<Statement> ParseStatementBlock(string openMessage, string closeMessage)
@@ -1168,10 +1201,11 @@ public List<Node> ParseProgram()
 
     private Statement ParseAsm()
     {
-        Expect(TokenType.Identifier);
+        var startToken = Expect(TokenType.Identifier);
         Expect(TokenType.LBrace, "Expected '{' to start asm block.");
 
         var node = new AsmStatementNode();
+        StampNode(node, startToken);
         
         while (Current.Type == TokenType.String)
         {
@@ -1213,13 +1247,17 @@ public List<Node> ParseProgram()
 
     private Statement ParseVarDecl(bool isConst = false)
     {
+        var startToken = Current;
         if (Current.Type == TokenType.Const)
         {
-            Advance();
+            startToken = Advance();
             isConst = true;
         }
 
-        var name = Expect(TokenType.Identifier, isConst ? "Expected constant name after 'const'." : "Expected variable name.").Value;
+        var nameToken = Expect(TokenType.Identifier, isConst ? "Expected constant name after 'const'." : "Expected variable name.");
+        if (!isConst)
+            startToken = nameToken;
+        var name = nameToken.Value;
 
         while (Match(TokenType.Dot))
         {
@@ -1236,7 +1274,9 @@ public List<Node> ParseProgram()
             initializer = ParseExpression();
         }
 
-        return new VariableDeclarationNode { Name = name, TypeName = typeName, Value = initializer, IsConst = isConst };
+        var node = new VariableDeclarationNode { Name = name, TypeName = typeName, Value = initializer, IsConst = isConst };
+        StampNode(node, startToken);
+        return node;
     }
 
     private Expr ParseExpression(int parentPrecedence = 0)
@@ -1247,7 +1287,7 @@ public List<Node> ParseProgram()
         {
             if (Current.Type == TokenType.Catch)
             {
-                Advance();
+                var catchToken = Advance();
                 Expect(TokenType.Pipe, "Expected '|' after 'catch'.");
                 var errorVar = Expect(TokenType.Identifier, "Expected catch error variable name.").Value;
                 Expect(TokenType.Pipe, "Expected closing '|' after catch error variable.");
@@ -1258,7 +1298,9 @@ public List<Node> ParseProgram()
                     catchBody.Add(ParseStatement());
                 }
                 Expect(TokenType.RBrace, "Expected '}' to close catch body.");
-                left = new CatchExpr { Left = left, ErrorVar = errorVar, CatchBody = catchBody };
+                var catchExpr = new CatchExpr { Left = left, ErrorVar = errorVar, CatchBody = catchBody };
+                StampNode(catchExpr, catchToken);
+                left = catchExpr;
                 continue;
             }
 
@@ -1269,7 +1311,9 @@ public List<Node> ParseProgram()
             var opToken = Current;
             Advance();
             var right = ParseExpression(prec);
-            left = new BinaryExpr { Left = left, Operator = TokenToOperator(opToken.Type), Right = right };
+            var binary = new BinaryExpr { Left = left, Operator = TokenToOperator(opToken.Type), Right = right };
+            StampNode(binary, opToken);
+            left = binary;
         }
 
         return left;
@@ -1285,27 +1329,34 @@ public List<Node> ParseProgram()
             {
                 if (Peek(1).Type == TokenType.Align)
                     break;
-                Advance();
+                var bracketToken = Advance();
                 var index = ParseExpression();
                 Expect(TokenType.RBracket, "Expected ']' after index expression.");
-                expr = new IndexExpr { Target = expr, Index = index };
+                var indexExpr = new IndexExpr { Target = expr, Index = index };
+                StampNode(indexExpr, bracketToken);
+                expr = indexExpr;
             }
             else if (Current.Type == TokenType.Dot)
             {
                 Advance();
-                var field = Expect(TokenType.Identifier, "Expected identifier after '.'.").Value;
+                var fieldToken = Expect(TokenType.Identifier, "Expected identifier after '.'.");
+                var field = fieldToken.Value;
                 if (expr is ErrorNamespaceExpr)
                 {
-                    expr = new ErrorExpr { ErrorCode = field };
+                    var errorExpr = new ErrorExpr { ErrorCode = field };
+                    StampNode(errorExpr, fieldToken);
+                    expr = errorExpr;
                 }
                 else
                 {
-                    expr = new FieldExpr { Target = expr, Field = field };
+                    var fieldExpr = new FieldExpr { Target = expr, Field = field };
+                    StampNode(fieldExpr, fieldToken);
+                    expr = fieldExpr;
                 }
             }
             else if (Current.Type == TokenType.LParen)
             {
-                var callStartToken = Current;
+                var calleeLocation = expr;
                 Advance();
                 var args = new List<Expr>();
                 if (Current.Type != TokenType.RParen)
@@ -1322,17 +1373,17 @@ public List<Node> ParseProgram()
                 Expect(TokenType.RParen, "Missing closing ')' in function call");
 
                 var lastToken = Previous;
-                var totalSpan = (lastToken.Column + lastToken.Length) - callStartToken.Column;
 
-                if (expr is IdentifierExpr id)
-                    expr = new CallExpr { NamespacePath = new List<string>(), Name = id.Name, Args = args };
-                else
-                    expr = new CallExpr { Name = "", Args = args, TargetExpr = expr };
-                
-                expr.File = _fileName;
-                expr.Line = callStartToken.Line;
-                expr.Column = callStartToken.Column;
-                expr.Length = totalSpan;
+                var callExpr = expr is IdentifierExpr id
+                    ? new CallExpr { NamespacePath = new List<string>(), Name = id.Name, Args = args }
+                    : new CallExpr { Name = "", Args = args, TargetExpr = expr };
+
+                StampNode(callExpr, calleeLocation);
+                var totalSpan = calleeLocation.Line == lastToken.Line
+                    ? (lastToken.Column + lastToken.Length) - calleeLocation.Column
+                    : Math.Max(callExpr.Length, lastToken.Length);
+                callExpr.Length = Math.Max(callExpr.Length, totalSpan);
+                expr = callExpr;
             }
             else
             {

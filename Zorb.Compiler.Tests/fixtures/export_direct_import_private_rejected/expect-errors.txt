@@ -1,1 +1,1 @@
-Function 'lib.secret' is not visible. Did you forget to import it?
+main.zorb:4:16: error: Function 'lib.secret' is not visible from this file. It may be private or not re-exported by an import.

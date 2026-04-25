@@ -1,0 +1,4 @@
+fn run() -> i64 {
+    return 1
+    value: i64 = 1
+}

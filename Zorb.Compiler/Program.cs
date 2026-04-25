@@ -165,10 +165,11 @@ SECTIONS
 
         var typeChecker = new TypeChecker();
         typeChecker.Check(ast, currentDir, parseResult.Files);
+
         if (typeChecker.Errors.Errors.Count > 0)
         {
             Console.Error.WriteLine("Semantic check failed.");
-            typeChecker.Errors.ReportAll();
+            typeChecker.Errors.ReportErrors();
             return null;
         }
 

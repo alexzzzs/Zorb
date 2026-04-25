@@ -1,0 +1,4 @@
+fn _start() {
+    const answer: i64 = 1
+    answer = 2
+}
