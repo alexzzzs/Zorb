@@ -17,7 +17,7 @@ fn _start() {
         std.io.print("lexer error ")
         std.io.print_i64(err)
         std.io.print("\n")
-        std.os.exit(err)
+        std.os.exit(cast(i32, err))
         return
     }
 

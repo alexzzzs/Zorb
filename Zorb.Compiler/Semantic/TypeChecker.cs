@@ -1689,7 +1689,7 @@ public class TypeChecker
                         return leftType.Clone();
                 }
 
-                return GetExpressionType(bin.Left, reportErrors);
+                return leftType ?? GetExpressionType(bin.Left, reportErrors);
 
             case CallExpr call:
                 // Resolve return type for qualified names and function pointers.
@@ -1929,7 +1929,7 @@ public class TypeChecker
     private bool IsNumericType(Expr expr)
     {
         var type = GetExpressionType(expr);
-        return type != null && _numericTypes.Contains(type.Name);
+        return TypePredicates.IsNumericType(type);
     }
 
     private bool IsBoolType(Expr expr)
@@ -1950,16 +1950,7 @@ public class TypeChecker
         return type?.IsPointer == true;
     }
 
-    private bool IsNumericType(TypeNode? type)
-    {
-        return type != null
-            && !type.IsSlice
-            && !type.IsPointer
-            && !type.IsErrorUnion
-            && !type.IsFunction
-            && type.ArraySize == null
-            && _numericTypes.Contains(type.Name);
-    }
+    private static bool IsNumericType(TypeNode? type) => TypePredicates.IsNumericType(type);
 
     private static bool IsBoolType(TypeNode? type)
     {

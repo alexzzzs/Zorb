@@ -45,15 +45,7 @@ public class CGenerator
         return $"Error_{errorCode}";
     }
 
-    private static bool IsNumericType(TypeNode type)
-    {
-        return !type.IsSlice &&
-            !type.IsPointer &&
-            !type.IsErrorUnion &&
-            !type.IsFunction &&
-            type.ArraySize == null &&
-            type.Name is "i8" or "i16" or "i32" or "i64" or "u8" or "u16" or "u32" or "u64";
-    }
+    private static bool IsNumericType(TypeNode? type) => TypePredicates.IsNumericType(type);
 
     private static bool IsLinux => RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 
@@ -1518,7 +1510,7 @@ static void __zorb_slice_oob(void) {
                         return leftType.Clone();
                 }
 
-                return GetExprType(bin.Left);
+                return leftType;
             case CallExpr call:
                 if (call.TargetExpr != null)
                 {

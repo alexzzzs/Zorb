@@ -580,7 +580,9 @@ Notes:
 
 For arithmetic and bitwise operators:
 
-- both operands must be numeric types
+- operands generally must be numeric types
+- `+` and `-` also permit the pointer-and-integer combinations described in [Pointer Arithmetic](#pointer-arithmetic)
+- pointer-to-pointer arithmetic, including `pointer - pointer`, remains unsupported
 
 For logical operators:
 
