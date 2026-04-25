@@ -17,7 +17,9 @@ public class TypeChecker
     private enum FlowOutcome
     {
         FallsThrough,
-        Returns
+        Returns,
+        Breaks,
+        Continues
     }
 
     private readonly SymbolTable _symbolTable = new();
@@ -296,6 +298,13 @@ public class TypeChecker
         return false;
     }
 
+    private void ReportNotVisible(Node context, string subjectKind, string fullName)
+    {
+        _errors.Error(
+            context,
+            $"{subjectKind} '{fullName}' is not visible from this file. It may be private or not re-exported by an import.");
+    }
+
     private static bool IsErrorConstantName(string name)
     {
         return name.StartsWith("Error_", StringComparison.Ordinal) && name.Length > "Error_".Length;
@@ -412,6 +421,8 @@ public class TypeChecker
 
     public void CheckNodes(IReadOnlyList<Node> nodes, string currentDir = ".")
     {
+        var declaredInThisFile = new HashSet<string>(StringComparer.Ordinal);
+
         // Pass 1: Register all declarations so they are visible within the current file
         foreach (var node in nodes)
         {
@@ -424,11 +435,15 @@ public class TypeChecker
                 foreach (var param in fn.Parameters)
                     NormalizeTypeReferenceInPlace(param.TypeName);
                 var fullName = fn.NamespacePath.Any() ? string.Join(".", fn.NamespacePath) + "." + fn.Name : fn.Name;
+                if (!declaredInThisFile.Add(fullName))
+                    _errors.Error(fn, $"Duplicate top-level declaration '{fullName}'.");
                 MakeVisible(fullName);
                 if (!_symbolTable.IsDefined(fullName)) _symbolTable.DefineFunction(fullName, fn.ReturnType, fn.Parameters);
             }
             else if (node is StructNode sn) {
                 var fullName = sn.NamespacePath.Any() ? string.Join(".", sn.NamespacePath) + "." + sn.Name : sn.Name;
+                if (!declaredInThisFile.Add(fullName))
+                    _errors.Error(sn, $"Duplicate top-level declaration '{fullName}'.");
                 MakeVisible(fullName);
                 if (!_symbolTable.IsDefined(fullName)) _symbolTable.DefineStruct(fullName, sn);
 
@@ -452,8 +467,10 @@ public class TypeChecker
                 NormalizeTypeReferenceInPlace(vd.TypeName);
                 ValidateVariableAttributes(vd, isGlobal: true);
                 RegisterErrorDeclaration(vd);
+                if (!declaredInThisFile.Add(vd.Name))
+                    _errors.Error(vd, $"Duplicate top-level declaration '{vd.Name}'.");
                 MakeVisible(vd.Name);
-                if (!_symbolTable.IsDefined(vd.Name)) _symbolTable.DefineVariable(vd.Name, vd.TypeName);
+                if (!_symbolTable.IsDefined(vd.Name)) _symbolTable.DefineVariable(vd.Name, vd.TypeName, vd.IsConst);
                 TryRecordConstValue(vd);
             }
         }
@@ -489,7 +506,14 @@ public class TypeChecker
                 PushScopedState();
 
                 foreach (var param in functionDecl.Parameters)
+                {
+                    if (_symbolTable.CurrentScope.ContainsKey(param.Name))
+                    {
+                        _errors.Error(functionDecl, $"Duplicate parameter '{param.Name}' in function '{functionDecl.Name}'.");
+                        continue;
+                    }
                     _symbolTable.DefineParameter(param.Name, param.TypeName);
+                }
 
                 var flow = CheckBlock(functionDecl.Body, pushScope: false);
                 if (FunctionRequiresReturn(functionDecl) && flow != FlowOutcome.Returns)
@@ -525,7 +549,8 @@ public class TypeChecker
 
         if (!File.Exists(fullPath))
         {
-            _errors.Error($"Import file not found: {importNode.Path}");
+            _processedImports.Add(fullPath);
+            _errors.Error(importNode, $"Import file not found: '{importNode.Path}' resolved to '{fullPath}'.");
             return;
         }
 
@@ -658,7 +683,7 @@ public class TypeChecker
                         {
                             if (!expectedType.IsErrorUnion)
                             {
-                                _errors.Error($"Function '{_currentFunction.Name}' does not return an error union (!), so you cannot return an error code.");
+                                _errors.Error(returnNode.Value, $"Function '{_currentFunction.Name}' does not return an error union (!), so you cannot return an error code.");
                             }
                             else if (returnNode.Value is ErrorExpr errExpr && !TryResolveDeclaredErrorSymbol(errExpr.ErrorCode, out _))
                             {
@@ -679,7 +704,7 @@ public class TypeChecker
 
                                 if (returnNode.Value is IdentifierExpr ident && ident.Name.Contains("Error"))
                                 {
-                                    _errors.Error($"Ambiguous return in '{_currentFunction.Name}'. Use lowercase 'return error.{ident.Name.Split('.').Last()}' to return an error code.");
+                                    _errors.Error(returnNode.Value, $"Ambiguous return in '{_currentFunction.Name}'. Use lowercase 'return error.{ident.Name.Split('.').Last()}' to return an error code.");
                                 }
                             }
                             else
@@ -770,6 +795,7 @@ public class TypeChecker
                 }
 
                 var allCaseBodiesReturn = true;
+                var seenCaseValues = new Dictionary<string, Expr>(StringComparer.Ordinal);
                 foreach (var switchCase in switchStmt.Cases)
                 {
                     CheckExpression(switchCase.Value);
@@ -777,6 +803,12 @@ public class TypeChecker
                     if (switchType != null && caseType != null && !AreEqualityComparableTypes(switchType, caseType))
                     {
                         _errors.Error(switchCase.Value, $"Switch case expression of type '{FormatType(caseType)}' is not comparable to switch expression type '{FormatType(switchType)}'.");
+                    }
+
+                    if (TryGetSwitchCaseKey(switchCase.Value, out var caseKey) &&
+                        !seenCaseValues.TryAdd(caseKey, switchCase.Value))
+                    {
+                        _errors.Error(switchCase.Value, $"Duplicate switch case value '{caseKey}'.");
                     }
 
                     var caseFlow = CheckBlock(switchCase.Body);
@@ -795,12 +827,12 @@ public class TypeChecker
             case ContinueStmt continueStmt:
                 if (_loopDepth == 0)
                     _errors.Error(continueStmt, "'continue' is only allowed inside a while or for loop.");
-                return FlowOutcome.FallsThrough;
+                return _loopDepth == 0 ? FlowOutcome.FallsThrough : FlowOutcome.Continues;
 
             case BreakStmt breakStmt:
                 if (_loopDepth == 0)
                     _errors.Error(breakStmt, "'break' is only allowed inside a while or for loop.");
-                return FlowOutcome.FallsThrough;
+                return _loopDepth == 0 ? FlowOutcome.FallsThrough : FlowOutcome.Breaks;
 
             case AsmStatementNode asmStmt:
                 CheckAsmStatement(asmStmt);
@@ -818,10 +850,14 @@ public class TypeChecker
         var flow = FlowOutcome.FallsThrough;
         foreach (var stmt in statements)
         {
+            if (flow != FlowOutcome.FallsThrough)
+            {
+                _errors.Warning(stmt, "Unreachable statement.");
+                break;
+            }
+
             NormalizeAliasReferences(stmt);
             flow = CheckStatement(stmt);
-            if (flow == FlowOutcome.Returns)
-                break;
         }
 
         if (pushScope)
@@ -835,7 +871,13 @@ public class TypeChecker
         ResolveAlignmentAttribute(varDecl.Attributes, varDecl.AlignExpr, varDecl, $"Variable '{varDecl.Name}' Alignment");
         ValidateTypeReference(varDecl.TypeName, varDecl);
         ValidateVariableAttributes(varDecl, isGlobal: false);
-        _symbolTable.DefineVariable(varDecl.Name, varDecl.TypeName);
+        if (_symbolTable.CurrentScope.ContainsKey(varDecl.Name))
+        {
+            _errors.Error(varDecl, $"Duplicate local declaration '{varDecl.Name}'.");
+            return;
+        }
+
+        _symbolTable.DefineVariable(varDecl.Name, varDecl.TypeName, varDecl.IsConst);
 
         CheckVariableInitializer(varDecl);
         TryRecordConstValue(varDecl);
@@ -980,6 +1022,13 @@ public class TypeChecker
 
     private void ValidateStructAttributes(StructNode structNode, string fullName)
     {
+        var seenFields = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var field in structNode.Fields)
+        {
+            if (!seenFields.Add(field.Name))
+                _errors.Error(field, $"Struct '{fullName}' declares field '{field.Name}' more than once.");
+        }
+
         var explicitLayout = StructLayout.HasExplicitLayout(structNode);
 
         foreach (var field in structNode.Fields)
@@ -1003,6 +1052,16 @@ public class TypeChecker
         CheckExpression(assign.Target);
         CheckExpression(assign.Value);
 
+        if (!IsAssignableExpression(assign.Target))
+            _errors.Error(assign.Target, "Assignment target must be an identifier, field, or index expression.");
+
+        if (TryGetAssignmentRootName(assign.Target, out var rootName) &&
+            _symbolTable.TryLookup(rootName, out var rootInfo) &&
+            rootInfo?.IsConst == true)
+        {
+            _errors.Error(assign.Target, $"Cannot assign to const declaration '{rootName}'.");
+        }
+
         var targetType = GetExpressionType(assign.Target);
         var valueType = GetExpressionType(assign.Value);
 
@@ -1025,7 +1084,7 @@ public class TypeChecker
         {
             if (assign.Value is UnaryExpr unary && unary.Operator == "&")
             {
-                _errors.Error($"Warning: casting *u8 to **u8 may cause crashes if address is not 8-byte aligned. Consider using mem.Align64 first.");
+                _errors.Warning(assign.Value, "Casting *u8 to **u8 may cause crashes if the address is not 8-byte aligned. Consider using mem.Align64 first.");
             }
         }
     }
@@ -1046,11 +1105,11 @@ public class TypeChecker
                 ident.Name = ResolveQualifiedName(ident.Name);
                 if (!_symbolTable.IsDefined(ident.Name))
                 {
-                    _errors.Error($"Use of undeclared identifier '{ident.Name}'");
+                    _errors.Error(ident, $"Use of undeclared identifier '{ident.Name}'.");
                 }
                 else if (!CheckVisibility(ident.Name))
                 {
-                    _errors.Error(ident, $"'{ident.Name}' is not visible. Did you forget an import?");
+                    ReportNotVisible(ident, "Symbol", ident.Name);
                 }
                 break;
 
@@ -1247,6 +1306,31 @@ public class TypeChecker
         return expr is IdentifierExpr or FieldExpr or IndexExpr;
     }
 
+    private static bool IsAssignableExpression(Expr expr)
+    {
+        return expr is IdentifierExpr or FieldExpr or IndexExpr;
+    }
+
+    private static bool TryGetAssignmentRootName(Expr expr, out string name)
+    {
+        switch (expr)
+        {
+            case IdentifierExpr ident:
+                name = ident.Name;
+                return true;
+
+            case FieldExpr field:
+                return TryGetAssignmentRootName(field.Target, out name);
+
+            case IndexExpr index:
+                return TryGetAssignmentRootName(index.Target, out name);
+
+            default:
+                name = "";
+                return false;
+        }
+    }
+
     private bool IsValidAsmOperandType(TypeNode? type)
     {
         if (type == null)
@@ -1343,7 +1427,7 @@ public class TypeChecker
         }
 
         if (!wasAliasQualified && !CheckVisibility(fullName))
-            _errors.Error(context, $"Struct '{fullName}' is not visible. Did you forget an import?");
+            ReportNotVisible(context, "Struct", fullName);
     }
 
     private void CheckBinaryExpression(BinaryExpr bin)
@@ -1375,12 +1459,12 @@ public class TypeChecker
 
             if (!IsNumericType(leftType))
             {
-                _errors.Error($"Left operand of '{bin.Operator}' must be numeric type");
+                _errors.Error(bin.Left, $"Left operand of '{bin.Operator}' must be numeric, got '{FormatType(leftType)}'.");
             }
 
             if (!IsNumericType(rightType))
             {
-                _errors.Error($"Right operand of '{bin.Operator}' must be numeric type");
+                _errors.Error(bin.Right, $"Right operand of '{bin.Operator}' must be numeric, got '{FormatType(rightType)}'.");
             }
         }
 
@@ -1390,7 +1474,7 @@ public class TypeChecker
         if (bin.Operator is ">" or "<" or ">=" or "<=")
         {
             if (!IsNumericType(leftType) || !IsNumericType(rightType))
-                _errors.Error($"Operator '{bin.Operator}' requires numeric operands");
+                _errors.Error(bin, $"Operator '{bin.Operator}' requires numeric operands, got '{FormatType(leftType)}' and '{FormatType(rightType)}'.");
             return;
         }
 
@@ -1399,13 +1483,37 @@ public class TypeChecker
             if (AreEqualityComparableTypes(leftType, rightType))
                 return;
 
-            _errors.Error($"Operator '{bin.Operator}' requires numeric operands, bool operands, matching pointer types, or two strings");
+            _errors.Error(bin, $"Operator '{bin.Operator}' requires comparable operands, got '{FormatType(leftType)}' and '{FormatType(rightType)}'. Expected numeric operands, bool operands, matching pointer types, or two strings.");
         }
     }
 
     private bool IsSwitchOperandType(TypeNode type)
     {
         return IsNumericType(type) || IsBoolType(type);
+    }
+
+    private bool TryGetSwitchCaseKey(Expr expr, out string key)
+    {
+        if (expr is BuiltinExpr { Name: "true" })
+        {
+            key = "true";
+            return true;
+        }
+
+        if (expr is BuiltinExpr { Name: "false" })
+        {
+            key = "false";
+            return true;
+        }
+
+        if (TryEvaluateConstIntExpr(expr, out var value, out _))
+        {
+            key = value.ToString();
+            return true;
+        }
+
+        key = "";
+        return false;
     }
 
     private bool AreEqualityComparableTypes(TypeNode leftType, TypeNode rightType)
@@ -1524,7 +1632,7 @@ public class TypeChecker
             {
                 if (!targetResolvedViaAlias && !CheckVisibility(resolvedQualifiedName))
                 {
-                    _errors.Error(call, $"Function '{qualifiedName}' is not visible. Did you forget to import it?");
+                    ReportNotVisible(call, "Function", qualifiedName ?? resolvedQualifiedName);
                     return;
                 }
 
@@ -1549,7 +1657,7 @@ public class TypeChecker
                 if (targetType == null || !targetType.IsFunction)
                 {
                     _errors.Error(call, !string.IsNullOrEmpty(qualifiedName)
-                        ? $"Function '{qualifiedName}' is not visible. Did you forget to import it?"
+                        ? $"Function '{qualifiedName}' is not declared or is not visible from this file."
                         : "Expression is not a function or callable");
                     return;
                 }
@@ -1585,7 +1693,7 @@ public class TypeChecker
                         return;
                     }
                     if (!resolvedViaAlias && !CheckVisibility(fullName)) {
-                        _errors.Error(call, $"Function '{fullName}' is not visible. Did you forget to import it?");
+                        ReportNotVisible(call, "Function", fullName);
                         return;
                     }
                 }
@@ -1598,7 +1706,7 @@ public class TypeChecker
             else 
             {
                 if (!CheckVisibility(call.Name)) {
-                    _errors.Error(call, $"Function '{call.Name}' is not visible. Did you forget to import it?");
+                    ReportNotVisible(call, "Function", call.Name);
                     return;
                 }
             }
@@ -1805,7 +1913,7 @@ public class TypeChecker
                     if (fieldInfo!.Kind == SymbolKind.Variable || fieldInfo.Kind == SymbolKind.Function)
                     {
                         if (!CheckVisibility(potentialName)) {
-                            _errors.Error($"'{potentialName}' is not visible. Did you forget an import?");
+                            ReportNotVisible(field, "Symbol", potentialName);
                             return new TypeNode { Name = "i32" };
                         }
                         return fieldInfo.Type.Clone();
@@ -1816,7 +1924,7 @@ public class TypeChecker
                 if (ft == null)
                 {
                     if (reportErrors)
-                        _errors.Error($"Cannot determine type of target in field access '{field.Field}'");
+                        _errors.Error(field, $"Cannot determine type of target in field access '{field.Field}'.");
                     return new TypeNode { Name = "i32" };
                 }
 
@@ -1851,7 +1959,7 @@ public class TypeChecker
                 {
                     if (!CheckVisibility(structName)) {
                         if (reportErrors)
-                            _errors.Error($"Struct '{structName}' is not visible. Did you forget an import?");
+                            ReportNotVisible(field, "Struct", structName);
                         return new TypeNode { Name = "i32" };
                     }
                     var fieldDef = structDef!.FirstOrDefault(f => f.Name == field.Field);
@@ -1860,7 +1968,7 @@ public class TypeChecker
                         return fieldDef.Type.Clone();
                     }
                     if (reportErrors)
-                        _errors.Error($"Struct '{structName}' does not have a field named '{field.Field}'");
+                        _errors.Error(field, $"Struct '{structName}' does not have a field named '{field.Field}'.");
                 }
                 else
                 {

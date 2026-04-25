@@ -1,0 +1,4 @@
+import "missing.zorb"
+
+fn _start() {
+}

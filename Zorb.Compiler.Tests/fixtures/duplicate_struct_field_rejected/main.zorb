@@ -1,0 +1,7 @@
+struct Pair {
+    left: i64,
+    left: i64
+}
+
+fn _start() {
+}

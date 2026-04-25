@@ -1,0 +1,4 @@
+fn _start() {
+    value: i64 = 1
+    value: i64 = 2
+}

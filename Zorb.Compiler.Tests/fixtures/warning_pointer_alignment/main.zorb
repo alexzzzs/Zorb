@@ -1,0 +1,5 @@
+fn _start() {
+    byte: u8 = 1
+    ptr: *u8 = cast(*u8, 0)
+    ptr = &byte
+}

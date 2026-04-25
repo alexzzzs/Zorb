@@ -585,6 +585,7 @@ static void RunExampleCompilationTest(string examplePath)
     var diagnosticsText = string.Join(Environment.NewLine, allErrors);
     AssertPhase(compilation.Phase, FixturePhase.Success, diagnosticsText);
     AssertNoErrors(allErrors);
+    AssertNoWarnings(compilation.Checker.Errors.Warnings);
 }
 
 static void RunFixture(string fixtureDir, bool updateSnapshots)
@@ -595,7 +596,8 @@ static void RunFixture(string fixtureDir, bool updateSnapshots)
 
     var expectedPhase = ReadExpectedPhase(fixtureDir);
     var expectedErrors = ReadExpectationLines(fixtureDir, "expect-errors.txt");
-    var shouldCaptureOutput = expectedPhase != FixturePhase.Success || expectedErrors.Count > 0;
+    var expectedWarnings = ReadExpectationLines(fixtureDir, "expect-warnings.txt");
+    var shouldCaptureOutput = expectedPhase != FixturePhase.Success || expectedErrors.Count > 0 || expectedWarnings.Count > 0;
     var compilation = shouldCaptureOutput
         ? CaptureConsole(() => CompileFixture(mainPath, fixtureDir))
         : new CapturedCompilation(CompileFixture(mainPath, fixtureDir), "", "");
@@ -607,15 +609,21 @@ static void RunFixture(string fixtureDir, bool updateSnapshots)
     allErrors.AddRange(compilation.Result.Checker.Errors.Errors);
     if (!string.IsNullOrEmpty(compilation.Result.FailureMessage))
         allErrors.Add(compilation.Result.FailureMessage);
+    var allWarnings = compilation.Result.Checker.Errors.Warnings;
+
+    foreach (var expected in expectedWarnings)
+        AssertContains(allWarnings, expected, "warning");
 
     if (expectedPhase != FixturePhase.Success || expectedErrors.Count > 0)
     {
         foreach (var expected in expectedErrors)
-            AssertContains(allErrors, expected);
+            AssertContains(allErrors, expected, "error");
         return;
     }
 
     AssertNoErrors(allErrors);
+    if (expectedWarnings.Count == 0)
+        AssertNoWarnings(allWarnings);
 
     var generated = compilation.Result.Generated;
 
@@ -703,6 +711,7 @@ static void RunRuntimeExpectationsIfPresent(string fixtureDir, string mainPath)
             runtimeCompilation = CompileRuntimeFixture(mainPath, fixtureDir, compilationKey.PreserveStart, compilationKey.NoStdLib);
             AssertNoErrors(runtimeCompilation.ParseErrors);
             AssertNoErrors(runtimeCompilation.Checker.Errors.Errors);
+            AssertNoWarnings(runtimeCompilation.Checker.Errors.Warnings);
             runtimeCompilations[compilationKey] = runtimeCompilation;
         }
 
@@ -783,10 +792,16 @@ static void AssertNoErrors(List<string> errors)
         throw new Exception(string.Join(Environment.NewLine, errors));
 }
 
-static void AssertContains(List<string> errors, string expected)
+static void AssertNoWarnings(List<string> warnings)
 {
-    if (!errors.Any(error => error.Contains(expected, StringComparison.Ordinal)))
-        throw new Exception($"Expected error containing '{expected}'. Actual:{Environment.NewLine}{string.Join(Environment.NewLine, errors)}");
+    if (warnings.Count > 0)
+        throw new Exception(string.Join(Environment.NewLine, warnings));
+}
+
+static void AssertContains(List<string> diagnostics, string expected, string diagnosticKind)
+{
+    if (!diagnostics.Any(diagnostic => diagnostic.Contains(expected, StringComparison.Ordinal)))
+        throw new Exception($"Expected {diagnosticKind} containing '{expected}'. Actual:{Environment.NewLine}{string.Join(Environment.NewLine, diagnostics)}");
 }
 
 static void AssertTextContains(string text, string expected)

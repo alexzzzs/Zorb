@@ -1,0 +1,2 @@
+main.zorb:4:9: warning: Unreachable statement.
+main.zorb:9:9: warning: Unreachable statement.

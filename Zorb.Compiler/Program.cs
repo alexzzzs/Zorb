@@ -163,14 +163,17 @@ SECTIONS
 
         var ast = parseResult.EntryNodes;
 
-        var typeChecker = new TypeChecker();
-        typeChecker.Check(ast, currentDir, parseResult.Files);
-        if (typeChecker.Errors.Errors.Count > 0)
-        {
-            Console.Error.WriteLine("Semantic check failed.");
-            typeChecker.Errors.ReportAll();
-            return null;
-        }
+            var typeChecker = new TypeChecker();
+            typeChecker.Check(ast, currentDir, parseResult.Files);
+            if (typeChecker.Errors.Warnings.Count > 0)
+                typeChecker.Errors.ReportWarnings();
+
+            if (typeChecker.Errors.Errors.Count > 0)
+            {
+                Console.Error.WriteLine("Semantic check failed.");
+                typeChecker.Errors.ReportErrors();
+                return null;
+            }
 
         try
         {

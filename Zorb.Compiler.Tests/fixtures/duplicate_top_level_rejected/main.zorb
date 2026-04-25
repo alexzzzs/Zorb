@@ -1,0 +1,7 @@
+fn answer() -> i64 {
+    return 1
+}
+
+fn answer() -> i64 {
+    return 2
+}

@@ -1,0 +1,13 @@
+fn choose(value: i64) -> i64 {
+    switch value {
+        case 1 {
+            return 10
+        }
+        case 1 {
+            return 20
+        }
+        else {
+            return 0
+        }
+    }
+}
