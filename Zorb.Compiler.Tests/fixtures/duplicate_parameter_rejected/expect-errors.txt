@@ -1,1 +1,1 @@
-main.zorb:1:1: error: Duplicate parameter 'value' in function 'use'.
+Duplicate parameter 'value' in function 'use'.

@@ -1,0 +1,2 @@
+return (lhs < rhs);
+return (lhs == rhs);

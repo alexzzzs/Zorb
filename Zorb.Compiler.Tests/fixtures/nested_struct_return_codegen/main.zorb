@@ -1,0 +1,16 @@
+struct Point {
+    x: i32,
+    y: i32
+}
+
+struct Rect {
+    min: Point,
+    max: Point
+}
+
+fn make_rect() -> Rect {
+    return Rect{
+        min: Point{ x: 1, y: 2 },
+        max: Point{ x: 3, y: 4 }
+    }
+}

@@ -52,6 +52,8 @@ All notable changes to this project will be documented in this file.
 - New diagnostic fixture coverage for missing import files with file, line, and column reporting.
 - A non-fatal compiler warning system, including fixture support for expected warnings.
 - New diagnostics fixtures covering unreachable-code warnings, duplicate declaration errors, const assignment, invalid assignment targets, duplicate struct fields, and duplicate switch cases.
+- Adds codegen fixtures covering struct returns through error unions, nested struct returns, and return-through-local struct values.
+- Includes numeric fixtures for negative literals assigned to unsigned targets, explicit narrowing casts, unsigned-to-signed widening, signedness-mismatch call failures, narrowing return failures, and mixed signed/unsigned comparison warnings.
 
 ### Changed
 
@@ -64,6 +66,10 @@ All notable changes to this project will be documented in this file.
 - Pointer-alignment diagnostics that were previously reported as semantic errors now emit warnings and allow compilation to continue.
 - The semantic checker now warns about unreachable statements after `return`, `break`, or `continue`.
 - The semantic checker now rejects duplicate switch case values, duplicate struct fields, duplicate local declarations, duplicate parameters, invalid assignment targets, and assignments to `const` declarations.
+- Numeric-conversion diagnostics now explain whether rejection came from literal range overflow, narrowing, or signedness changes, and they point at `cast(...)` when an explicit conversion is required.
+- Mixed signed/unsigned numeric comparisons now emit warnings except in the common literal-fit cases such as comparing a `u8` value with `48`.
+- Duplicate declaration diagnostics now include the first declaration location for top-level declarations, locals, parameters, struct fields, and duplicate switch cases.
+- Target-host diagnostics now include the current host platform, and CLI target-validation failures consistently reach stderr.
 
 ### Fixed
 
@@ -72,6 +78,7 @@ All notable changes to this project will be documented in this file.
 - Missing import-file diagnostics now point at the import declaration and are reported once.
 - Duplicate top-level declarations, duplicate parameters, and duplicate local declarations are now rejected instead of silently overwriting earlier symbols.
 - Assignments to `const` declarations, assignments to non-assignable expressions, duplicate struct fields, and duplicate constant switch cases are now rejected during semantic checking.
+- Recent semantics and roadmap updates now line up with the landed numeric model, struct-return coverage, and diagnostics behavior instead of leaving those improvements undocumented.
 
 ## [0.1.4] - 2026-04-23
 

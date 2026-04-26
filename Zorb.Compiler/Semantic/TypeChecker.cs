@@ -28,6 +28,7 @@ public class TypeChecker
     private readonly HashSet<string> _processedImports = new();
     private readonly Stack<Dictionary<string, HashSet<string>>> _importAliasScopes = new();
     private readonly Stack<Dictionary<string, long>> _constValueScopes = new();
+    private readonly Stack<Dictionary<string, Node>> _declarationNodeScopes = new();
     private readonly Dictionary<string, string> _errorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<long, string> _errorValues = new();
     private IReadOnlyDictionary<string, IReadOnlyList<Node>>? _parsedFilesByPath;
@@ -409,10 +410,12 @@ public class TypeChecker
         _fileScopes.Push(new HashSet<string>());
         _importAliasScopes.Push(new Dictionary<string, HashSet<string>>(StringComparer.Ordinal));
         _constValueScopes.Push(new Dictionary<string, long>(StringComparer.Ordinal));
+        _declarationNodeScopes.Push(new Dictionary<string, Node>(StringComparer.Ordinal));
         InitializeBuiltins();
 
         CheckNodes(nodes, currentDir);
         
+        _declarationNodeScopes.Pop();
         _constValueScopes.Pop();
         _importAliasScopes.Pop();
         _fileScopes.Pop();
@@ -421,7 +424,7 @@ public class TypeChecker
 
     public void CheckNodes(IReadOnlyList<Node> nodes, string currentDir = ".")
     {
-        var declaredInThisFile = new HashSet<string>(StringComparer.Ordinal);
+        var declaredInThisFile = new Dictionary<string, Node>(StringComparer.Ordinal);
 
         // Pass 1: Register all declarations so they are visible within the current file
         foreach (var node in nodes)
@@ -435,15 +438,15 @@ public class TypeChecker
                 foreach (var param in fn.Parameters)
                     NormalizeTypeReferenceInPlace(param.TypeName);
                 var fullName = fn.NamespacePath.Any() ? string.Join(".", fn.NamespacePath) + "." + fn.Name : fn.Name;
-                if (!declaredInThisFile.Add(fullName))
-                    _errors.Error(fn, $"Duplicate top-level declaration '{fullName}'.");
+                if (!declaredInThisFile.TryAdd(fullName, fn))
+                    _errors.Error(fn, $"Duplicate top-level declaration '{fullName}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[fullName])}");
                 MakeVisible(fullName);
                 if (!_symbolTable.IsDefined(fullName)) _symbolTable.DefineFunction(fullName, fn.ReturnType, fn.Parameters);
             }
             else if (node is StructNode sn) {
                 var fullName = sn.NamespacePath.Any() ? string.Join(".", sn.NamespacePath) + "." + sn.Name : sn.Name;
-                if (!declaredInThisFile.Add(fullName))
-                    _errors.Error(sn, $"Duplicate top-level declaration '{fullName}'.");
+                if (!declaredInThisFile.TryAdd(fullName, sn))
+                    _errors.Error(sn, $"Duplicate top-level declaration '{fullName}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[fullName])}");
                 MakeVisible(fullName);
                 if (!_symbolTable.IsDefined(fullName)) _symbolTable.DefineStruct(fullName, sn);
 
@@ -467,8 +470,8 @@ public class TypeChecker
                 NormalizeTypeReferenceInPlace(vd.TypeName);
                 ValidateVariableAttributes(vd, isGlobal: true);
                 RegisterErrorDeclaration(vd);
-                if (!declaredInThisFile.Add(vd.Name))
-                    _errors.Error(vd, $"Duplicate top-level declaration '{vd.Name}'.");
+                if (!declaredInThisFile.TryAdd(vd.Name, vd))
+                    _errors.Error(vd, $"Duplicate top-level declaration '{vd.Name}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[vd.Name])}");
                 MakeVisible(vd.Name);
                 if (!_symbolTable.IsDefined(vd.Name)) _symbolTable.DefineVariable(vd.Name, vd.TypeName, vd.IsConst);
                 TryRecordConstValue(vd);
@@ -507,12 +510,13 @@ public class TypeChecker
 
                 foreach (var param in functionDecl.Parameters)
                 {
-                    if (_symbolTable.CurrentScope.ContainsKey(param.Name))
+                    if (_declarationNodeScopes.Peek().TryGetValue(param.Name, out var previousParameter))
                     {
-                        _errors.Error(functionDecl, $"Duplicate parameter '{param.Name}' in function '{functionDecl.Name}'.");
+                        _errors.Error(functionDecl, $"Duplicate parameter '{param.Name}' in function '{functionDecl.Name}'. Earlier parameter is in the same function header.");
                         continue;
                     }
                     _symbolTable.DefineParameter(param.Name, param.TypeName);
+                    _declarationNodeScopes.Peek()[param.Name] = functionDecl;
                 }
 
                 var flow = CheckBlock(functionDecl.Body, pushScope: false);
@@ -699,7 +703,10 @@ public class TypeChecker
                                 var successType = expectedType.ErrorInnerType ?? expectedType;
                                 if (!IsAssignableTo(successType, returnNode.Value, exprType))
                                 {
-                                    _errors.Error(returnNode, $"Cannot return expression of type '{FormatType(exprType)}' from function '{_currentFunction.Name}' with result type '{FormatType(expectedType)}'. Return a success value of type '{FormatType(successType)}' or an error.");
+                                    if (TryBuildNumericConversionDiagnostic(successType, returnNode.Value, exprType, out var numericDiagnostic))
+                                        _errors.Error(returnNode, $"Cannot return expression of type '{FormatType(exprType)}' from function '{_currentFunction.Name}' with result type '{FormatType(expectedType)}'. {numericDiagnostic}");
+                                    else
+                                        _errors.Error(returnNode, $"Cannot return expression of type '{FormatType(exprType)}' from function '{_currentFunction.Name}' with result type '{FormatType(expectedType)}'. Return a success value of type '{FormatType(successType)}' or an error.");
                                 }
 
                                 if (returnNode.Value is IdentifierExpr ident && ident.Name.Contains("Error"))
@@ -711,7 +718,10 @@ public class TypeChecker
                             {
                                 if (!IsAssignableTo(expectedType, returnNode.Value, exprType))
                                 {
-                                    _errors.Error(returnNode, $"Function '{_currentFunction.Name}' returns '{FormatType(expectedType)}', but this return expression has type '{FormatType(exprType)}'.");
+                                    if (TryBuildNumericConversionDiagnostic(expectedType, returnNode.Value, exprType, out var numericDiagnostic))
+                                        _errors.Error(returnNode, $"Function '{_currentFunction.Name}' returns '{FormatType(expectedType)}', but this return expression has type '{FormatType(exprType)}'. {numericDiagnostic}");
+                                    else
+                                        _errors.Error(returnNode, $"Function '{_currentFunction.Name}' returns '{FormatType(expectedType)}', but this return expression has type '{FormatType(exprType)}'.");
                                 }
                             }
                         }
@@ -795,7 +805,7 @@ public class TypeChecker
                     _errors.Error(switchStmt.Expression, $"Switch expression must have numeric or bool type, got '{FormatType(switchType)}'.");
                 }
 
-                var seenCaseValues = new HashSet<string>(StringComparer.Ordinal);
+                var seenCaseValues = new Dictionary<string, Expr>(StringComparer.Ordinal);
                 var caseOutcomes = new List<FlowOutcome>();
                 foreach (var switchCase in switchStmt.Cases)
                 {
@@ -806,10 +816,10 @@ public class TypeChecker
                         _errors.Error(switchCase.Value, $"Switch case expression of type '{FormatType(caseType)}' is not comparable to switch expression type '{FormatType(switchType)}'.");
                     }
 
-                    if (TryGetSwitchCaseKey(switchCase.Value, out var caseKey) &&
-                        !seenCaseValues.Add(caseKey))
+                    if (TryGetSwitchCaseKey(switchCase.Value, out var caseKey))
                     {
-                        _errors.Error(switchCase.Value, $"Duplicate switch case value '{caseKey}'.");
+                        if (!seenCaseValues.TryAdd(caseKey, switchCase.Value))
+                            _errors.Error(switchCase.Value, $"Duplicate switch case value '{caseKey}'.{FormatPreviousDeclarationSuffix(seenCaseValues[caseKey])}");
                     }
 
                     var caseFlow = CheckBlock(switchCase.Body);
@@ -874,13 +884,14 @@ public class TypeChecker
         ResolveAlignmentAttribute(varDecl.Attributes, varDecl.AlignExpr, varDecl, $"Variable '{varDecl.Name}' Alignment");
         ValidateTypeReference(varDecl.TypeName, varDecl);
         ValidateVariableAttributes(varDecl, isGlobal: false);
-        if (_symbolTable.CurrentScope.ContainsKey(varDecl.Name))
+        if (_declarationNodeScopes.Peek().TryGetValue(varDecl.Name, out var previousDeclaration))
         {
-            _errors.Error(varDecl, $"Duplicate local declaration '{varDecl.Name}'.");
+            _errors.Error(varDecl, $"Duplicate local declaration '{varDecl.Name}'.{FormatPreviousDeclarationSuffix(previousDeclaration)}");
             return;
         }
 
         _symbolTable.DefineVariable(varDecl.Name, varDecl.TypeName, varDecl.IsConst);
+        _declarationNodeScopes.Peek()[varDecl.Name] = varDecl;
 
         CheckVariableInitializer(varDecl);
         TryRecordConstValue(varDecl);
@@ -890,6 +901,7 @@ public class TypeChecker
     {
         _symbolTable.PushScope();
         _constValueScopes.Push(new Dictionary<string, long>(StringComparer.Ordinal));
+        _declarationNodeScopes.Push(new Dictionary<string, Node>(StringComparer.Ordinal));
     }
 
     private void PopScopedState()
@@ -897,6 +909,8 @@ public class TypeChecker
         _symbolTable.PopScope();
         if (_constValueScopes.Count > 1)
             _constValueScopes.Pop();
+        if (_declarationNodeScopes.Count > 1)
+            _declarationNodeScopes.Pop();
     }
 
     private bool TryLookupConstValue(string name, out long value)
@@ -1025,11 +1039,11 @@ public class TypeChecker
 
     private void ValidateStructAttributes(StructNode structNode, string fullName)
     {
-        var seenFields = new HashSet<string>(StringComparer.Ordinal);
+        var seenFields = new Dictionary<string, StructField>(StringComparer.Ordinal);
         foreach (var field in structNode.Fields)
         {
-            if (!seenFields.Add(field.Name))
-                _errors.Error(field, $"Struct '{fullName}' declares field '{field.Name}' more than once.");
+            if (!seenFields.TryAdd(field.Name, field))
+                _errors.Error(field, $"Struct '{fullName}' declares field '{field.Name}' more than once.{FormatPreviousDeclarationSuffix(seenFields[field.Name])}");
         }
 
         var explicitLayout = StructLayout.HasExplicitLayout(structNode);
@@ -1046,6 +1060,11 @@ public class TypeChecker
 
         if (!StructLayout.TryCompute(structNode, name => _symbolTable.LookupStructNode(name), out _, out var error) && error != null)
             _errors.Error(structNode, error);
+    }
+
+    private static string FormatPreviousDeclarationSuffix(Node previous)
+    {
+        return $" First declaration was at {Path.GetFileName(previous.File)}:{previous.Line}:{previous.Column}.";
     }
 
     private void CheckAssignment(AssignStmt assign)
@@ -1076,6 +1095,10 @@ public class TypeChecker
             if (targetType.IsErrorUnion && valueType != null && !valueType.IsErrorUnion)
             {
                 _errors.Error(assign, $"Cannot assign value of type '{FormatType(valueType)}' to '{FormatType(targetType)}'. Assign the whole error union or unwrap explicitly with '.value'.");
+            }
+            else if (TryBuildNumericConversionDiagnostic(targetType, assign.Value, valueType, out var numericDiagnostic))
+            {
+                _errors.Error(assign, $"Cannot assign expression of type '{FormatType(valueType)}' to target of type '{FormatType(targetType)}'. {numericDiagnostic}");
             }
             else
             {
@@ -1279,7 +1302,10 @@ public class TypeChecker
         var exprType = GetExpressionType(varDecl.Value);
         if (!IsAssignableTo(varDecl.TypeName, varDecl.Value, exprType))
         {
-            _errors.Error(varDecl, $"Cannot assign expression of type '{FormatType(exprType)}' to variable '{varDecl.Name}' of type '{FormatType(varDecl.TypeName)}'.");
+            if (TryBuildNumericConversionDiagnostic(varDecl.TypeName, varDecl.Value, exprType, out var numericDiagnostic))
+                _errors.Error(varDecl, $"Cannot initialize variable '{varDecl.Name}' of type '{FormatType(varDecl.TypeName)}' from expression of type '{FormatType(exprType)}'. {numericDiagnostic}");
+            else
+                _errors.Error(varDecl, $"Cannot assign expression of type '{FormatType(exprType)}' to variable '{varDecl.Name}' of type '{FormatType(varDecl.TypeName)}'.");
             return;
         }
 
@@ -1478,13 +1504,18 @@ public class TypeChecker
         {
             if (!IsNumericType(leftType) || !IsNumericType(rightType))
                 _errors.Error(bin, $"Operator '{bin.Operator}' requires numeric operands, got '{FormatType(leftType)}' and '{FormatType(rightType)}'.");
+            else
+                WarnOnMixedSignednessComparison(bin, leftType, bin.Left, rightType, bin.Right);
             return;
         }
 
         if (bin.Operator is "==" or "!=")
         {
             if (AreEqualityComparableTypes(leftType, rightType))
+            {
+                WarnOnMixedSignednessComparison(bin, leftType, bin.Left, rightType, bin.Right);
                 return;
+            }
 
             _errors.Error(bin, $"Operator '{bin.Operator}' requires comparable operands, got '{FormatType(leftType)}' and '{FormatType(rightType)}'. Expected numeric operands, bool operands, matching pointer types, or two strings.");
         }
@@ -1580,7 +1611,12 @@ public class TypeChecker
 
             var valueType = GetExpressionType(field.Value);
             if (!IsAssignableTo(fieldType, field.Value, valueType))
-                _errors.Error(field, $"Cannot assign expression of type '{FormatType(valueType)}' to field '{field.Name}' of type '{FormatType(fieldType)}'.");
+            {
+                if (TryBuildNumericConversionDiagnostic(fieldType, field.Value, valueType, out var numericDiagnostic))
+                    _errors.Error(field, $"Cannot initialize field '{field.Name}' of type '{FormatType(fieldType)}' from expression of type '{FormatType(valueType)}'. {numericDiagnostic}");
+                else
+                    _errors.Error(field, $"Cannot assign expression of type '{FormatType(valueType)}' to field '{field.Name}' of type '{FormatType(fieldType)}'.");
+            }
         }
 
         foreach (var field in structFields!)
@@ -1612,7 +1648,12 @@ public class TypeChecker
             CheckExpression(element);
             var elementValueType = GetExpressionType(element);
             if (!IsAssignableTo(elementType, element, elementValueType))
-                _errors.Error(arrayLiteral, $"Cannot assign expression of type '{FormatType(elementValueType)}' to array element type '{FormatType(elementType)}'.");
+            {
+                if (TryBuildNumericConversionDiagnostic(elementType, element, elementValueType, out var numericDiagnostic))
+                    _errors.Error(arrayLiteral, $"Cannot initialize array element of type '{FormatType(elementType)}' from expression of type '{FormatType(elementValueType)}'. {numericDiagnostic}");
+                else
+                    _errors.Error(arrayLiteral, $"Cannot assign expression of type '{FormatType(elementValueType)}' to array element type '{FormatType(elementType)}'.");
+            }
         }
     }
 
@@ -1765,7 +1806,10 @@ public class TypeChecker
 
             if (!IsAssignableTo(paramType, call.Args[i], argType))
             {
-                _errors.Error(call, $"Argument {i + 1} of '{errorName}' expects type '{FormatType(paramType)}', got '{FormatType(argType)}'.");
+                if (TryBuildNumericConversionDiagnostic(paramType, call.Args[i], argType, out var numericDiagnostic))
+                    _errors.Error(call, $"Argument {i + 1} of '{errorName}' expects type '{FormatType(paramType)}', got '{FormatType(argType)}'. {numericDiagnostic}");
+                else
+                    _errors.Error(call, $"Argument {i + 1} of '{errorName}' expects type '{FormatType(paramType)}', got '{FormatType(argType)}'.");
             }
         }
     }
@@ -2313,6 +2357,67 @@ public class TypeChecker
                 value = 0;
                 return false;
         }
+    }
+
+    private void WarnOnMixedSignednessComparison(BinaryExpr bin, TypeNode leftType, Expr leftExpr, TypeNode rightType, Expr rightExpr)
+    {
+        if (!TryGetIntegerTypeInfo(leftType.Name, out var leftInfo) || !TryGetIntegerTypeInfo(rightType.Name, out var rightInfo))
+            return;
+
+        if (leftInfo.IsSigned == rightInfo.IsSigned)
+            return;
+
+        if (TryGetIntegerLiteralValue(leftExpr, out var leftLiteral) && NumericLiteralFits(rightType, leftLiteral))
+            return;
+
+        if (TryGetIntegerLiteralValue(rightExpr, out var rightLiteral) && NumericLiteralFits(leftType, rightLiteral))
+            return;
+
+        var leftLabel = leftInfo.IsSigned ? "signed" : "unsigned";
+        var rightLabel = rightInfo.IsSigned ? "signed" : "unsigned";
+        _errors.Warning(bin, $"Comparison '{bin.Operator}' mixes {leftLabel} type '{FormatType(leftType)}' with {rightLabel} type '{FormatType(rightType)}'. Generated C follows the platform's usual signed/unsigned comparison rules.");
+    }
+
+    private bool TryBuildNumericConversionDiagnostic(TypeNode targetType, Expr? sourceExpr, TypeNode? sourceType, out string message)
+    {
+        message = "";
+
+        if (sourceType == null)
+            return false;
+
+        if (!IsIntegerScalarType(targetType) || !IsIntegerScalarType(sourceType))
+            return false;
+
+        if (TryGetIntegerLiteralValue(sourceExpr, out var literalValue))
+        {
+            if (NumericLiteralFits(targetType, literalValue))
+                return false;
+
+            message = $"Literal value '{literalValue}' does not fit target integer type '{FormatType(targetType)}'.";
+            return true;
+        }
+
+        if (!TryGetIntegerTypeInfo(targetType.Name, out var targetInfo) || !TryGetIntegerTypeInfo(sourceType.Name, out var sourceInfo))
+            return false;
+
+        var targetTypeText = FormatType(targetType);
+        var sourceTypeText = FormatType(sourceType);
+
+        if (sourceInfo.IsSigned != targetInfo.IsSigned)
+        {
+            var sourceSignedness = sourceInfo.IsSigned ? "signed" : "unsigned";
+            var targetSignedness = targetInfo.IsSigned ? "signed" : "unsigned";
+            message = $"Implicit conversion from {sourceSignedness} integer type '{sourceTypeText}' to {targetSignedness} integer type '{targetTypeText}' is not allowed. Use cast({targetTypeText}, ...) if this change of signedness is intentional.";
+            return true;
+        }
+
+        if (sourceInfo.Bits > targetInfo.Bits)
+        {
+            message = $"Implicit narrowing conversion from integer type '{sourceTypeText}' to '{targetTypeText}' is not allowed. Use cast({targetTypeText}, ...) if truncation is intentional.";
+            return true;
+        }
+
+        return false;
     }
 
     private bool TryEvaluateConstIntExpr(Expr expr, out long value, out string? error)

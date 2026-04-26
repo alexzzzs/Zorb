@@ -1,0 +1,2 @@
+uint32_t small = 4294967295;
+return keep(small);

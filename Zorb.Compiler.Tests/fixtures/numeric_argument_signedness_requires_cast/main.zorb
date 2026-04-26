@@ -1,0 +1,6 @@
+fn take(value: u32) {}
+
+fn main() {
+    signed: i32 = -1
+    take(signed)
+}

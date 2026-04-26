@@ -1,1 +1,2 @@
-main.zorb:3:5: error: Struct 'Pair' declares field 'left' more than once.
+Struct 'Pair' declares field 'left' more than once.
+First declaration was at main.zorb:2:5.

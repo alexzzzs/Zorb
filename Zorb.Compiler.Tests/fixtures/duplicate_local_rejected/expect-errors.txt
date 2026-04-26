@@ -1,1 +1,2 @@
-main.zorb:3:5: error: Duplicate local declaration 'value'.
+Duplicate local declaration 'value'.
+First declaration was at main.zorb:2:5.

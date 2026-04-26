@@ -1,0 +1,8 @@
+fn keep(value: i64) -> i64 {
+    return value
+}
+
+fn main() -> i64 {
+    small: u32 = 4294967295
+    return keep(small)
+}
