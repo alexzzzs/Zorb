@@ -132,8 +132,10 @@ SECTIONS
                 _ => 1
             };
         }
-        catch (ZorbCompilerException)
+        catch (ZorbCompilerException ex)
         {
+            if (!string.IsNullOrWhiteSpace(ex.Message))
+                Console.Error.WriteLine(ex.Message);
             return 1;
         }
         catch (Exception ex)
@@ -631,7 +633,7 @@ SECTIONS
         {
             CommandMode.Build or CommandMode.Run when OperatingSystem.IsLinux() => CompilationTarget.FreestandingLinux,
             CommandMode.Build or CommandMode.Run when OperatingSystem.IsWindows() => CompilationTarget.HostWindows,
-            CommandMode.Build or CommandMode.Run => throw new ZorbCompilerException("Build and run currently support Linux and Windows hosts only."),
+            CommandMode.Build or CommandMode.Run => throw new ZorbCompilerException($"Build and run currently support Linux and Windows hosts only. Current host: {DescribeCurrentHost()}."),
             _ => CompilationTarget.HostLinux
         };
     }
@@ -642,7 +644,7 @@ SECTIONS
             return;
 
         if ((target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux) && !OperatingSystem.IsLinux())
-            throw new ZorbCompilerException($"Target '{FormatTarget(target)}' currently requires a Linux host for build and run.");
+            throw new ZorbCompilerException($"Target '{FormatTarget(target)}' currently requires a Linux host for build and run. Current host: {DescribeCurrentHost()}.");
 
         if (target == CompilationTarget.BareMetalX86_64)
         {
@@ -650,12 +652,32 @@ SECTIONS
                 return;
 
             if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
-                throw new ZorbCompilerException("Target 'bare-metal-x86_64' currently requires a Linux x86_64 host for build.");
+                throw new ZorbCompilerException($"Target 'bare-metal-x86_64' currently requires a Linux x86_64 host for build. Current host: {DescribeCurrentHost()}.");
             return;
         }
 
         if (target == CompilationTarget.HostWindows && !OperatingSystem.IsWindows())
-            throw new ZorbCompilerException("Target 'host-windows' currently requires a Windows host for build and run.");
+            throw new ZorbCompilerException($"Target 'host-windows' currently requires a Windows host for build and run. Current host: {DescribeCurrentHost()}.");
+    }
+
+    private static string DescribeCurrentHost()
+    {
+        string os =
+            OperatingSystem.IsLinux() ? "linux" :
+            OperatingSystem.IsWindows() ? "windows" :
+            OperatingSystem.IsMacOS() ? "macos" :
+            "unknown";
+
+        string arch = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "x86_64",
+            Architecture.Arm64 => "aarch64",
+            Architecture.X86 => "x86",
+            Architecture.Arm => "arm",
+            _ => RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()
+        };
+
+        return $"{os} {arch}";
     }
 
     private static bool UsesNoStdLib(CompilationTarget target)

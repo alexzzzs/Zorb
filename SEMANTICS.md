@@ -616,7 +616,9 @@ When a variable has an initializer:
 ### Numeric Conversions
 
 - Number literals have type `i64`.
-- Integer literals may initialize or assign to any built-in integer type that can represent the literal value.
+- For assignability checks, an integer literal means either a numeric literal token such as `42` or a unary-negated numeric literal such as `-1`.
+- Integer literals may initialize, assign, pass, return, or populate aggregate fields/elements of any built-in integer type that can represent the literal value.
+- Outside those target-typed fit checks, number literals remain plain `i64` expressions.
 - Non-literal integer values may convert implicitly only through exact-match or widening conversions.
 - Widening means:
   - signed-to-signed widening, for example `i32 -> i64`
@@ -624,6 +626,9 @@ When a variable has an initializer:
   - unsigned-to-signed widening when the target is strictly wider, for example `u32 -> i64`
 - Narrowing or potentially lossy integer conversions require an explicit `cast(...)`.
 - Pointer-to-integer and integer-to-pointer conversions require an explicit `cast(...)`.
+- Failed implicit integer conversions now diagnose why the conversion was rejected and point at `cast(...)` when an explicit conversion is required.
+- Mixed signed/unsigned numeric comparisons are currently allowed whenever both operands are numeric. The semantic checker warns for mixed-signedness comparisons, except in the common literal-fit cases such as `u8_value == 48`.
+- An explicit `cast(T, expr)` changes the static type to `T` and lowers to a C cast. Current semantic cast rejection is intentionally narrow and explicitly rejects only error-union to non-pointer, non-error-union casts.
 
 ### Assignment
 

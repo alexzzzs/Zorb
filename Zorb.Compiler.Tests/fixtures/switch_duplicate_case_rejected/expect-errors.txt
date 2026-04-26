@@ -1,1 +1,2 @@
-main.zorb:6:14: error: Duplicate switch case value '1'.
+Duplicate switch case value '1'.
+First declaration was at main.zorb:3:14.

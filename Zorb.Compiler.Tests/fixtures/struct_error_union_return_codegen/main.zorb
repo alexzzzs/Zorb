@@ -1,0 +1,16 @@
+error Fail = 100
+
+struct Pair {
+    left: i32,
+    right: i32
+}
+
+fn make_pair(flag: i64) !Pair {
+    if flag != 0 {
+        return error.Fail
+    }
+
+    return Pair{ left: 1, right: 2 }
+}
+
+fn main() {}
