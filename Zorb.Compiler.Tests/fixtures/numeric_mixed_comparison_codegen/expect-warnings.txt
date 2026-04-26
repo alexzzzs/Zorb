@@ -1,0 +1,2 @@
+main.zorb:2:16: warning: Comparison '<' mixes unsigned type 'u32' with signed type 'i64'. Generated C follows the platform's usual signed/unsigned comparison rules.
+main.zorb:6:16: warning: Comparison '==' mixes unsigned type 'u8' with signed type 'i16'. Generated C follows the platform's usual signed/unsigned comparison rules.

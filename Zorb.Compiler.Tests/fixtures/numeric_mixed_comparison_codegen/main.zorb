@@ -1,0 +1,7 @@
+fn less(lhs: u32, rhs: i64) -> bool {
+    return lhs < rhs
+}
+
+fn equal(lhs: u8, rhs: i16) -> bool {
+    return lhs == rhs
+}

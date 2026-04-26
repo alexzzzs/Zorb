@@ -271,7 +271,13 @@ static CliArgumentCase[] GetCliArgumentCases(string sampleInput)
             $"build \"{sampleInput}\" --target host-linux --emit-linker-script kernel.ld",
             1,
             null,
-            "Option --emit-linker-script is only valid with build --target bare-metal-x86_64.")
+            "Option --emit-linker-script is only valid with build --target bare-metal-x86_64."),
+        new CliArgumentCase(
+            "host_windows_build_rejected_on_non_windows",
+            $"build \"{sampleInput}\" --target host-windows -o out.exe",
+            OperatingSystem.IsWindows() ? 0 : 1,
+            null,
+            OperatingSystem.IsWindows() ? null : "Target 'host-windows' currently requires a Windows host for build and run. Current host:")
     ];
 }
 

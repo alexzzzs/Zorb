@@ -1,0 +1,1 @@
+Argument 1 of 'take' expects type 'u32', got 'i32'. Implicit conversion from signed integer type 'i32' to unsigned integer type 'u32' is not allowed. Use cast(u32, ...) if this change of signedness is intentional.

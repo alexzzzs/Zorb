@@ -1,0 +1,1 @@
+Function 'main' returns 'i32', but this return expression has type 'i64'. Implicit narrowing conversion from integer type 'i64' to 'i32' is not allowed. Use cast(i32, ...) if truncation is intentional.

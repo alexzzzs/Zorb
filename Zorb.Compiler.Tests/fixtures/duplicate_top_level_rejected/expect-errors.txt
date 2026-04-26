@@ -1,1 +1,2 @@
-main.zorb:5:1: error: Duplicate top-level declaration 'answer'.
+Duplicate top-level declaration 'answer'.
+First declaration was at main.zorb:1:1.

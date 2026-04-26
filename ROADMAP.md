@@ -41,6 +41,8 @@ Non-goals for the first dogfood version:
 
 ## Milestone Plan
 
+Completed items already landed in git are marked `[done]`.
+
 ### M1. Spec Audit And Freeze
 
 Goal: stop semantic drift for one cycle.
@@ -66,18 +68,18 @@ Goal: remove the current early-compiler limits around integer constants.
 
 Tasks:
 
-- implement constant evaluation for integer expressions
-- allow named `const` values in array sizes where semantically valid
-- support constant folding for global initializers that already lower cleanly to C
-- document integer-literal typing rules
-- document overflow behavior for compile-time evaluation
-- harden signed/unsigned comparison and cast diagnostics
+- [done] implement constant evaluation for integer expressions
+- [done] allow named `const` values in array sizes where semantically valid
+- [done] support constant folding for global initializers that already lower cleanly to C
+- [done] document integer-literal typing rules
+- [done] document overflow behavior for compile-time evaluation
+- [done] harden signed/unsigned comparison and cast diagnostics
 
 Exit criteria:
 
-- array sizes are no longer limited to raw numeric literals in common cases
-- constant-expression behavior is specified and covered by fixtures
-- the numeric model in [SEMANTICS.md](./SEMANTICS.md) matches the implementation
+- [done] array sizes are no longer limited to raw numeric literals in common cases
+- [done] constant-expression behavior is specified and covered by fixtures
+- [done] the numeric model in [SEMANTICS.md](./SEMANTICS.md) matches the implementation
 
 ### M3. Dogfood Implementation
 
@@ -85,17 +87,17 @@ Goal: build the first real Zorb program that stresses the language instead of is
 
 Tasks:
 
-- create `examples/dogfood/lexer/` with a small standalone lexer demo
-- define token structs and token-kind constants in Zorb
-- implement scanning for identifiers, integers, punctuation, strings, and comments
-- return lexer errors through existing error-union flows
+- [done] create `examples/dogfood/lexer/` with a small standalone lexer demo
+- [done] define token structs and token-kind constants in Zorb
+- [done] implement scanning for identifiers, integers, punctuation, strings, and comments
+- [done] return lexer errors through existing error-union flows
 - exercise slices and allocator-backed storage instead of ad hoc globals where practical
-- add a runtime fixture or example validation case that compiles and runs the lexer demo
+- [done] add a runtime fixture or example validation case that compiles and runs the lexer demo
 
 Exit criteria:
 
-- the lexer demo builds and runs on the supported hosted target path
-- the demo is readable enough to serve as an example of real Zorb code
+- [done] the lexer demo builds and runs on the supported hosted target path
+- [done] the demo is readable enough to serve as an example of real Zorb code
 - at least one missing language/runtime ergonomic issue discovered by dogfooding is fixed in the cycle
 
 ### M4. Diagnostics And Ergonomics
@@ -104,16 +106,16 @@ Goal: make the compiler feel more deliberate under failure.
 
 Tasks:
 
-- improve type mismatch messages with actual and expected types
-- improve import/path diagnostics with the failing path and importer location
-- improve target-specific errors so unsupported target combinations are obvious
-- add "declared here" or equivalent source-location notes where feasible
+- [done] improve type mismatch messages with actual and expected types
+- [done] improve import/path diagnostics with the failing path and importer location
+- [done] improve target-specific errors so unsupported target combinations are obvious
+- [done] add "declared here" or equivalent source-location notes where feasible
 - review parser errors that still collapse into generic failures
 
 Exit criteria:
 
-- common type and import failures produce specific, localizable messages
-- newly added diagnostics are covered by fixture expectations
+- [done] common type and import failures produce specific, localizable messages
+- [done] newly added diagnostics are covered by fixture expectations
 
 ### M5. Release Hardening
 
@@ -147,10 +149,10 @@ If time is limited, do the work in this order:
 
 These are the next concrete tasks to open or start now:
 
-1. Add fixtures for constant integer expressions in array sizes, global initializers, and attribute arguments where allowed.
-2. Design the compile-time integer model in `SEMANTICS.md`, including overflow and literal typing.
-3. Add a `examples/dogfood/lexer/main.zorb` skeleton with a fixed input string and token-printing output.
-4. Decide whether the dogfood lexer stores tokens in a fixed buffer first or uses `std.mem.HeapAllocator`.
+1. [done] Add fixtures for constant integer expressions in array sizes, global initializers, and attribute arguments where allowed.
+2. [done] Design the compile-time integer model in `SEMANTICS.md`, including overflow and literal typing.
+3. [done] Add a `examples/dogfood/lexer/main.zorb` skeleton with a fixed input string and token-printing output.
+4. [done] Decide whether the dogfood lexer stores tokens in a fixed buffer first or uses `std.mem.HeapAllocator`.
 5. Add one tracking issue or checklist for spec mismatches discovered during the audit.
 
 ## Explicitly Deferred Until After 0.2
@@ -174,4 +176,3 @@ Call `0.2` done when all of the following are true:
 - The numeric model is documented and matches reality.
 - The semantics document and fixture suite agree on current behavior.
 - Diagnostics are noticeably sharper for common failures.
-

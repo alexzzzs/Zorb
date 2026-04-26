@@ -1,1 +1,1 @@
-Cannot assign expression of type 'i64' to variable 'small' of type 'u8'
+Cannot initialize variable 'small' of type 'u8' from expression of type 'i64'. Literal value '300' does not fit target integer type 'u8'.

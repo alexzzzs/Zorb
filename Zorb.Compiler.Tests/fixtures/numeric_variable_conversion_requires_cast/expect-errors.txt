@@ -1,1 +1,1 @@
-Cannot assign expression of type 'i64' to variable 'narrow' of type 'i32'
+Cannot initialize variable 'narrow' of type 'i32' from expression of type 'i64'. Implicit narrowing conversion from integer type 'i64' to 'i32' is not allowed. Use cast(i32, ...) if truncation is intentional.

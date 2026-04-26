@@ -1,0 +1,5 @@
+fn main() -> i32 {
+    wide: i64 = 42
+    narrow: i32 = cast(i32, wide)
+    return narrow
+}

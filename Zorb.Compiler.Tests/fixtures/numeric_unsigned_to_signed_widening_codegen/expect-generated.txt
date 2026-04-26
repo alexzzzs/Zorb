@@ -1,0 +1,2 @@
+uint32_t small = 7;
+return keep(small);

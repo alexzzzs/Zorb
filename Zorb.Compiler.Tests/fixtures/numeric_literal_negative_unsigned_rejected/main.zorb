@@ -1,0 +1,3 @@
+fn main() {
+    small: u8 = -1
+}
