@@ -153,39 +153,51 @@ static void RunCliArgumentValidationTests(string fixtureRoot)
         ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
     var compilerInvocation = GetCompilerInvocation(projectRoot);
     var sampleInput = Path.Combine(fixtureRoot, "runtime_hello_world", "main.zorb");
+    var tempDir = Path.Combine(Path.GetTempPath(), "zorb-cli-args", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(tempDir);
+    var hasWindowsHostToolchain = OperatingSystem.IsWindows() && IsAnyToolAvailable("clang-cl", "cl");
 
-    foreach (var testCase in GetCliArgumentCases(sampleInput))
+    try
     {
-        var result = RunProcessWithTimeout(
-            compilerInvocation.FileName,
-            CombineCommandArguments(compilerInvocation.ArgumentsPrefix, testCase.Arguments),
-            projectRoot,
-            TimeSpan.FromSeconds(30));
-
-        if (result.ExitCode != testCase.ExpectedExitCode)
-            throw new Exception($"CLI arg case '{testCase.Name}' exit code mismatch. Expected {testCase.ExpectedExitCode}, got {result.ExitCode}.");
-
-        var actualStdOut = NormalizeNewlines(result.StdOut);
-        var actualStdErr = NormalizeNewlines(result.StdErr);
-
-        if (!string.IsNullOrEmpty(testCase.ExpectedStdOutSubstring) &&
-            !actualStdOut.Contains(testCase.ExpectedStdOutSubstring, StringComparison.Ordinal))
+        foreach (var testCase in GetCliArgumentCases(sampleInput, tempDir, hasWindowsHostToolchain))
         {
-            throw new Exception(
-                $"CLI arg case '{testCase.Name}' stdout did not contain expected text '{testCase.ExpectedStdOutSubstring}'.{Environment.NewLine}Actual stdout:{Environment.NewLine}{actualStdOut}");
-        }
+            var result = RunProcessWithTimeout(
+                compilerInvocation.FileName,
+                CombineCommandArguments(compilerInvocation.ArgumentsPrefix, testCase.Arguments),
+                projectRoot,
+                TimeSpan.FromSeconds(30));
 
-        if (!string.IsNullOrEmpty(testCase.ExpectedStdErrSubstring) &&
-            !actualStdErr.Contains(testCase.ExpectedStdErrSubstring, StringComparison.Ordinal))
-        {
-            throw new Exception(
-                $"CLI arg case '{testCase.Name}' stderr did not contain expected text '{testCase.ExpectedStdErrSubstring}'.{Environment.NewLine}Actual stderr:{Environment.NewLine}{actualStdErr}");
+            if (result.ExitCode != testCase.ExpectedExitCode)
+                throw new Exception($"CLI arg case '{testCase.Name}' exit code mismatch. Expected {testCase.ExpectedExitCode}, got {result.ExitCode}.");
+
+            var actualStdOut = NormalizeNewlines(result.StdOut);
+            var actualStdErr = NormalizeNewlines(result.StdErr);
+
+            if (!string.IsNullOrEmpty(testCase.ExpectedStdOutSubstring) &&
+                !actualStdOut.Contains(testCase.ExpectedStdOutSubstring, StringComparison.Ordinal))
+            {
+                throw new Exception(
+                    $"CLI arg case '{testCase.Name}' stdout did not contain expected text '{testCase.ExpectedStdOutSubstring}'.{Environment.NewLine}Actual stdout:{Environment.NewLine}{actualStdOut}");
+            }
+
+            if (!string.IsNullOrEmpty(testCase.ExpectedStdErrSubstring) &&
+                !actualStdErr.Contains(testCase.ExpectedStdErrSubstring, StringComparison.Ordinal))
+            {
+                throw new Exception(
+                    $"CLI arg case '{testCase.Name}' stderr did not contain expected text '{testCase.ExpectedStdErrSubstring}'.{Environment.NewLine}Actual stderr:{Environment.NewLine}{actualStdErr}");
+            }
         }
+    }
+    finally
+    {
+        if (Directory.Exists(tempDir))
+            Directory.Delete(tempDir, recursive: true);
     }
 }
 
-static CliArgumentCase[] GetCliArgumentCases(string sampleInput)
+static CliArgumentCase[] GetCliArgumentCases(string sampleInput, string tempDir, bool hasWindowsHostToolchain)
 {
+    var windowsBuildOutputPath = Path.Combine(tempDir, OperatingSystem.IsWindows() ? "host-windows-arg.exe" : "host-windows-arg");
     return
     [
         new CliArgumentCase(
@@ -274,10 +286,12 @@ static CliArgumentCase[] GetCliArgumentCases(string sampleInput)
             "Option --emit-linker-script is only valid with build --target bare-metal-x86_64."),
         new CliArgumentCase(
             "host_windows_build_rejected_on_non_windows",
-            $"build \"{sampleInput}\" --target host-windows -o out.exe",
-            OperatingSystem.IsWindows() ? 0 : 1,
+            $"build \"{sampleInput}\" --target host-windows -o \"{windowsBuildOutputPath}\"",
+            OperatingSystem.IsWindows() && hasWindowsHostToolchain ? 0 : 1,
             null,
-            OperatingSystem.IsWindows() ? null : "Target 'host-windows' currently requires a Windows host for build and run. Current host:")
+            OperatingSystem.IsWindows()
+                ? (hasWindowsHostToolchain ? null : "Required tools were not found in PATH. Install one of: clang-cl, cl.")
+                : "Target 'host-windows' currently requires a Windows host for build and run. Current host:")
     ];
 }
 
@@ -1099,11 +1113,9 @@ static string EnsureToolAvailable(params string[] toolNames)
     if (toolNames.Length == 0)
         throw new ArgumentException("At least one tool name must be provided.", nameof(toolNames));
 
-    var locator = OperatingSystem.IsWindows() ? "where" : "which";
     foreach (var toolName in toolNames)
     {
-        var check = RunProcess(locator, toolName, Directory.GetCurrentDirectory());
-        if (check.ExitCode == 0 && !string.IsNullOrWhiteSpace(check.StdOut))
+        if (IsAnyToolAvailable(toolName))
             return toolName;
     }
 
@@ -1111,6 +1123,19 @@ static string EnsureToolAvailable(params string[] toolNames)
         throw new Exception($"Required runtime tool '{toolNames[0]}' was not found in PATH.");
 
     throw new Exception($"Required runtime tools were not found in PATH. Install one of: {string.Join(", ", toolNames)}.");
+}
+
+static bool IsAnyToolAvailable(params string[] toolNames)
+{
+    var locator = OperatingSystem.IsWindows() ? "where" : "which";
+    foreach (var toolName in toolNames)
+    {
+        var check = RunProcess(locator, toolName, Directory.GetCurrentDirectory());
+        if (check.ExitCode == 0 && !string.IsNullOrWhiteSpace(check.StdOut))
+            return true;
+    }
+
+    return false;
 }
 
 static string FindAncestorContainingFile(string startPath, string fileName)

@@ -52,8 +52,8 @@ All notable changes to this project will be documented in this file.
 - New diagnostic fixture coverage for missing import files with file, line, and column reporting.
 - A non-fatal compiler warning system, including fixture support for expected warnings.
 - New diagnostics fixtures covering unreachable-code warnings, duplicate declaration errors, const assignment, invalid assignment targets, duplicate struct fields, and duplicate switch cases.
-- New codegen fixtures covering struct returns through error unions, nested struct returns, and return-through-local struct values.
-- New numeric fixtures covering negative literals assigned to unsigned targets, explicit narrowing casts, unsigned-to-signed widening, signedness-mismatch call failures, narrowing return failures, and mixed signed/unsigned comparison warnings.
+- Adds codegen fixtures covering struct returns through error unions, nested struct returns, and return-through-local struct values.
+- Includes numeric fixtures for negative literals assigned to unsigned targets, explicit narrowing casts, unsigned-to-signed widening, signedness-mismatch call failures, narrowing return failures, and mixed signed/unsigned comparison warnings.
 
 ### Changed
 
