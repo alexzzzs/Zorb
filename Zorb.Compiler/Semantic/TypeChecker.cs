@@ -512,7 +512,7 @@ public class TypeChecker
                 {
                     if (_declarationNodeScopes.Peek().TryGetValue(param.Name, out var previousParameter))
                     {
-                        _errors.Error(functionDecl, $"Duplicate parameter '{param.Name}' in function '{functionDecl.Name}'. Earlier parameter is in the same function header.{FormatPreviousDeclarationSuffix(previousParameter)}");
+                        _errors.Error(functionDecl, $"Duplicate parameter '{param.Name}' in function '{functionDecl.Name}'. Earlier parameter is in the same function header.");
                         continue;
                     }
                     _symbolTable.DefineParameter(param.Name, param.TypeName);
@@ -1098,7 +1098,7 @@ public class TypeChecker
             }
             else if (TryBuildNumericConversionDiagnostic(targetType, assign.Value, valueType, out var numericDiagnostic))
             {
-                _errors.Error(assign, numericDiagnostic);
+                _errors.Error(assign, $"Cannot assign expression of type '{FormatType(valueType)}' to target of type '{FormatType(targetType)}'. {numericDiagnostic}");
             }
             else
             {

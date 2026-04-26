@@ -3,6 +3,6 @@ fn keep(value: i64) -> i64 {
 }
 
 fn main() -> i64 {
-    small: u32 = 7
+    small: u32 = 4294967295
     return keep(small)
 }
