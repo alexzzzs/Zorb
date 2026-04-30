@@ -44,7 +44,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- A concrete `0.2` milestone roadmap in `ROADMAP.md`, centered on semantic tightening, constant evaluation, and a first dogfood lexer target.
+- A rough `NOTES.md` file for current focus and next-step tracking without pretending this hobby project needs a formal roadmap.
 - Constant integer expression support for fixed-size array types, so array sizes can now resolve from expressions such as local or global `const` values instead of raw numeric literals only.
 - Constant integer expression support for compile-time-only attribute arguments, including `align(...)` on variables, functions, and structs plus `offset(...)` on explicit-layout struct fields.
 - Constant-folding support for global integer initializers, with semantic rejection for division by zero and `i64` overflow in those constant-evaluated contexts.
@@ -54,6 +54,7 @@ All notable changes to this project will be documented in this file.
 - New diagnostics fixtures covering unreachable-code warnings, duplicate declaration errors, const assignment, invalid assignment targets, duplicate struct fields, and duplicate switch cases.
 - Adds codegen fixtures covering struct returns through error unions, nested struct returns, and return-through-local struct values.
 - Includes numeric fixtures for negative literals assigned to unsigned targets, explicit narrowing casts, unsigned-to-signed widening, signedness-mismatch call failures, narrowing return failures, and mixed signed/unsigned comparison warnings.
+- Parser diagnostics for unexpected top-level tokens and malformed expressions now include clearer expected-context wording, with matching parser fixtures.
 
 ### Changed
 
@@ -78,7 +79,7 @@ All notable changes to this project will be documented in this file.
 - Missing import-file diagnostics now point at the import declaration and are reported once.
 - Duplicate top-level declarations, duplicate parameters, and duplicate local declarations are now rejected instead of silently overwriting earlier symbols.
 - Assignments to `const` declarations, assignments to non-assignable expressions, duplicate struct fields, and duplicate constant switch cases are now rejected during semantic checking.
-- Recent semantics and roadmap updates now line up with the landed numeric model, struct-return coverage, and diagnostics behavior instead of leaving those improvements undocumented.
+- Recent semantics and project-note updates now line up with the landed numeric model, struct-return coverage, and diagnostics behavior instead of leaving those improvements undocumented.
 
 ## [0.1.4] - 2026-04-23
 

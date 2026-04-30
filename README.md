@@ -8,7 +8,7 @@ The project already has:
 - a fixture-based regression suite with runtime tests
 - a draft language spec in `SEMANTICS.md`
 - a small standard library under `std/`
-- a concrete next-milestone plan in `ROADMAP.md`
+- a rough project notes file in `NOTES.md`
 
 ## Current Status
 
@@ -27,7 +27,7 @@ The compiler supports a focused language subset:
 - builtins such as `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`, and `Builtin.sizeof(...)`
 
 The current semantic source of truth is [SEMANTICS.md](./SEMANTICS.md).
-The current `0.2` milestone plan is tracked in [ROADMAP.md](./ROADMAP.md).
+Current project notes and rough next steps are tracked in [NOTES.md](./NOTES.md).
 
 Cross-platform stdlib helpers currently include:
 
