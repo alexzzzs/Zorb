@@ -197,7 +197,11 @@ public List<Node> ParseProgram()
             }
             else
             {
-                ErrorReporter.Error($"Unexpected top-level token: {Current.Type}", Current.Line, Current.Column, _fileName);
+                ErrorReporter.Error(
+                    $"Unexpected top-level token {DescribeToken(Current)}. Expected import, error, const, struct, fn, extern fn, an attribute list, or a variable declaration.",
+                    Current.Line,
+                    Current.Column,
+                    _fileName);
                 Advance();
             }
         }
@@ -1760,7 +1764,11 @@ public List<Node> ParseProgram()
             return expr;
         }
 
-        ErrorReporter.Error($"Unexpected token in expression: {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
+        ErrorReporter.Error(
+            $"Unexpected token in expression: {DescribeToken(Current)}. Expected a literal, identifier, builtin, cast, unary operator, array literal, struct literal, or '('.",
+            Current.Line,
+            Current.Column,
+            _fileName);
         Advance();
         return null!;
     }
