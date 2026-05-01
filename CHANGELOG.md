@@ -55,6 +55,7 @@ All notable changes to this project will be documented in this file.
 - Adds codegen fixtures covering struct returns through error unions, nested struct returns, and return-through-local struct values.
 - Includes numeric fixtures for negative literals assigned to unsigned targets, explicit narrowing casts, unsigned-to-signed widening, signedness-mismatch call failures, narrowing return failures, and mixed signed/unsigned comparison warnings.
 - Parser diagnostics for unexpected top-level tokens and malformed expressions now include clearer expected-context wording, with matching parser fixtures.
+- Parser diagnostics now give clearer guidance for invalid `export` usage, malformed switch bodies, and missing commas inside attribute lists, with matching fixture coverage.
 
 ### Changed
 
@@ -80,6 +81,7 @@ All notable changes to this project will be documented in this file.
 - Duplicate top-level declarations, duplicate parameters, and duplicate local declarations are now rejected instead of silently overwriting earlier symbols.
 - Assignments to `const` declarations, assignments to non-assignable expressions, duplicate struct fields, and duplicate constant switch cases are now rejected during semantic checking.
 - Recent semantics and project-note updates now line up with the landed numeric model, struct-return coverage, and diagnostics behavior instead of leaving those improvements undocumented.
+- README example coverage now calls out the dogfood lexer and bare-metal kernel examples more directly.
 
 ## [0.1.4] - 2026-04-23
 

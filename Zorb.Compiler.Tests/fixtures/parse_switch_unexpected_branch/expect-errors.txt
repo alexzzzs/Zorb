@@ -1,0 +1,1 @@
+Expected 'case value { ... }' or 'else { ... }' in switch body, got Return.

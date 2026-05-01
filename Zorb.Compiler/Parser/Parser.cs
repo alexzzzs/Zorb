@@ -75,6 +75,15 @@ public class Parser
         };
     }
 
+    private void ReportAttributeSeparatorError(string listKind)
+    {
+        ErrorReporter.Error(
+            $"Expected ',' or ']' in {listKind}. Did you forget a comma between attributes? Got {DescribeToken(Current)}.",
+            Current.Line,
+            Current.Column,
+            _fileName);
+    }
+
     private Token Expect(TokenType type, string? customMessage = null)
     {
         if (Current.Type != type)
@@ -280,7 +289,11 @@ public List<Node> ParseProgram()
             return decl;
         }
 
-        ErrorReporter.Error($"Expected exportable top-level declaration after 'export', got {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
+        ErrorReporter.Error(
+            $"Expected an exportable top-level declaration after 'export'. Use 'export fn', 'export struct', 'export const', or 'export name: Type = ...'. Got {DescribeToken(Current)}.",
+            Current.Line,
+            Current.Column,
+            _fileName);
         Advance();
         return new VariableDeclarationNode
         {
@@ -674,7 +687,7 @@ public List<Node> ParseProgram()
                 }
                 else if (Current.Type != TokenType.RBracket)
                 {
-                    ErrorReporter.Error($"Expected ',' or ']' in attribute list, got {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
+                    ReportAttributeSeparatorError("attribute list");
                 }
             }
             Expect(TokenType.RBracket, "Expected ']' to close attribute list.");
@@ -729,7 +742,7 @@ public List<Node> ParseProgram()
                 }
                 else if (Current.Type != TokenType.RBracket)
                 {
-                    ErrorReporter.Error($"Expected ',' or ']' in function attribute list, got {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
+                    ReportAttributeSeparatorError("function attribute list");
                 }
             }
             Expect(TokenType.RBracket, "Expected ']' to close function attribute list.");
@@ -777,7 +790,7 @@ public List<Node> ParseProgram()
                 }
                 else if (Current.Type != TokenType.RBracket)
                 {
-                    ErrorReporter.Error($"Expected ',' or ']' in struct attribute list, got {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
+                    ReportAttributeSeparatorError("struct attribute list");
                 }
             }
             Expect(TokenType.RBracket, "Expected ']' to close struct attribute list.");
@@ -813,7 +826,7 @@ public List<Node> ParseProgram()
                 }
                 else if (Current.Type != TokenType.RBracket)
                 {
-                    ErrorReporter.Error($"Expected ',' or ']' in struct field attribute list, got {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
+                    ReportAttributeSeparatorError("struct field attribute list");
                 }
             }
             Expect(TokenType.RBracket, "Expected ']' to close struct field attribute list.");
@@ -1093,7 +1106,11 @@ public List<Node> ParseProgram()
                 continue;
             }
 
-            ErrorReporter.Error($"Expected 'case' or 'else' in switch body, got {DescribeToken(Current)}", Current.Line, Current.Column, _fileName);
+            ErrorReporter.Error(
+                $"Expected 'case value {{ ... }}' or 'else {{ ... }}' in switch body, got {DescribeToken(Current)}.",
+                Current.Line,
+                Current.Column,
+                _fileName);
             Advance();
         }
 
