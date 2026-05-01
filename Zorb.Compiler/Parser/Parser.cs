@@ -650,7 +650,7 @@ public List<Node> ParseProgram()
             }
 
             Advance();
-            while (Current.Type != TokenType.RBracket)
+            while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
             {
                 if (Current.Type == TokenType.Align)
                 {
