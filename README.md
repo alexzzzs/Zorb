@@ -299,7 +299,9 @@ Current checked-in examples:
 - [`examples/basics/platform_info.zorb`](./examples/basics/platform_info.zorb): cross-platform stdlib helpers for platform detection, stdout, and stderr.
 - [`examples/basics/literals.zorb`](./examples/basics/literals.zorb): typed struct and array literals combined with logical operators.
 - [`examples/basics/switch_for.zorb`](./examples/basics/switch_for.zorb): `for` loops and `switch` with an `else` branch.
+- [`examples/dogfood/lexer/main.zorb`](./examples/dogfood/lexer/main.zorb): a small lexer demo written in Zorb that exercises real control flow, slices, and token handling.
 - [`examples/advanced/threads.zorb`](./examples/advanced/threads.zorb): lower-level task/thread setup using inline assembly and Linux syscalls.
+- [`examples/baremetal/hello_kernel.zorb`](./examples/baremetal/hello_kernel.zorb): a tiny x86_64 bare-metal kernel example using the debug port output path.
 
 ## Project Shape
 
@@ -307,3 +309,4 @@ Current checked-in examples:
 - `Zorb.Compiler.Tests/`: fixture runner and regression fixtures
 - `std/`: standard library modules used by runtime-oriented examples
 - `SEMANTICS.md`: language behavior and current design constraints
+- `NOTES.md`: rough project notes and current focus

@@ -1,0 +1,5 @@
+fn main() {
+    switch 1 {
+        return
+    }
+}
