@@ -8,7 +8,6 @@ The project already has:
 - a fixture-based regression suite with runtime tests
 - a draft language spec in `SEMANTICS.md`
 - a small standard library under `std/`
-- a rough project notes file in `NOTES.md`
 
 ## Current Status
 
@@ -27,7 +26,6 @@ The compiler supports a focused language subset:
 - builtins such as `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`, and `Builtin.sizeof(...)`
 
 The current semantic source of truth is [SEMANTICS.md](./SEMANTICS.md).
-Current project notes and rough next steps are tracked in [NOTES.md](./NOTES.md).
 
 Cross-platform stdlib helpers currently include:
 
@@ -51,7 +49,7 @@ Publish a standalone compiler binary:
 Publish a version-stamped standalone Linux compiler build:
 
 ```bash
-VERSION=0.1.6-dev INFORMATIONAL_VERSION=0.1.6-dev ./scripts/publish-compiler-linux.sh
+VERSION=0.1.6 INFORMATIONAL_VERSION=0.1.6 ./scripts/publish-compiler-linux.sh
 ```
 
 On Windows PowerShell:
@@ -63,8 +61,8 @@ On Windows PowerShell:
 Publish a version-stamped standalone Windows compiler build:
 
 ```powershell
-$env:VERSION="0.1.6-dev"
-$env:INFORMATIONAL_VERSION="0.1.6-dev"
+$env:VERSION="0.1.6"
+$env:INFORMATIONAL_VERSION="0.1.6"
 ./scripts/publish-compiler-windows.ps1
 ```
 
@@ -309,4 +307,3 @@ Current checked-in examples:
 - `Zorb.Compiler.Tests/`: fixture runner and regression fixtures
 - `std/`: standard library modules used by runtime-oriented examples
 - `SEMANTICS.md`: language behavior and current design constraints
-- `NOTES.md`: rough project notes and current focus
