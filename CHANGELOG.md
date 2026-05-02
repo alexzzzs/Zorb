@@ -42,9 +42,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.6] - May 2, 2026
+
 ### Added
 
-- A rough `NOTES.md` file for current focus and next-step tracking without pretending this hobby project needs a formal roadmap.
 - Constant integer expression support for fixed-size array types, so array sizes can now resolve from expressions such as local or global `const` values instead of raw numeric literals only.
 - Constant integer expression support for compile-time-only attribute arguments, including `align(...)` on variables, functions, and structs plus `offset(...)` on explicit-layout struct fields.
 - Constant-folding support for global integer initializers, with semantic rejection for division by zero and `i64` overflow in those constant-evaluated contexts.
