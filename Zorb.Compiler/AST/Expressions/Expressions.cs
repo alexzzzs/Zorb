@@ -68,6 +68,7 @@ public class FieldExpr : Expr
 {
     public Expr Target { get; set; } = null!;
     public string Field { get; set; } = null!;
+    public string? ResolvedQualifiedName { get; set; }
 }
 
 public class CastExpr : Expr

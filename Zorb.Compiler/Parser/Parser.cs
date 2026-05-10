@@ -101,6 +101,17 @@ public class Parser
         return false;
     }
 
+    private (List<string> Path, string Name) ParseDottedDeclName(string missingNameMessage, string missingSegmentMessage)
+    {
+        var path = new List<string> { Expect(TokenType.Identifier, missingNameMessage).Value };
+        while (Match(TokenType.Dot))
+            path.Add(Expect(TokenType.Identifier, missingSegmentMessage).Value);
+
+        var name = path[^1];
+        path.RemoveAt(path.Count - 1);
+        return (path, name);
+    }
+
     // Checks if the current token is an identifier that matches a contextual keyword.
     // If so, returns the corresponding TokenType; otherwise returns null.
     private TokenType? GetContextualKeywordType()
@@ -379,15 +390,9 @@ public List<Node> ParseProgram()
         var attributes = ParseStructAttributes();
         var startToken = Expect(TokenType.Struct);
 
-        var path = new List<string>();
-        path.Add(Expect(TokenType.Identifier, "Expected struct name after 'struct'.").Value);
-        while (Match(TokenType.Dot))
-        {
-            path.Add(Expect(TokenType.Identifier, "Expected identifier after '.' in struct name.").Value);
-        }
-
-        var name = path.Last();
-        path.RemoveAt(path.Count - 1);
+        var (path, name) = ParseDottedDeclName(
+            "Expected struct name after 'struct'.",
+            "Expected identifier after '.' in struct name.");
 
         Expect(TokenType.LBrace, "Expected '{' to start struct body.");
 
@@ -427,13 +432,9 @@ public List<Node> ParseProgram()
     {
         var startToken = Expect(TokenType.Enum);
 
-        var path = new List<string>();
-        path.Add(Expect(TokenType.Identifier, "Expected enum name after 'enum'.").Value);
-        while (Match(TokenType.Dot))
-            path.Add(Expect(TokenType.Identifier, "Expected identifier after '.' in enum name.").Value);
-
-        var name = path.Last();
-        path.RemoveAt(path.Count - 1);
+        var (path, name) = ParseDottedDeclName(
+            "Expected enum name after 'enum'.",
+            "Expected identifier after '.' in enum name.");
 
         Expect(TokenType.Colon, "Expected ':' after enum name.");
         var underlyingType = ParseType();
@@ -460,6 +461,16 @@ public List<Node> ParseProgram()
                 Advance();
                 continue;
             }
+
+            if (Current.Type == TokenType.RBrace)
+                break;
+
+            ErrorReporter.Error(
+                $"Expected ',' or '}}' after enum member '{member.Name}', got {DescribeToken(Current)}.",
+                Current.Line,
+                Current.Column,
+                _fileName);
+            Advance();
         }
 
         Expect(TokenType.RBrace, "Expected '}' to close enum body.");
@@ -479,13 +490,9 @@ public List<Node> ParseProgram()
     {
         var startToken = Expect(TokenType.Union);
 
-        var path = new List<string>();
-        path.Add(Expect(TokenType.Identifier, "Expected union name after 'union'.").Value);
-        while (Match(TokenType.Dot))
-            path.Add(Expect(TokenType.Identifier, "Expected identifier after '.' in union name.").Value);
-
-        var name = path.Last();
-        path.RemoveAt(path.Count - 1);
+        var (path, name) = ParseDottedDeclName(
+            "Expected union name after 'union'.",
+            "Expected identifier after '.' in union name.");
 
         Expect(TokenType.LBrace, "Expected '{' to start union body.");
 
@@ -508,6 +515,16 @@ public List<Node> ParseProgram()
                 Advance();
                 continue;
             }
+
+            if (Current.Type == TokenType.RBrace)
+                break;
+
+            ErrorReporter.Error(
+                $"Expected ',' or '}}' after union variant '{variant.Name}', got {DescribeToken(Current)}.",
+                Current.Line,
+                Current.Column,
+                _fileName);
+            Advance();
         }
 
         Expect(TokenType.RBrace, "Expected '}' to close union body.");

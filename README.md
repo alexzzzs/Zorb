@@ -278,7 +278,10 @@ union Value {
 fn score(value: Value) -> i64 {
     switch value.tag {
         case Value.Tag.Number { return value.Number }
-        case Value.Tag.Flag { return value.Flag }
+        case Value.Tag.Flag {
+            if value.Flag { return 1 }
+            return 0
+        }
     }
 }
 ```

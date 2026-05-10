@@ -48,6 +48,7 @@ The lexer recognizes these reserved words:
 - `case`
 - `return`
 - `struct`
+- `enum`
 - `union`
 - `cast`
 - `extern`

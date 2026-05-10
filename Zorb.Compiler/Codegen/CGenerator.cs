@@ -1437,16 +1437,12 @@ static void __zorb_slice_oob(void) {
                     $"{targetCode}[{generatedIndex.Code}]",
                     GetExprType(expr));
             case FieldExpr field:
-                string GetFullName(Expr e)
+                var qualifiedName = field.ResolvedQualifiedName ?? TryGetQualifiedName(expr);
+                if (!string.IsNullOrEmpty(qualifiedName) &&
+                    _symbolTable.TryLookup(qualifiedName, out var varInfo) &&
+                    varInfo!.Kind == SymbolKind.Variable)
                 {
-                    if (e is IdentifierExpr id) return id.Name;
-                    if (e is FieldExpr f) return GetFullName(f.Target) + "." + f.Field;
-                    return "";
-                }
-                var potentialName = GetFullName(field.Target) + "." + field.Field;
-                if (!string.IsNullOrEmpty(potentialName) && _symbolTable.TryLookup(potentialName, out var varInfo) && varInfo!.Kind == SymbolKind.Variable)
-                {
-                    return new GeneratedExpression("", potentialName.Replace(".", "_"), GetExprType(expr));
+                    return new GeneratedExpression("", qualifiedName.Replace(".", "_"), GetExprType(expr));
                 }
 
                 var generatedFieldTarget = GenerateExpressionWithPrelude(field.Target);
@@ -1598,7 +1594,7 @@ static void __zorb_slice_oob(void) {
                 }
                 return null;
             case FieldExpr field:
-                var qualifiedName = TryGetQualifiedName(expr);
+                var qualifiedName = field.ResolvedQualifiedName ?? TryGetQualifiedName(expr);
                 if (!string.IsNullOrEmpty(qualifiedName) &&
                     _symbolTable.TryLookup(qualifiedName, out var fieldInfo) &&
                     (fieldInfo!.Kind == SymbolKind.Variable || fieldInfo.Kind == SymbolKind.Function))

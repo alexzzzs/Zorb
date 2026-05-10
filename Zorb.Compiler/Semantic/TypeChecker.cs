@@ -178,6 +178,11 @@ public class TypeChecker
 
             case FieldExpr field:
                 field.Target = NormalizeAliasReferences(field.Target);
+                if (TryGetQualifiedName(field) is string qualifiedName &&
+                    TryResolveAliasQualifiedName(qualifiedName, out var resolvedQualifiedName))
+                    field.ResolvedQualifiedName = resolvedQualifiedName;
+                else
+                    field.ResolvedQualifiedName = null;
                 return field;
 
             case UnaryExpr unary:
@@ -1416,11 +1421,15 @@ public class TypeChecker
                 break;
 
             case FieldExpr field:
-                var qualifiedFieldName = TryGetQualifiedName(field);
+                var sourceQualifiedFieldName = TryGetQualifiedName(field);
+                var qualifiedFieldName = field.ResolvedQualifiedName ?? sourceQualifiedFieldName;
                 if (!string.IsNullOrEmpty(qualifiedFieldName))
                 {
                     var resolvedFieldName = qualifiedFieldName;
-                    var resolvedViaAlias = TryResolveAliasQualifiedName(qualifiedFieldName, out var aliasResolvedFieldName);
+                    var aliasResolvedFieldName = resolvedFieldName;
+                    var resolvedViaAlias = field.ResolvedQualifiedName != null;
+                    if (!resolvedViaAlias && string.Equals(sourceQualifiedFieldName, qualifiedFieldName, StringComparison.Ordinal))
+                        resolvedViaAlias = TryResolveAliasQualifiedName(qualifiedFieldName, out aliasResolvedFieldName);
                     if (resolvedViaAlias)
                         resolvedFieldName = aliasResolvedFieldName;
 
@@ -1429,6 +1438,24 @@ public class TypeChecker
                     {
                         if (!resolvedViaAlias && !CheckVisibility(resolvedFieldName))
                             ReportNotVisible(field, "Symbol", resolvedFieldName);
+                        break;
+                    }
+
+                    if (_symbolTable.TryLookup(resolvedFieldName, out qualifiedFieldInfo) &&
+                        (qualifiedFieldInfo!.Kind == SymbolKind.Enum || qualifiedFieldInfo.Kind == SymbolKind.Union))
+                    {
+                        if (!resolvedViaAlias && !CheckVisibility(resolvedFieldName))
+                        {
+                            ReportNotVisible(field, qualifiedFieldInfo.Kind == SymbolKind.Enum ? "Enum" : "Union", resolvedFieldName);
+                        }
+                        else if (qualifiedFieldInfo.Kind == SymbolKind.Enum)
+                        {
+                            _errors.Error(field, $"Enum type '{resolvedFieldName}' is not a value. Use a member such as '{resolvedFieldName}.Member'.");
+                        }
+                        else
+                        {
+                            _errors.Error(field, $"Union type '{resolvedFieldName}' is not a value. Construct it with a literal such as '{resolvedFieldName}{{ Variant: value }}'.");
+                        }
                         break;
                     }
                 }
@@ -2288,11 +2315,15 @@ public class TypeChecker
 
             case FieldExpr field:
                 var targetName = TryGetQualifiedName(field.Target);
-                var potentialName = string.IsNullOrEmpty(targetName) ? "" : $"{targetName}.{field.Field}";
+                var potentialName = field.ResolvedQualifiedName ?? (string.IsNullOrEmpty(targetName) ? "" : $"{targetName}.{field.Field}");
 
                 var resolvedPotentialName = potentialName;
                 var aliasResolvedPotentialName = string.Empty;
-                var resolvedViaAlias = !string.IsNullOrEmpty(potentialName) && TryResolveAliasQualifiedName(potentialName, out aliasResolvedPotentialName);
+                var resolvedViaAlias = field.ResolvedQualifiedName != null;
+                if (!resolvedViaAlias && !string.IsNullOrEmpty(potentialName))
+                    resolvedViaAlias = TryResolveAliasQualifiedName(potentialName, out aliasResolvedPotentialName);
+                else
+                    aliasResolvedPotentialName = resolvedPotentialName;
                 if (resolvedViaAlias)
                     resolvedPotentialName = aliasResolvedPotentialName;
 

@@ -258,9 +258,8 @@ Rules:
 
 - The backing type must be one of `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, or `u64`.
 - Members without an initializer auto-increment from the previous value, starting at `0`.
-- Member initializers must be constant integer expressions.
-- Member values must fit the backing type.
-- Member values must be distinct within the enum.
+- Initializers must be constant integer expressions.
+- Values must fit the backing type and remain distinct within the enum.
 - Members are referenced with qualified names such as `Mode.Run`.
 
 ### Structs
