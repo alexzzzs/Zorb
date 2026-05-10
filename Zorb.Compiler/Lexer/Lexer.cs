@@ -405,6 +405,10 @@ namespace Zorb.Compiler.Lexer;
                     tokens.Add(new Token(TokenType.Return, "", loc.Item1, loc.Item2));
                 else if (text == "struct")
                     tokens.Add(new Token(TokenType.Struct, "", loc.Item1, loc.Item2));
+                else if (text == "enum")
+                    tokens.Add(new Token(TokenType.Enum, "", loc.Item1, loc.Item2));
+                else if (text == "union")
+                    tokens.Add(new Token(TokenType.Union, "", loc.Item1, loc.Item2));
                 else if (text == "cast")
                     tokens.Add(new Token(TokenType.Cast, "", loc.Item1, loc.Item2));
                 else if (text == "extern")

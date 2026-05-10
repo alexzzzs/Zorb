@@ -1,0 +1,3 @@
+struct Value {
+Value_Tag_Number
+return value.data.Number;

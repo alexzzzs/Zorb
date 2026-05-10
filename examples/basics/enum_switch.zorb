@@ -1,0 +1,28 @@
+import "../../std/io.zorb"
+import "../../std/os.zorb"
+
+enum Mode: i32 {
+    Idle,
+    Run = 4,
+    Stop
+}
+
+fn describe(mode: Mode) -> i64 {
+    switch mode {
+        case Mode.Idle {
+            return 1
+        }
+        case Mode.Run {
+            return 4
+        }
+        case Mode.Stop {
+            return 9
+        }
+    }
+}
+
+fn _start() {
+    std.io.print_i64(describe(Mode.Run))
+    std.io.print("\n")
+    std.os.exit(0)
+}

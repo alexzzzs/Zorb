@@ -1,1 +1,1 @@
-Expected an exportable top-level declaration after 'export'. Use 'export fn', 'export struct', 'export const', or 'export name: Type = ...'. Got If.
+Expected an exportable top-level declaration after 'export'. Use 'export fn', 'export struct', 'export enum', 'export union', 'export const', or 'export name: Type = ...'. Got If.

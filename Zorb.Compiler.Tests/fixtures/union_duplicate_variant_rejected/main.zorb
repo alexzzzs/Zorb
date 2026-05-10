@@ -1,0 +1,4 @@
+union Value {
+    Number: i64,
+    Number: bool
+}

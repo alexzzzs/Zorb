@@ -1,0 +1,1 @@
+Union 'Bad' cannot declare a variant named 'tag' because '.tag' is reserved for the discriminator.

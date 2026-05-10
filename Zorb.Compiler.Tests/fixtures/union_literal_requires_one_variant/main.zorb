@@ -1,0 +1,8 @@
+union Value {
+    Number: i64,
+    Flag: bool
+}
+
+fn main() {
+    value: Value = Value{ Number: 1, Flag: true }
+}

@@ -1,0 +1,2 @@
+typedef int32_t Mode;
+static const Mode Mode_Stop = (Mode)5;

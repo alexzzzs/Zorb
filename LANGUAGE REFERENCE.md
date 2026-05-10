@@ -67,7 +67,7 @@ The lexer reserves:
 
 ```text
 fn import as if else while for switch case return struct cast extern align catch
-const error export continue break true false
+const error export continue break true false enum union
 ```
 
 `builtin` is recognized case-insensitively as the `Builtin` namespace token.
@@ -125,6 +125,8 @@ error declarations
 global variable declarations
 global const declarations
 struct declarations
+enum declarations
+union declarations
 function declarations
 extern function declarations
 attributes before functions, globals, and structs
@@ -174,7 +176,7 @@ This registers a C header for generated C. It does not load Zorb symbols.
 
 ### Export
 
-`export` may be used before functions, structs, error declarations, const globals, and global variables:
+`export` may be used before functions, structs, enums, unions, error declarations, const globals, and global variables:
 
 ```zorb
 export fn add(a: i64, b: i64) -> i64 {
@@ -189,6 +191,8 @@ export struct Point {
 export error Missing = 100
 export answer: i64 = 42
 export const limit: i64 = 64
+export enum Mode: i32 { Idle, Run }
+export union Value { Number: i64, Flag: bool }
 ```
 
 `export import ...` is rejected.
@@ -238,6 +242,27 @@ return error.OutOfMemory
 
 Error declarations must use a numeric literal initializer or a unary-negative numeric literal initializer. Visible error declarations must use distinct integer values.
 
+### Enums
+
+Enums declare a nominal type with an explicit built-in integer backing type:
+
+```zorb
+enum Mode: i32 {
+    Idle,
+    Run = 4,
+    Stop
+}
+```
+
+Rules:
+
+- The backing type must be one of `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, or `u64`.
+- Members without an initializer auto-increment from the previous value, starting at `0`.
+- Member initializers must be constant integer expressions.
+- Member values must fit the backing type.
+- Member values must be distinct within the enum.
+- Members are referenced with qualified names such as `Mode.Run`.
+
 ### Structs
 
 ```zorb
@@ -258,6 +283,26 @@ export struct std.mem.HeapAllocator {
     pos: i64
 }
 ```
+
+### Tagged Unions
+
+Tagged unions declare a nominal payload type with an automatically generated discriminator enum:
+
+```zorb
+union Value {
+    Number: i64,
+    Flag: bool
+}
+```
+
+Rules:
+
+- Each variant is written as `Name: Type`.
+- Variant names must be distinct.
+- `tag` is reserved and cannot be used as a variant name.
+- A union literal initializes exactly one variant, for example `Value{ Number: 7 }`.
+- Every union also exposes a generated enum type `Value.Tag` with members such as `Value.Tag.Number`.
+- Field access on a union value supports `.tag` plus the declared variant fields.
 
 ### Functions
 
@@ -682,7 +727,7 @@ expr[index]
 
 Calls work for named functions, qualified functions, and function-typed expressions.
 
-Field access works on structs, pointers to structs, error-union result structs, global qualified names, and slice `.ptr` / `.len`.
+Field access works on structs, pointers to structs, tagged unions, error-union result structs, global qualified names, and slice `.ptr` / `.len`.
 
 ### Struct Literals
 
@@ -948,7 +993,7 @@ void   void
 
 Structs lower to C `struct` declarations. Qualified names are flattened with `_`.
 
-Error unions lower to generated result structs. Slices lower to generated slice structs.
+Tagged unions lower to generated C structs containing a discriminator plus a payload union. Error unions lower to generated result structs. Slices lower to generated slice structs.
 
 On hosted targets, a source `_start` is renamed internally and called from a generated C `main`. On freestanding Linux and bare-metal targets, `_start` is preserved.
 
