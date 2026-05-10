@@ -1,0 +1,16 @@
+enum Mode: i32 {
+    Idle,
+    Run,
+    Stop
+}
+
+fn classify(mode: Mode) -> i64 {
+    match mode {
+        case Mode.Idle {
+            return 1
+        }
+        case Mode.Run {
+            return 2
+        }
+    }
+}

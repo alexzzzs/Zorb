@@ -66,7 +66,7 @@ std.mem.HeapAllocator
 The lexer reserves:
 
 ```text
-fn import as if else while for switch case return struct cast extern align catch
+fn import as if else while for switch match case return struct cast extern align catch
 const error export continue break true false enum union
 ```
 
@@ -302,6 +302,7 @@ Rules:
 - A union literal initializes exactly one variant, for example `Value{ Number: 7 }`.
 - Every union also exposes a generated enum type `Value.Tag` with members such as `Value.Tag.Number`.
 - Field access on a union value supports `.tag` plus the declared variant fields.
+- `match` can branch on the union directly and bind the active payload, for example `case Value.Number(n)`.
 
 ### Functions
 
@@ -647,6 +648,28 @@ Switch operands must be numeric or `bool`. Case expressions must be equality-com
 
 `break` keeps its loop-only meaning; it is not a switch-case terminator.
 
+### Match
+
+```zorb
+match value {
+    case Mode.Run {
+        return 20
+    }
+    case Value.Number(n) {
+        return n
+    }
+    else {
+        return 0
+    }
+}
+```
+
+The match expression is evaluated once. Cases are tested in source order. `else` is optional and must appear after all `case` branches. Only one `else` branch is allowed.
+
+Match operands must be enum or tagged-union values. Enum cases use qualified enum members. Tagged-union cases use qualified variant names and may bind the payload with a single identifier such as `Value.Number(n)`.
+
+Without `else`, enum and tagged-union matches must be exhaustive. Payload bindings are scoped to their case body only.
+
 ### Return
 
 ```zorb
@@ -656,7 +679,7 @@ return expr
 
 `return` without a value is valid for `void` functions.
 
-Non-`void` functions must return a value on all checked paths. If both branches of an `if` or all cases plus `else` of a `switch` return, the compiler treats that control flow as returning.
+Non-`void` functions must return a value on all checked paths. If both branches of an `if` or all cases plus `else` of a `switch` or `match` return, the compiler treats that control flow as returning.
 
 For `!T` functions:
 
@@ -964,7 +987,7 @@ Division by zero and `i64` overflow are rejected.
 
 ## Name Resolution And Scope
 
-The compiler has a global scope and nested local scopes. Function parameters are in the function-local scope. Bodies of `if`, `else`, `while`, `for`, and `switch` cases create nested semantic scopes.
+The compiler has a global scope and nested local scopes. Function parameters are in the function-local scope. Bodies of `if`, `else`, `while`, `for`, `switch` cases, and `match` cases create nested semantic scopes.
 
 Local declarations may shadow outer declarations. Lookup prefers the innermost active scope.
 

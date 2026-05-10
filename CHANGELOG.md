@@ -44,6 +44,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `match` statements for enum and tagged-union branching, including exhaustiveness checking and tagged-union payload binding via patterns like `Value.Number(n)`.
+- Fixture, runtime, and example coverage for enum matching, union matching, and non-exhaustive match diagnostics.
 - `enum` declarations with explicit built-in integer backing types, auto-incremented members, and constant-expression member initializers.
 - Qualified enum member references such as `Mode.Run`, including import-alias flows like `pkg.Mode.Run`.
 - Enum-aware `switch` checking, including duplicate-case detection by resolved value and exhaustiveness checking when no `else` branch is present.

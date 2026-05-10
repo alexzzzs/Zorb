@@ -980,6 +980,10 @@ static void __zorb_slice_oob(void) {
 
             return sb.ToString();
         }
+        if (stmt is MatchStmt matchStmt)
+        {
+            return GenerateMatchStatement(matchStmt);
+        }
         if (stmt is ContinueStmt)
         {
             if (_continueTargets.Count > 0 && _continueTargets.Peek() is string continueTarget)
@@ -1045,6 +1049,112 @@ static void __zorb_slice_oob(void) {
             return $"__asm__ volatile ({quotedCode} : {outputs} : {inputs} : {clobbers});";
         }
         throw new System.Exception("Unknown statement type");
+    }
+
+    private string GenerateMatchStatement(MatchStmt matchStmt)
+    {
+        var matchType = GetExprType(matchStmt.Expression)
+            ?? throw new Exception("Match expressions require a known type during code generation.");
+        var generatedMatchExpression = GenerateExpressionWithPrelude(matchStmt.Expression);
+        var matchValueTemp = NewTemp("match_value");
+        var matchMatchedTemp = NewTemp("match_matched");
+        var savedLocals = CloneLocalVars();
+        var sb = new StringBuilder();
+
+        try
+        {
+            sb.AppendLine("{");
+            AppendIndentedBlock(sb, generatedMatchExpression.Prelude, "    ");
+            sb.AppendLine($"    {MapType(matchType)} {matchValueTemp} = {generatedMatchExpression.Code};");
+            sb.AppendLine($"    int32_t {matchMatchedTemp} = 0;");
+            _localVars[matchValueTemp] = matchType;
+
+            if (IsUnionType(matchType))
+                GenerateUnionMatchCases(sb, matchStmt, matchType, matchValueTemp, matchMatchedTemp);
+            else
+                GenerateEnumMatchCases(sb, matchStmt, matchType, matchValueTemp, matchMatchedTemp);
+
+            if (matchStmt.ElseBody.Count > 0)
+            {
+                sb.AppendLine($"    if (!{matchMatchedTemp}) {{");
+                AppendIndentedGeneratedBlock(sb, matchStmt.ElseBody, "        ");
+                sb.AppendLine("    }");
+            }
+
+            sb.Append("}");
+        }
+        finally
+        {
+            RestoreLocalVars(savedLocals);
+        }
+
+        return sb.ToString();
+    }
+
+    private void GenerateEnumMatchCases(StringBuilder sb, MatchStmt matchStmt, TypeNode matchType, string matchValueTemp, string matchMatchedTemp)
+    {
+        foreach (var matchCase in matchStmt.Cases)
+        {
+            Expr caseValue;
+            if (matchCase.Pattern is EnumMatchPattern enumPattern)
+            {
+                caseValue = enumPattern.Value;
+            }
+            else if (matchCase.Pattern is UnionMatchPattern unionPattern && string.IsNullOrEmpty(unionPattern.BindingName))
+            {
+                caseValue = unionPattern.Variant;
+            }
+            else
+            {
+                throw new InvalidOperationException($"Unexpected match pattern '{matchCase.Pattern.GetType().Name}' in enum match over '{FormatType(matchType)}'.");
+            }
+
+            var generatedCaseValue = CoerceExpressionToTargetType(matchType, caseValue, GenerateExpressionWithPrelude(caseValue));
+            sb.AppendLine($"    if (!{matchMatchedTemp}) {{");
+            AppendIndentedBlock(sb, generatedCaseValue.Prelude, "        ");
+            sb.AppendLine($"        if ({matchValueTemp} == {generatedCaseValue.Code}) {{");
+            sb.AppendLine($"            {matchMatchedTemp} = 1;");
+            AppendIndentedGeneratedBlock(sb, matchCase.Body, "            ");
+            sb.AppendLine("        }");
+            sb.AppendLine("    }");
+        }
+    }
+
+    private void GenerateUnionMatchCases(StringBuilder sb, MatchStmt matchStmt, TypeNode matchType, string matchValueTemp, string matchMatchedTemp)
+    {
+        var unionDefinition = GetUnionDefinition(matchType)
+            ?? throw new Exception($"Unknown union type '{FormatType(matchType)}'.");
+
+        foreach (var matchCase in matchStmt.Cases)
+        {
+            if (matchCase.Pattern is not UnionMatchPattern unionPattern || string.IsNullOrEmpty(unionPattern.VariantName))
+                throw new InvalidOperationException($"Unexpected match pattern '{matchCase.Pattern.GetType().Name}' in union match over '{FormatType(matchType)}'.");
+
+            var tagCode = GetUnionTagMemberCode(unionDefinition, unionPattern.VariantName);
+            sb.AppendLine($"    if (!{matchMatchedTemp}) {{");
+            sb.AppendLine($"        if ({matchValueTemp}.tag == {tagCode}) {{");
+            sb.AppendLine($"            {matchMatchedTemp} = 1;");
+
+            if (!string.IsNullOrEmpty(unionPattern.BindingName))
+            {
+                var bindingValue = new FieldExpr
+                {
+                    Target = new IdentifierExpr { Name = matchValueTemp },
+                    Field = unionPattern.VariantName
+                };
+                var bindingDecl = new VariableDeclarationNode
+                {
+                    Name = unionPattern.BindingName!,
+                    TypeName = unionPattern.BindingType?.Clone() ?? GetUnionVariantType(matchType, unionPattern.VariantName) ?? throw new Exception($"Unknown union variant '{unionPattern.VariantName}'."),
+                    Value = bindingValue
+                };
+                AppendIndentedBlock(sb, GenerateStatement(bindingDecl), "            ");
+            }
+
+            AppendIndentedGeneratedBlock(sb, matchCase.Body, "            ");
+            sb.AppendLine("        }");
+            sb.AppendLine("    }");
+        }
     }
 
     private void AppendArrayCopyStatements(StringBuilder sb, string targetCode, TypeNode arrayType, string sourceCode)
