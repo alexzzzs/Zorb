@@ -283,6 +283,18 @@ public class TypeChecker
                     switchStmt.ElseBody[i] = NormalizeAliasReferences(switchStmt.ElseBody[i]);
                 return switchStmt;
 
+            case MatchStmt matchStmt:
+                matchStmt.Expression = NormalizeAliasReferences(matchStmt.Expression);
+                for (int i = 0; i < matchStmt.Cases.Count; i++)
+                {
+                    matchStmt.Cases[i].Pattern = NormalizeAliasReferences(matchStmt.Cases[i].Pattern);
+                    for (int j = 0; j < matchStmt.Cases[i].Body.Count; j++)
+                        matchStmt.Cases[i].Body[j] = NormalizeAliasReferences(matchStmt.Cases[i].Body[j]);
+                }
+                for (int i = 0; i < matchStmt.ElseBody.Count; i++)
+                    matchStmt.ElseBody[i] = NormalizeAliasReferences(matchStmt.ElseBody[i]);
+                return matchStmt;
+
             case BreakStmt breakStmt:
                 return breakStmt;
 
@@ -295,6 +307,23 @@ public class TypeChecker
 
             default:
                 return stmt;
+        }
+    }
+
+    private MatchPattern NormalizeAliasReferences(MatchPattern pattern)
+    {
+        switch (pattern)
+        {
+            case EnumMatchPattern enumPattern:
+                enumPattern.Value = NormalizeAliasReferences(enumPattern.Value);
+                return enumPattern;
+
+            case UnionMatchPattern unionPattern:
+                unionPattern.Variant = NormalizeAliasReferences(unionPattern.Variant);
+                return unionPattern;
+
+            default:
+                return pattern;
         }
     }
 
@@ -931,6 +960,9 @@ public class TypeChecker
 
                 return FlowOutcome.FallsThrough;
 
+            case MatchStmt matchStmt:
+                return CheckMatchStatement(matchStmt);
+
             case ContinueStmt continueStmt:
                 if (_loopDepth == 0)
                     _errors.Error(continueStmt, "'continue' is only allowed inside a while or for loop.");
@@ -945,6 +977,181 @@ public class TypeChecker
                 CheckAsmStatement(asmStmt);
                 return FlowOutcome.FallsThrough;
         }
+
+        return FlowOutcome.FallsThrough;
+    }
+
+    private FlowOutcome CheckMatchStatement(MatchStmt matchStmt)
+    {
+        CheckExpression(matchStmt.Expression);
+        var matchType = GetExpressionType(matchStmt.Expression);
+        if (matchType == null)
+            return FlowOutcome.FallsThrough;
+
+        if (!IsEnumType(matchType) && !IsUnionType(matchType))
+        {
+            _errors.Error(matchStmt.Expression, $"Match expression must have enum or union type, got '{FormatType(matchType)}'.");
+            return FlowOutcome.FallsThrough;
+        }
+
+        return IsEnumType(matchType)
+            ? CheckEnumMatchStatement(matchStmt, matchType)
+            : CheckUnionMatchStatement(matchStmt, matchType);
+    }
+
+    private FlowOutcome CheckEnumMatchStatement(MatchStmt matchStmt, TypeNode matchType)
+    {
+        var enumDefinition = LookupEnumDefinition(matchType);
+        var seenCaseValues = new Dictionary<string, MatchPattern>(StringComparer.Ordinal);
+        var seenEnumCaseValues = new HashSet<long>();
+        var caseOutcomes = new List<FlowOutcome>();
+        var isExhaustive = false;
+
+        foreach (var matchCase in matchStmt.Cases)
+        {
+            if (matchCase.Pattern is not EnumMatchPattern enumPattern)
+            {
+                _errors.Error(matchCase.Pattern, $"Match over enum '{FormatType(matchType)}' requires enum-member patterns like '{enumDefinition?.Name}.Member'.");
+                caseOutcomes.Add(CheckBlock(matchCase.Body));
+                continue;
+            }
+
+            CheckExpression(enumPattern.Value);
+            var patternType = GetExpressionType(enumPattern.Value);
+            if (patternType != null && !SameType(matchType, patternType))
+                _errors.Error(enumPattern.Value, $"Match case pattern of type '{FormatType(patternType)}' does not match enum type '{FormatType(matchType)}'.");
+
+            if (TryGetSwitchCaseKey(enumPattern.Value, out var caseKey))
+            {
+                if (!seenCaseValues.TryAdd(caseKey, enumPattern))
+                    _errors.Error(enumPattern.Value, $"Duplicate match case value '{caseKey}'.{FormatPreviousDeclarationSuffix(seenCaseValues[caseKey])}");
+            }
+
+            if (TryEvaluateConstIntExpr(enumPattern.Value, out var enumCaseValue, out _))
+                seenEnumCaseValues.Add(enumCaseValue);
+
+            caseOutcomes.Add(CheckBlock(matchCase.Body));
+        }
+
+        if (enumDefinition != null && matchStmt.ElseBody.Count == 0)
+        {
+            var missingMembers = enumDefinition.Members
+                .Where(member => member.ResolvedValue.HasValue && !seenEnumCaseValues.Contains(member.ResolvedValue.Value))
+                .Select(member => $"{enumDefinition.Name}.{member.Name}")
+                .ToList();
+            if (missingMembers.Count > 0)
+                _errors.Error(matchStmt, $"Match over enum '{FormatType(matchType)}' must cover all members or provide an else branch. Missing: {string.Join(", ", missingMembers)}.");
+            else
+                isExhaustive = true;
+        }
+
+        return CombineMatchFlow(caseOutcomes, matchStmt.ElseBody, isExhaustive);
+    }
+
+    private FlowOutcome CheckUnionMatchStatement(MatchStmt matchStmt, TypeNode matchType)
+    {
+        var unionDefinition = LookupUnionDefinition(matchType);
+        var seenVariants = new Dictionary<string, MatchPattern>(StringComparer.Ordinal);
+        var caseOutcomes = new List<FlowOutcome>();
+        var isExhaustive = false;
+
+        foreach (var matchCase in matchStmt.Cases)
+        {
+            if (matchCase.Pattern is not UnionMatchPattern unionPattern)
+            {
+                _errors.Error(matchCase.Pattern, $"Match over union '{FormatType(matchType)}' requires union-variant patterns like '{unionDefinition?.Name}.Variant(payload)'.");
+                caseOutcomes.Add(CheckBlock(matchCase.Body));
+                continue;
+            }
+
+            var variantQualifiedName = TryGetQualifiedName(unionPattern.Variant);
+            if (string.IsNullOrEmpty(variantQualifiedName))
+            {
+                _errors.Error(unionPattern.Variant, "Union match patterns must be qualified variant names.");
+                caseOutcomes.Add(CheckBlock(matchCase.Body));
+                continue;
+            }
+
+            var resolvedVariantName = TryResolveAliasQualifiedName(variantQualifiedName, out var aliasResolvedVariantName)
+                ? aliasResolvedVariantName
+                : variantQualifiedName;
+            var lastDot = resolvedVariantName.LastIndexOf('.');
+            if (lastDot < 0)
+            {
+                _errors.Error(unionPattern.Variant, "Union match patterns must reference a specific variant.");
+                caseOutcomes.Add(CheckBlock(matchCase.Body));
+                continue;
+            }
+
+            var resolvedUnionName = resolvedVariantName[..lastDot];
+            var variantName = resolvedVariantName[(lastDot + 1)..];
+            unionPattern.ResolvedUnionName = resolvedUnionName;
+            unionPattern.VariantName = variantName;
+
+            var expectedUnionName = matchType.NamespacePath.Any()
+                ? string.Join(".", matchType.NamespacePath) + "." + matchType.Name
+                : matchType.Name;
+            if (!string.Equals(resolvedUnionName, expectedUnionName, StringComparison.Ordinal))
+                _errors.Error(unionPattern.Variant, $"Match case variant '{resolvedVariantName}' does not belong to union '{FormatType(matchType)}'.");
+
+            var variant = unionDefinition?.Variants.FirstOrDefault(candidate => candidate.Name == variantName);
+            if (variant == null)
+            {
+                _errors.Error(unionPattern.Variant, $"Union '{FormatType(matchType)}' does not have a variant named '{variantName}'.");
+                caseOutcomes.Add(CheckBlock(matchCase.Body));
+                continue;
+            }
+
+            unionPattern.BindingType = variant.TypeName.Clone();
+            if (!seenVariants.TryAdd(variantName, unionPattern))
+                _errors.Error(unionPattern.Variant, $"Duplicate match case variant '{variantName}'.{FormatPreviousDeclarationSuffix(seenVariants[variantName])}");
+
+            PushScopedState();
+            try
+            {
+                if (!string.IsNullOrEmpty(unionPattern.BindingName))
+                    _symbolTable.DefineVariable(unionPattern.BindingName!, unionPattern.BindingType.Clone());
+                caseOutcomes.Add(CheckBlock(matchCase.Body, pushScope: false));
+            }
+            finally
+            {
+                PopScopedState();
+            }
+        }
+
+        if (unionDefinition != null && matchStmt.ElseBody.Count == 0)
+        {
+            var missingVariants = unionDefinition.Variants
+                .Where(variant => !seenVariants.ContainsKey(variant.Name))
+                .Select(variant => $"{unionDefinition.Name}.{variant.Name}")
+                .ToList();
+            if (missingVariants.Count > 0)
+                _errors.Error(matchStmt, $"Match over union '{FormatType(matchType)}' must cover all variants or provide an else branch. Missing: {string.Join(", ", missingVariants)}.");
+            else
+                isExhaustive = true;
+        }
+
+        return CombineMatchFlow(caseOutcomes, matchStmt.ElseBody, isExhaustive);
+    }
+
+    private FlowOutcome CombineMatchFlow(List<FlowOutcome> caseOutcomes, List<Statement> elseBody, bool isExhaustive)
+    {
+        if (elseBody.Count == 0)
+        {
+            if (isExhaustive &&
+                caseOutcomes.Count > 0 &&
+                caseOutcomes.All(outcome => outcome == caseOutcomes[0] && outcome != FlowOutcome.FallsThrough))
+            {
+                return caseOutcomes[0];
+            }
+
+            return FlowOutcome.FallsThrough;
+        }
+
+        var elseFlow = CheckBlock(elseBody);
+        caseOutcomes.Add(elseFlow);
+        if (caseOutcomes.Count > 0 && caseOutcomes.All(outcome => outcome == caseOutcomes[0] && outcome != FlowOutcome.FallsThrough))
+            return caseOutcomes[0];
 
         return FlowOutcome.FallsThrough;
     }
@@ -2540,6 +2747,17 @@ public class TypeChecker
             ? string.Join(".", type.NamespacePath) + "." + type.Name
             : type.Name;
         return _symbolTable.LookupEnumNode(fullName);
+    }
+
+    private UnionNode? LookupUnionDefinition(TypeNode? type)
+    {
+        if (!IsUnionType(type))
+            return null;
+
+        var fullName = type!.NamespacePath.Any()
+            ? string.Join(".", type.NamespacePath) + "." + type.Name
+            : type.Name;
+        return _symbolTable.LookupUnionNode(fullName);
     }
 
     private bool IsUnionType(TypeNode? type)

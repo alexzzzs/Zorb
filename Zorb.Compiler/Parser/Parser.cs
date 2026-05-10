@@ -1034,6 +1034,9 @@ public List<Node> ParseProgram()
         if (Current.Type == TokenType.Switch)
             return ParseSwitch();
 
+        if (Current.Type == TokenType.Match)
+            return ParseMatch();
+
         if (Current.Type == TokenType.Return)
             return ParseReturn();
 
@@ -1260,6 +1263,111 @@ public List<Node> ParseProgram()
         };
         StampNode(stmt, startToken);
         return stmt;
+    }
+
+    private Statement ParseMatch()
+    {
+        var startToken = Expect(TokenType.Match);
+        var expression = ParseExpression();
+        Expect(TokenType.LBrace, "Expected '{' to start match body.");
+
+        var cases = new List<MatchCase>();
+        var elseBody = new List<Statement>();
+        var sawElse = false;
+
+        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.Eof)
+        {
+            if (Match(TokenType.Case))
+            {
+                if (sawElse)
+                {
+                    ErrorReporter.Error("Match case branches cannot appear after 'else'.", Current.Line, Current.Column, _fileName);
+                    ParseMatchPattern();
+                    ParseStatementBlock("Expected '{' to start case body.", "Expected '}' to close case body.");
+                    continue;
+                }
+
+                var pattern = ParseMatchPattern();
+                var caseBody = ParseStatementBlock("Expected '{' to start case body.", "Expected '}' to close case body.");
+                cases.Add(new MatchCase { Pattern = pattern, Body = caseBody });
+                continue;
+            }
+
+            if (Match(TokenType.Else))
+            {
+                if (sawElse)
+                {
+                    ErrorReporter.Error("Match statements may contain only one 'else' branch.", Current.Line, Current.Column, _fileName);
+                    continue;
+                }
+
+                elseBody = ParseStatementBlock("Expected '{' to start match else body.", "Expected '}' to close match else body.");
+                sawElse = true;
+                continue;
+            }
+
+            ErrorReporter.Error(
+                $"Expected 'case Pattern {{ ... }}' or 'else {{ ... }}' in match body, got {DescribeToken(Current)}.",
+                Current.Line,
+                Current.Column,
+                _fileName);
+            Advance();
+        }
+
+        Expect(TokenType.RBrace, "Expected '}' to close match body.");
+
+        var stmt = new MatchStmt
+        {
+            Expression = expression,
+            Cases = cases,
+            ElseBody = elseBody
+        };
+        StampNode(stmt, startToken);
+        return stmt;
+    }
+
+    private MatchPattern ParseMatchPattern()
+    {
+        var patternExpr = ParseQualifiedReferenceExpression(
+            "Expected match pattern name.",
+            "Expected identifier after '.'.");
+
+        if (Current.Type == TokenType.LParen)
+        {
+            Advance();
+            var bindingToken = Expect(TokenType.Identifier, "Expected payload binding name inside match pattern.");
+            Expect(TokenType.RParen, "Expected ')' to close payload binding.");
+            var pattern = new UnionMatchPattern
+            {
+                Variant = patternExpr,
+                BindingName = bindingToken.Value
+            };
+            StampNode(pattern, patternExpr);
+            return pattern;
+        }
+
+        var enumPattern = new EnumMatchPattern { Value = patternExpr };
+        StampNode(enumPattern, patternExpr);
+        return enumPattern;
+    }
+
+    private Expr ParseQualifiedReferenceExpression(string missingNameMessage, string missingSegmentMessage)
+    {
+        Expr expr = new IdentifierExpr { Name = Expect(TokenType.Identifier, missingNameMessage).Value };
+        StampNode(expr, Previous);
+        while (Match(TokenType.Dot))
+        {
+            var fieldToken = Expect(TokenType.Identifier, missingSegmentMessage);
+            var field = new FieldExpr
+            {
+                Target = expr,
+                Field = fieldToken.Value
+            };
+            StampNode(field, fieldToken);
+            expr = field;
+        }
+
+        return expr;
     }
 
     private Statement ParseAssignment()

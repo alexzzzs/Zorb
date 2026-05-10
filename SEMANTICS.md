@@ -45,6 +45,7 @@ The lexer recognizes these reserved words:
 - `while`
 - `for`
 - `switch`
+- `match`
 - `case`
 - `return`
 - `struct`
@@ -381,6 +382,7 @@ The current statement forms are:
 - `while`
 - `for`
 - `switch`
+- `match`
 - `return`
 - `continue`
 - `break`
@@ -388,7 +390,7 @@ The current statement forms are:
 
 `break` exits the nearest enclosing `while` or `for`.
 
-There is no dedicated block statement syntax beyond the bodies of `if`, `else`, `while`, `for`, `switch` cases, and functions.
+There is no dedicated block statement syntax beyond the bodies of `if`, `else`, `while`, `for`, `switch` cases, `match` cases, and functions.
 
 ### For Statements
 
@@ -430,6 +432,28 @@ Meaning:
 - `switch` currently accepts numeric and `bool` controlling expressions.
 - Case expressions must be equality-comparable to the controlling expression type.
 - `break` retains its loop-only meaning and is not required to exit a `switch` case.
+
+### Match Statements
+
+Syntax:
+
+```text
+match expr {
+    case Mode.Run { ... }
+    case Value.Number(n) { ... }
+    else { ... }
+}
+```
+
+Meaning:
+
+- `match` evaluates the controlling expression once.
+- `match` currently accepts enum and tagged-union expressions.
+- Enum patterns are qualified enum members such as `Mode.Run`.
+- Tagged-union patterns are qualified variant names, optionally with one payload binding identifier, such as `Value.Number(n)`.
+- Tagged-union payload bindings create a local variable inside that case body with the variant payload type.
+- `else` is optional and runs only when no earlier case matches.
+- Without `else`, enum and tagged-union matches must be exhaustive.
 
 ## Expressions
 
@@ -537,7 +561,7 @@ Meaning:
 - The symbol table has a global scope and nested local scopes.
 - Lookup now prefers the innermost active scope.
 - Function parameters live in the function-local scope.
-- Nested statement blocks created by `if`, `else`, `while`, `for`, and `switch` cases create nested scopes in semantic analysis.
+- Nested statement blocks created by `if`, `else`, `while`, `for`, `switch` cases, and `match` cases create nested scopes in semantic analysis.
 
 ### Shadowing
 
@@ -618,6 +642,7 @@ Other equality comparisons are rejected.
 - Enum values are assignable only when the enum types match exactly.
 - Enum values are valid `switch` operands.
 - A `switch` over an enum without an `else` branch must cover every enum member.
+- Enum values are also valid `match` operands, and `match` over an enum without an `else` branch must cover every enum member.
 
 ### Tagged Unions
 
@@ -628,6 +653,7 @@ Other equality comparisons are rejected.
 - Variant names must be distinct, and `tag` is reserved for the discriminator field.
 - Union values are assignable only when the union types match exactly.
 - Switching on `value.tag` uses the normal enum-switch rules, including exhaustiveness checking when no `else` branch is present.
+- `match value { case Value.Number(n) { ... } }` is the direct tagged-union branching form, and without `else` it must cover every variant.
 
 ### Variable Initialization
 

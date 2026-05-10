@@ -1,5 +1,5 @@
-import "../../std/io.zorb"
-import "../../std/os.zorb"
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
 
 union Value {
     Number: i64,
@@ -8,8 +8,8 @@ union Value {
 
 fn score(value: Value) -> i64 {
     match value {
-        case Value.Number(number) {
-            return number
+        case Value.Number(n) {
+            return n
         }
         case Value.Flag(flag) {
             if flag {
@@ -22,8 +22,12 @@ fn score(value: Value) -> i64 {
 }
 
 fn _start() {
-    value: Value = Value{ Number: 9 }
-    std.io.print_i64(score(value))
+    number: Value = Value{ Number: 9 }
+    flag: Value = Value{ Flag: true }
+
+    std.io.print_i64(score(number))
+    std.io.print("\n")
+    std.io.print_i64(score(flag))
     std.io.print("\n")
     std.os.exit(0)
 }

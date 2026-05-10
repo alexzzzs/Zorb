@@ -143,6 +143,35 @@ public class SwitchStmt : Statement
     public List<Statement> ElseBody { get; set; } = new();
 }
 
+public abstract class MatchPattern : Node { }
+
+public class EnumMatchPattern : MatchPattern
+{
+    public Expr Value { get; set; } = null!;
+}
+
+public class UnionMatchPattern : MatchPattern
+{
+    public Expr Variant { get; set; } = null!;
+    public string? BindingName { get; set; }
+    public string? ResolvedUnionName { get; set; }
+    public string? VariantName { get; set; }
+    public TypeNode? BindingType { get; set; }
+}
+
+public class MatchCase
+{
+    public MatchPattern Pattern { get; set; } = null!;
+    public List<Statement> Body { get; set; } = new();
+}
+
+public class MatchStmt : Statement
+{
+    public Expr Expression { get; set; } = null!;
+    public List<MatchCase> Cases { get; set; } = new();
+    public List<Statement> ElseBody { get; set; } = new();
+}
+
 public class ContinueStmt : Statement { }
 
 public class BreakStmt : Statement { }
