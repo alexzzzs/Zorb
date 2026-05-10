@@ -1095,10 +1095,21 @@ static void __zorb_slice_oob(void) {
     {
         foreach (var matchCase in matchStmt.Cases)
         {
-            if (matchCase.Pattern is not EnumMatchPattern enumPattern)
-                continue;
+            Expr caseValue;
+            if (matchCase.Pattern is EnumMatchPattern enumPattern)
+            {
+                caseValue = enumPattern.Value;
+            }
+            else if (matchCase.Pattern is UnionMatchPattern unionPattern && string.IsNullOrEmpty(unionPattern.BindingName))
+            {
+                caseValue = unionPattern.Variant;
+            }
+            else
+            {
+                throw new InvalidOperationException($"Unexpected match pattern '{matchCase.Pattern.GetType().Name}' in enum match over '{FormatType(matchType)}'.");
+            }
 
-            var generatedCaseValue = CoerceExpressionToTargetType(matchType, enumPattern.Value, GenerateExpressionWithPrelude(enumPattern.Value));
+            var generatedCaseValue = CoerceExpressionToTargetType(matchType, caseValue, GenerateExpressionWithPrelude(caseValue));
             sb.AppendLine($"    if (!{matchMatchedTemp}) {{");
             AppendIndentedBlock(sb, generatedCaseValue.Prelude, "        ");
             sb.AppendLine($"        if ({matchValueTemp} == {generatedCaseValue.Code}) {{");
@@ -1117,7 +1128,7 @@ static void __zorb_slice_oob(void) {
         foreach (var matchCase in matchStmt.Cases)
         {
             if (matchCase.Pattern is not UnionMatchPattern unionPattern || string.IsNullOrEmpty(unionPattern.VariantName))
-                continue;
+                throw new InvalidOperationException($"Unexpected match pattern '{matchCase.Pattern.GetType().Name}' in union match over '{FormatType(matchType)}'.");
 
             var tagCode = GetUnionTagMemberCode(unionDefinition, unionPattern.VariantName);
             sb.AppendLine($"    if (!{matchMatchedTemp}) {{");

@@ -1009,6 +1009,26 @@ public class TypeChecker
 
         foreach (var matchCase in matchStmt.Cases)
         {
+            if (matchCase.Pattern is UnionMatchPattern unionPattern && string.IsNullOrEmpty(unionPattern.BindingName))
+            {
+                CheckExpression(unionPattern.Variant);
+                var unionPatternType = GetExpressionType(unionPattern.Variant);
+                if (unionPatternType != null && !SameType(matchType, unionPatternType))
+                    _errors.Error(unionPattern.Variant, $"Match case pattern of type '{FormatType(unionPatternType)}' does not match enum type '{FormatType(matchType)}'.");
+
+                if (TryGetSwitchCaseKey(unionPattern.Variant, out var unionCaseKey))
+                {
+                    if (!seenCaseValues.TryAdd(unionCaseKey, unionPattern))
+                        _errors.Error(unionPattern.Variant, $"Duplicate match case value '{unionCaseKey}'.{FormatPreviousDeclarationSuffix(seenCaseValues[unionCaseKey])}");
+                }
+
+                if (TryEvaluateConstIntExpr(unionPattern.Variant, out var unionEnumCaseValue, out _))
+                    seenEnumCaseValues.Add(unionEnumCaseValue);
+
+                caseOutcomes.Add(CheckBlock(matchCase.Body));
+                continue;
+            }
+
             if (matchCase.Pattern is not EnumMatchPattern enumPattern)
             {
                 _errors.Error(matchCase.Pattern, $"Match over enum '{FormatType(matchType)}' requires enum-member patterns like '{enumDefinition?.Name}.Member'.");

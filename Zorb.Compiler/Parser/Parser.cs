@@ -1346,6 +1346,17 @@ public List<Node> ParseProgram()
             return pattern;
         }
 
+        if (patternExpr is FieldExpr)
+        {
+            var pattern = new UnionMatchPattern
+            {
+                Variant = patternExpr,
+                BindingName = null
+            };
+            StampNode(pattern, patternExpr);
+            return pattern;
+        }
+
         var enumPattern = new EnumMatchPattern { Value = patternExpr };
         StampNode(enumPattern, patternExpr);
         return enumPattern;
