@@ -1,0 +1,7 @@
+struct Box {
+    value: i64
+}
+
+enum Bad: Box {
+    Value
+}

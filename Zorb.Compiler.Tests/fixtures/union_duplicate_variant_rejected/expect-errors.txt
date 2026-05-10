@@ -1,0 +1,1 @@
+Union 'Value' declares variant 'Number' more than once.

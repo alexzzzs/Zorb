@@ -1,0 +1,14 @@
+import "lib.zorb" as util
+
+fn main() -> i64 {
+    mode: util.Mode = util.Mode.Run
+
+    switch mode {
+        case util.Mode.Idle {
+            return 0
+        }
+        case util.Mode.Run {
+            return 1
+        }
+    }
+}

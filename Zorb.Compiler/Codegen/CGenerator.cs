@@ -231,6 +231,28 @@ static void __zorb_slice_oob(void) {
             sb.Append(GenerateStruct(s, null));
         }
 
+        var emittedEnums = new HashSet<string>();
+        var enums = allNodes.OfType<EnumNode>().ToList();
+        foreach (var enumNode in enums)
+        {
+            var cName = FlattenName(enumNode.NamespacePath, enumNode.Name, null);
+            if (emittedEnums.Contains(cName))
+                continue;
+            emittedEnums.Add(cName);
+            sb.Append(GenerateEnum(enumNode));
+        }
+
+        var emittedUnions = new HashSet<string>();
+        var unions = allNodes.OfType<UnionNode>().ToList();
+        foreach (var unionNode in unions)
+        {
+            var cName = FlattenName(unionNode.NamespacePath, unionNode.Name, null);
+            if (emittedUnions.Contains(cName))
+                continue;
+            emittedUnions.Add(cName);
+            sb.Append(GenerateUnion(unionNode));
+        }
+
         // EMIT DYNAMIC STRUCTS (Result unions)
         sb.Append(_dynamicStructs.ToString());
 
@@ -418,6 +440,48 @@ static void __zorb_slice_oob(void) {
         return sb.ToString();
     }
 
+    private string GenerateEnum(EnumNode enumNode)
+    {
+        var sb = new StringBuilder();
+        var enumName = FlattenName(enumNode.NamespacePath, enumNode.Name, null);
+        sb.AppendLine($"typedef {MapType(enumNode.UnderlyingType)} {enumName};");
+        foreach (var member in enumNode.Members)
+        {
+            var memberName = $"{enumName}_{member.Name}";
+            var memberValue = member.ResolvedValue ?? 0;
+            sb.AppendLine($"static const {enumName} {memberName} = ({enumName}){memberValue};");
+        }
+        sb.AppendLine();
+        return sb.ToString();
+    }
+
+    private string GenerateUnion(UnionNode unionNode)
+    {
+        var sb = new StringBuilder();
+        var unionName = FlattenName(unionNode.NamespacePath, unionNode.Name, null);
+        var tagName = GetUnionTagCName(unionNode);
+        sb.AppendLine($"typedef int32_t {tagName};");
+        for (int i = 0; i < unionNode.Variants.Count; i++)
+            sb.AppendLine($"static const {tagName} {tagName}_{unionNode.Variants[i].Name} = ({tagName}){i};");
+        sb.AppendLine($"struct {unionName} {{");
+        sb.AppendLine($"    {tagName} tag;");
+        sb.AppendLine("    union {");
+        foreach (var variant in unionNode.Variants)
+        {
+            var cType = variant.TypeName.IsFunction ? MapType(variant.TypeName, variant.Name) : MapType(variant.TypeName);
+            if (variant.TypeName.ArraySize != null)
+                sb.AppendLine($"        {cType} {variant.Name}[{variant.TypeName.ArraySize}];");
+            else if (variant.TypeName.IsFunction)
+                sb.AppendLine($"        {cType};");
+            else
+                sb.AppendLine($"        {cType} {variant.Name};");
+        }
+        sb.AppendLine("    } data;");
+        sb.AppendLine("};");
+        sb.AppendLine();
+        return sb.ToString();
+    }
+
     private string GetVariableAttributeSuffix(List<string> attributes)
     {
         var attrs = new List<string>();
@@ -461,7 +525,17 @@ static void __zorb_slice_oob(void) {
         }
 
         string baseType;
-        baseType = type.Name switch
+        var fullName = type.NamespacePath.Any()
+            ? string.Join(".", type.NamespacePath) + "." + type.Name
+            : type.Name;
+        var enumDefinition = _symbolTable.LookupEnumNode(fullName);
+        if (enumDefinition != null)
+        {
+            baseType = MapType(enumDefinition.UnderlyingType);
+        }
+        else
+        {
+            baseType = type.Name switch
         {
             "i8" => "int8_t",
             "i16" => "int16_t",
@@ -478,6 +552,7 @@ static void __zorb_slice_oob(void) {
             // If not a primitive, it's a struct - flatten name and prefix with 'struct'
             _ => "struct " + FlattenName(type.NamespacePath, type.Name)
         };
+        }
 
         if (type.IsVolatile)
             baseType = "volatile " + baseType;
@@ -1238,6 +1313,45 @@ static void __zorb_slice_oob(void) {
                     $"({generatedLeft.Code} {bin.Operator} {generatedRight.Code})",
                     GetExprType(expr));
             case StructLiteralExpr structLiteral:
+                if (IsUnionType(structLiteral.TypeName))
+                {
+                    var unionDefinition = GetUnionDefinition(structLiteral.TypeName)
+                        ?? throw new Exception($"Unknown union type '{FormatType(structLiteral.TypeName)}'.");
+                    if (structLiteral.Fields.Count != 1)
+                        throw new Exception($"Union literal '{FormatType(structLiteral.TypeName)}' must initialize exactly one variant.");
+
+                    var variantField = structLiteral.Fields[0];
+                    var variantType = GetUnionVariantType(structLiteral.TypeName, variantField.Name)
+                        ?? throw new Exception($"Unknown union variant '{variantField.Name}' in '{FormatType(structLiteral.TypeName)}'.");
+                    var generatedVariant = CoerceExpressionToTargetType(variantType, variantField.Value, GenerateExpressionWithPrelude(variantField.Value));
+                    var tagCode = GetUnionTagMemberCode(unionDefinition, variantField.Name);
+
+                    if (string.IsNullOrEmpty(generatedVariant.Prelude) && (variantType.ArraySize == null || variantField.Value is ArrayLiteralExpr))
+                    {
+                        return new GeneratedExpression(
+                            "",
+                            $"({MapType(structLiteral.TypeName)}){{ .tag = {tagCode}, .data = {{ .{variantField.Name} = {generatedVariant.Code} }} }}",
+                            GetExprType(expr));
+                    }
+
+                    var unionTemp = NewTemp("union_literal");
+                    var unionPrelude = new StringBuilder();
+                    unionPrelude.AppendLine($"{MapType(structLiteral.TypeName)} {unionTemp};");
+                    unionPrelude.AppendLine($"{unionTemp}.tag = {tagCode};");
+                    unionPrelude.Append(generatedVariant.Prelude);
+                    if (variantType.ArraySize is int variantArrayLength)
+                    {
+                        for (int i = 0; i < variantArrayLength; i++)
+                            unionPrelude.AppendLine($"{unionTemp}.data.{variantField.Name}[{i}] = {generatedVariant.Code}[{i}];");
+                    }
+                    else
+                    {
+                        unionPrelude.AppendLine($"{unionTemp}.data.{variantField.Name} = {generatedVariant.Code};");
+                    }
+
+                    return new GeneratedExpression(unionPrelude.ToString(), unionTemp, GetExprType(expr));
+                }
+
                 var generatedFields = structLiteral.Fields
                     .Select(field =>
                     {
@@ -1340,6 +1454,14 @@ static void __zorb_slice_oob(void) {
                 var targetType = GetExprType(field.Target);
                 if (targetType != null && targetType.IsSlice)
                     return new GeneratedExpression(generatedFieldTarget.Prelude, $"{fieldTargetCode}.{field.Field}", GetExprType(expr));
+                var unionFieldTargetType = targetType?.IsPointer == true ? GetPointeeType(targetType) : targetType;
+                if (unionFieldTargetType != null && IsUnionType(unionFieldTargetType))
+                {
+                    var unionAccess = field.Field == "tag"
+                        ? (targetType?.IsPointer == true ? $"{fieldTargetCode}->tag" : $"{fieldTargetCode}.tag")
+                        : (targetType?.IsPointer == true ? $"{fieldTargetCode}->data.{field.Field}" : $"{fieldTargetCode}.data.{field.Field}");
+                    return new GeneratedExpression(generatedFieldTarget.Prelude, unionAccess, GetExprType(expr));
+                }
                 bool isPointerTarget = false;
 
                 // FIX: Error Unions are always structs in C, never pointers, even if their inner type is a pointer.
@@ -1789,6 +1911,16 @@ static void __zorb_slice_oob(void) {
             ? string.Join(".", structType.NamespacePath) + "." + structType.Name
             : structType.Name;
 
+        if (_symbolTable.LookupUnionNode(fullName) is UnionNode unionDefinition)
+        {
+            if (fieldName == "tag")
+                return GetUnionTagType(unionDefinition);
+
+            var unionVariant = unionDefinition.Variants.FirstOrDefault(variant => variant.Name == fieldName);
+            if (unionVariant != null)
+                return unionVariant.TypeName.Clone();
+        }
+
         if (_symbolTable.TryLookupStruct(fullName, out var fields))
         {
             foreach (var field in fields!)
@@ -1810,6 +1942,80 @@ static void __zorb_slice_oob(void) {
             }
         }
         return null;
+    }
+
+    private bool IsUnionType(TypeNode type)
+    {
+        var fullName = type.NamespacePath.Any()
+            ? string.Join(".", type.NamespacePath) + "." + type.Name
+            : type.Name;
+        return _symbolTable.LookupUnionNode(fullName) != null;
+    }
+
+    private UnionNode? GetUnionDefinition(TypeNode type)
+    {
+        var fullName = type.NamespacePath.Any()
+            ? string.Join(".", type.NamespacePath) + "." + type.Name
+            : type.Name;
+        return _symbolTable.LookupUnionNode(fullName);
+    }
+
+    private static TypeNode? GetPointeeType(TypeNode? type)
+    {
+        if (type == null || !type.IsPointer)
+            return type;
+
+        var pointee = type.Clone();
+        if (pointee.PointerLevel > 1)
+            pointee.PointerLevel--;
+        else
+        {
+            pointee.IsPointer = false;
+            pointee.PointerLevel = 0;
+        }
+        return pointee;
+    }
+
+    private TypeNode? GetUnionVariantType(TypeNode unionType, string variantName)
+    {
+        var unionDefinition = GetUnionDefinition(unionType);
+        return unionDefinition?.Variants.FirstOrDefault(variant => variant.Name == variantName)?.TypeName.Clone();
+    }
+
+    private static TypeNode GetUnionTagType(UnionNode unionNode)
+    {
+        return new TypeNode
+        {
+            Name = "Tag",
+            NamespacePath = unionNode.NamespacePath.Concat(new[] { unionNode.Name }).ToList()
+        };
+    }
+
+    private string GetUnionTagCName(UnionNode unionNode)
+    {
+        return FlattenName(unionNode.NamespacePath.Concat(new[] { unionNode.Name }).ToList(), "Tag", null);
+    }
+
+    private string GetUnionTagMemberCode(UnionNode unionNode, string variantName)
+    {
+        var tagName = GetUnionTagCName(unionNode);
+        return $"{tagName}_{variantName}";
+    }
+
+    private static string FormatType(TypeNode type)
+    {
+        var baseName = type.NamespacePath.Any()
+            ? string.Join(".", type.NamespacePath) + "." + type.Name
+            : type.Name;
+
+        if (type.IsPointer)
+            baseName = new string('*', Math.Max(type.PointerLevel, 1)) + baseName;
+        if (type.ArraySize != null)
+            baseName = $"[{type.ArraySize}]{baseName}";
+        if (type.IsSlice)
+            baseName = $"[]{baseName}";
+
+        return baseName;
     }
 
     private static bool CanInlineStructLiteralField(StructLiteralField field, TypeNode? fieldType, GeneratedExpression generated)

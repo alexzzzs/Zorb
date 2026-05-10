@@ -43,6 +43,8 @@ public enum TokenType
     RBracket,
     Dot,
     Struct,
+    Enum,
+    Union,
     Cast,
     Builtin,
     Import,

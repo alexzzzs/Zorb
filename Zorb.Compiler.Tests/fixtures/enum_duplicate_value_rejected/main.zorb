@@ -1,0 +1,4 @@
+enum Mode: i32 {
+    Idle = 1,
+    Run = 1
+}
