@@ -399,6 +399,8 @@ namespace Zorb.Compiler.Lexer;
                     tokens.Add(new Token(TokenType.For, "", loc.Item1, loc.Item2));
                 else if (text == "switch")
                     tokens.Add(new Token(TokenType.Switch, "", loc.Item1, loc.Item2));
+                else if (text == "match")
+                    tokens.Add(new Token(TokenType.Match, "", loc.Item1, loc.Item2));
                 else if (text == "case")
                     tokens.Add(new Token(TokenType.Case, "", loc.Item1, loc.Item2));
                 else if (text == "return")

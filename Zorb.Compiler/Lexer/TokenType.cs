@@ -28,6 +28,7 @@ public enum TokenType
     While,
     For,
     Switch,
+    Match,
     Case,
     Greater,
     Less,

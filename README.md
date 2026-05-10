@@ -18,7 +18,7 @@ The compiler supports a focused language subset:
 - `enum` types with explicit integer backing types
 - tagged `union` types with generated tag enums
 - globals, `const` declarations, and error declarations
-- `if`, `else`, `while`, `for`, `switch`, `continue`, `break`, and `return`
+- `if`, `else`, `while`, `for`, `switch`, `match`, `continue`, `break`, and `return`
 - logical `&&`, `||`, and unary `!` on `bool`
 - pointers, fixed-size arrays, slice types, function types, and error unions
 - typed struct literals, typed array literals, and local array value copies
@@ -249,7 +249,7 @@ fn main() {
 }
 ```
 
-Enums and exhaustive switch:
+Enums and exhaustive match:
 
 ```zorb
 enum Mode: i32 {
@@ -259,7 +259,7 @@ enum Mode: i32 {
 }
 
 fn score(mode: Mode) -> i64 {
-    switch mode {
+    match mode {
         case Mode.Idle { return 1 }
         case Mode.Run { return 4 }
         case Mode.Stop { return 9 }
@@ -267,7 +267,7 @@ fn score(mode: Mode) -> i64 {
 }
 ```
 
-Tagged unions:
+Tagged unions with payload binding:
 
 ```zorb
 union Value {
@@ -276,10 +276,10 @@ union Value {
 }
 
 fn score(value: Value) -> i64 {
-    switch value.tag {
-        case Value.Tag.Number { return value.Number }
-        case Value.Tag.Flag {
-            if value.Flag { return 1 }
+    match value {
+        case Value.Number(number) { return number }
+        case Value.Flag(flag) {
+            if flag { return 1 }
             return 0
         }
     }
@@ -333,7 +333,7 @@ Current checked-in examples:
 
 - [`examples/basics/import_alias/main.zorb`](./examples/basics/import_alias/main.zorb): import aliasing with a sibling module.
 - [`examples/basics/error_catch.zorb`](./examples/basics/error_catch.zorb): error unions with `catch`, `std.io`, and `std.os`.
-- [`examples/basics/tagged_union.zorb`](./examples/basics/tagged_union.zorb): tagged unions with generated tag enums and exhaustive switching.
+- [`examples/basics/tagged_union.zorb`](./examples/basics/tagged_union.zorb): tagged unions with payload-binding `match`.
 - [`examples/basics/platform_info.zorb`](./examples/basics/platform_info.zorb): cross-platform stdlib helpers for platform detection, stdout, and stderr.
 - [`examples/basics/literals.zorb`](./examples/basics/literals.zorb): typed struct and array literals combined with logical operators.
 - [`examples/basics/switch_for.zorb`](./examples/basics/switch_for.zorb): `for` loops and `switch` with an `else` branch.
