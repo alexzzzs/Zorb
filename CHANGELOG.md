@@ -44,6 +44,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `enum` declarations with explicit built-in integer backing types, auto-incremented members, and constant-expression member initializers.
+- Qualified enum member references such as `Mode.Run`, including import-alias flows like `pkg.Mode.Run`.
+- Enum-aware `switch` checking, including duplicate-case detection by resolved value and exhaustiveness checking when no `else` branch is present.
+- Fixture, runtime, and example coverage for enum code generation, import-alias usage, invalid underlying types, duplicate values, and exhaustive switching.
+- Tagged `union` declarations with generated `Union.Tag` enums plus literals such as `Value{ Number: 7 }`.
+- Union field access through `.tag` and payload fields, including import-alias support for tag members like `pkg.Value.Tag.Number`.
+- Fixture, runtime, and example coverage for tagged unions, invalid union declarations, and tagged-union switching.
+
 ### Changed
 
 ### Fixed

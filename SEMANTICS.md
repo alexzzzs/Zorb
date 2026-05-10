@@ -48,6 +48,8 @@ The lexer recognizes these reserved words:
 - `case`
 - `return`
 - `struct`
+- `enum`
+- `union`
 - `cast`
 - `extern`
 - `abi`
@@ -175,6 +177,7 @@ The compiler treats these names as built-in scalar types:
 - `u16`
 - `u32`
 - `u64`
+- user-defined `enum` types with explicit built-in integer backing types
 - `bool`
 - `void`
 - `string`
@@ -599,9 +602,32 @@ For equality:
   - numeric vs numeric
   - `bool` vs `bool`
   - `string` vs `string`
+  - enum vs enum when the enum types match exactly
   - pointer vs pointer when the pointer types match exactly
 
 Other equality comparisons are rejected.
+
+### Enums
+
+- `enum Name: T { ... }` introduces a nominal scalar type backed by built-in integer type `T`.
+- Backing types must be built-in integer scalar types.
+- Member initializers must be constant integer expressions.
+- Members without an explicit initializer auto-increment from the previous resolved value, starting at `0`.
+- Member values must fit the declared backing type and must be distinct within the enum.
+- Enum members are referenced with qualified names such as `Mode.Run`.
+- Enum values are assignable only when the enum types match exactly.
+- Enum values are valid `switch` operands.
+- A `switch` over an enum without an `else` branch must cover every enum member.
+
+### Tagged Unions
+
+- `union Name { Variant: T, ... }` introduces a nominal tagged union type.
+- Each union generates a discriminator enum `Name.Tag` with one member per variant in declaration order.
+- Union literals must initialize exactly one variant, for example `Value{ Number: 7 }`.
+- Union field access supports `.tag` plus the declared variant fields.
+- Variant names must be distinct, and `tag` is reserved for the discriminator field.
+- Union values are assignable only when the union types match exactly.
+- Switching on `value.tag` uses the normal enum-switch rules, including exhaustiveness checking when no `else` branch is present.
 
 ### Variable Initialization
 

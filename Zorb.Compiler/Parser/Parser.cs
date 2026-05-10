@@ -101,6 +101,17 @@ public class Parser
         return false;
     }
 
+    private (List<string> Path, string Name) ParseDottedDeclName(string missingNameMessage, string missingSegmentMessage)
+    {
+        var path = new List<string> { Expect(TokenType.Identifier, missingNameMessage).Value };
+        while (Match(TokenType.Dot))
+            path.Add(Expect(TokenType.Identifier, missingSegmentMessage).Value);
+
+        var name = path[^1];
+        path.RemoveAt(path.Count - 1);
+        return (path, name);
+    }
+
     // Checks if the current token is an identifier that matches a contextual keyword.
     // If so, returns the corresponding TokenType; otherwise returns null.
     private TokenType? GetContextualKeywordType()
@@ -144,6 +155,8 @@ private void Synchronize()
             case TokenType.Error:
             case TokenType.Export:
             case TokenType.Break:
+            case TokenType.Enum:
+            case TokenType.Union:
                 return;
         }
 
@@ -178,6 +191,10 @@ public List<Node> ParseProgram()
                 nodes.Add(ParseVarDecl(true));
             else if (Current.Type == TokenType.Struct)
                 nodes.Add(ParseStruct());
+            else if (Current.Type == TokenType.Enum)
+                nodes.Add(ParseEnum());
+            else if (Current.Type == TokenType.Union)
+                nodes.Add(ParseUnion());
             else if (Current.Type == TokenType.Fn || Current.Type == TokenType.Extern)
                 nodes.Add(ParseFunction());
             else if (Current.Type == TokenType.LBracket)
@@ -207,7 +224,7 @@ public List<Node> ParseProgram()
             else
             {
                 ErrorReporter.Error(
-                    $"Unexpected top-level token {DescribeToken(Current)}. Expected import, error, const, struct, fn, extern fn, an attribute list, or a variable declaration.",
+                    $"Unexpected top-level token {DescribeToken(Current)}. Expected import, error, const, struct, enum, union, fn, extern fn, an attribute list, or a variable declaration.",
                     Current.Line,
                     Current.Column,
                     _fileName);
@@ -252,6 +269,20 @@ public List<Node> ParseProgram()
             return decl;
         }
 
+        if (Current.Type == TokenType.Enum)
+        {
+            var decl = ParseEnum();
+            decl.IsExported = true;
+            return decl;
+        }
+
+        if (Current.Type == TokenType.Union)
+        {
+            var decl = ParseUnion();
+            decl.IsExported = true;
+            return decl;
+        }
+
         if (Current.Type == TokenType.Fn || Current.Type == TokenType.Extern)
         {
             var decl = ParseFunction();
@@ -290,7 +321,7 @@ public List<Node> ParseProgram()
         }
 
         ErrorReporter.Error(
-            $"Expected an exportable top-level declaration after 'export'. Use 'export fn', 'export struct', 'export const', or 'export name: Type = ...'. Got {DescribeToken(Current)}.",
+            $"Expected an exportable top-level declaration after 'export'. Use 'export fn', 'export struct', 'export enum', 'export union', 'export const', or 'export name: Type = ...'. Got {DescribeToken(Current)}.",
             Current.Line,
             Current.Column,
             _fileName);
@@ -359,15 +390,9 @@ public List<Node> ParseProgram()
         var attributes = ParseStructAttributes();
         var startToken = Expect(TokenType.Struct);
 
-        var path = new List<string>();
-        path.Add(Expect(TokenType.Identifier, "Expected struct name after 'struct'.").Value);
-        while (Match(TokenType.Dot))
-        {
-            path.Add(Expect(TokenType.Identifier, "Expected identifier after '.' in struct name.").Value);
-        }
-
-        var name = path.Last();
-        path.RemoveAt(path.Count - 1);
+        var (path, name) = ParseDottedDeclName(
+            "Expected struct name after 'struct'.",
+            "Expected identifier after '.' in struct name.");
 
         Expect(TokenType.LBrace, "Expected '{' to start struct body.");
 
@@ -399,6 +424,117 @@ public List<Node> ParseProgram()
         Expect(TokenType.RBrace, "Expected '}' to close struct body.");
 
         var node = new StructNode { NamespacePath = path, Name = name, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr, Fields = fields };
+        StampNode(node, startToken);
+        return node;
+    }
+
+    private EnumNode ParseEnum()
+    {
+        var startToken = Expect(TokenType.Enum);
+
+        var (path, name) = ParseDottedDeclName(
+            "Expected enum name after 'enum'.",
+            "Expected identifier after '.' in enum name.");
+
+        Expect(TokenType.Colon, "Expected ':' after enum name.");
+        var underlyingType = ParseType();
+        Expect(TokenType.LBrace, "Expected '{' to start enum body.");
+
+        var members = new List<EnumMember>();
+        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.Eof)
+        {
+            var memberNameToken = Expect(TokenType.Identifier, "Expected enum member name.");
+            Expr? value = null;
+            if (Match(TokenType.Equals))
+                value = ParseExpression();
+
+            var member = new EnumMember
+            {
+                Name = memberNameToken.Value,
+                Value = value
+            };
+            StampNode(member, memberNameToken);
+            members.Add(member);
+
+            if (Current.Type == TokenType.Comma)
+            {
+                Advance();
+                continue;
+            }
+
+            if (Current.Type == TokenType.RBrace)
+                break;
+
+            ErrorReporter.Error(
+                $"Expected ',' or '}}' after enum member '{member.Name}', got {DescribeToken(Current)}.",
+                Current.Line,
+                Current.Column,
+                _fileName);
+            Advance();
+        }
+
+        Expect(TokenType.RBrace, "Expected '}' to close enum body.");
+
+        var node = new EnumNode
+        {
+            NamespacePath = path,
+            Name = name,
+            UnderlyingType = underlyingType,
+            Members = members
+        };
+        StampNode(node, startToken);
+        return node;
+    }
+
+    private UnionNode ParseUnion()
+    {
+        var startToken = Expect(TokenType.Union);
+
+        var (path, name) = ParseDottedDeclName(
+            "Expected union name after 'union'.",
+            "Expected identifier after '.' in union name.");
+
+        Expect(TokenType.LBrace, "Expected '{' to start union body.");
+
+        var variants = new List<UnionVariant>();
+        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.Eof)
+        {
+            var variantNameToken = Expect(TokenType.Identifier, "Expected union variant name.");
+            Expect(TokenType.Colon, $"Expected ':' after union variant '{variantNameToken.Value}'.");
+            var variantType = ParseType();
+            var variant = new UnionVariant
+            {
+                Name = variantNameToken.Value,
+                TypeName = variantType
+            };
+            StampNode(variant, variantNameToken);
+            variants.Add(variant);
+
+            if (Current.Type == TokenType.Comma)
+            {
+                Advance();
+                continue;
+            }
+
+            if (Current.Type == TokenType.RBrace)
+                break;
+
+            ErrorReporter.Error(
+                $"Expected ',' or '}}' after union variant '{variant.Name}', got {DescribeToken(Current)}.",
+                Current.Line,
+                Current.Column,
+                _fileName);
+            Advance();
+        }
+
+        Expect(TokenType.RBrace, "Expected '}' to close union body.");
+
+        var node = new UnionNode
+        {
+            NamespacePath = path,
+            Name = name,
+            Variants = variants
+        };
         StampNode(node, startToken);
         return node;
     }

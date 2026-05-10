@@ -1,1 +1,1 @@
-Switch expression must have numeric or bool type, got 'string'.
+Switch expression must have numeric, bool, or enum type, got 'string'.

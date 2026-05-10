@@ -1,0 +1,5 @@
+struct Value {
+Value_Tag tag;
+union {
+return value.data.Number;
+Value_Tag_Flag

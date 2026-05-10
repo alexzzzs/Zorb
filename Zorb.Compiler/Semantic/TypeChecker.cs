@@ -133,6 +133,7 @@ public class TypeChecker
         type.NamespacePath = parts.Length > 1
             ? parts[..^1].ToList()
             : new List<string>();
+        type.IsAliasQualifiedReference = true;
 
         if (type.IsErrorUnion && type.ErrorInnerType != null && ReferenceEquals(type.ErrorInnerType, type))
         {
@@ -177,6 +178,11 @@ public class TypeChecker
 
             case FieldExpr field:
                 field.Target = NormalizeAliasReferences(field.Target);
+                if (TryGetQualifiedName(field) is string qualifiedName &&
+                    TryResolveAliasQualifiedName(qualifiedName, out var resolvedQualifiedName))
+                    field.ResolvedQualifiedName = resolvedQualifiedName;
+                else
+                    field.ResolvedQualifiedName = null;
                 return field;
 
             case UnaryExpr unary:
@@ -296,6 +302,20 @@ public class TypeChecker
     {
         if (_symbolTable.IsLocal(fullName)) return true;
         if (_fileScopes.Count > 0 && _fileScopes.Peek().Contains(fullName)) return true;
+        return false;
+    }
+
+    private bool IsVisibleThroughAlias(string fullName)
+    {
+        foreach (var scope in _importAliasScopes)
+        {
+            foreach (var exports in scope.Values)
+            {
+                if (exports.Contains(fullName))
+                    return true;
+            }
+        }
+
         return false;
     }
 
@@ -460,11 +480,33 @@ public class TypeChecker
                     if (field.TypeName.IsFunction || field.TypeName.Name == "void" || field.TypeName.Name == "string" || field.TypeName.Name == "bool") 
                         continue;
 
-                    if (!_numericTypes.Contains(field.TypeName.Name) && !_symbolTable.TryLookupStruct(fieldFullName, out _))
+                    if (!_numericTypes.Contains(field.TypeName.Name) &&
+                        !_symbolTable.TryLookupStruct(fieldFullName, out _) &&
+                        _symbolTable.LookupEnumNode(fieldFullName) == null &&
+                        _symbolTable.LookupUnionNode(fieldFullName) == null)
                     {
                         _errors.Error(sn, $"Unknown type '{fieldFullName}' in struct '{fullName}'");
                     }
                 }
+            }
+            else if (node is EnumNode enumNode) {
+                NormalizeTypeReferenceInPlace(enumNode.UnderlyingType);
+                var fullName = enumNode.NamespacePath.Any() ? string.Join(".", enumNode.NamespacePath) + "." + enumNode.Name : enumNode.Name;
+                if (!declaredInThisFile.TryAdd(fullName, enumNode))
+                    _errors.Error(enumNode, $"Duplicate top-level declaration '{fullName}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[fullName])}");
+                MakeVisible(fullName);
+                if (!_symbolTable.IsDefined(fullName))
+                    _symbolTable.DefineEnum(fullName, enumNode);
+                RegisterEnumMembers(enumNode);
+            }
+            else if (node is UnionNode unionNode) {
+                var fullName = unionNode.NamespacePath.Any() ? string.Join(".", unionNode.NamespacePath) + "." + unionNode.Name : unionNode.Name;
+                if (!declaredInThisFile.TryAdd(fullName, unionNode))
+                    _errors.Error(unionNode, $"Duplicate top-level declaration '{fullName}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[fullName])}");
+                MakeVisible(fullName);
+                if (!_symbolTable.IsDefined(fullName))
+                    _symbolTable.DefineUnion(fullName, unionNode);
+                RegisterUnionTagEnum(unionNode);
             }
             else if (node is VariableDeclarationNode vd) {
                 NormalizeTypeReferenceInPlace(vd.TypeName);
@@ -495,6 +537,14 @@ public class TypeChecker
                     ValidateTypeReference(field.TypeName, field);
                 var fullName = structNode.NamespacePath.Any() ? string.Join(".", structNode.NamespacePath) + "." + structNode.Name : structNode.Name;
                 ValidateStructAttributes(structNode, fullName);
+            }
+            else if (node is EnumNode enumNode)
+            {
+                ValidateEnumDeclaration(enumNode);
+            }
+            else if (node is UnionNode unionNode)
+            {
+                ValidateUnionDeclaration(unionNode);
             }
             else if (node is FunctionDecl functionDecl)
             {
@@ -587,6 +637,20 @@ public class TypeChecker
         {
             if (node is FunctionDecl fn && fn.IsExported) exports.Add(fn.NamespacePath.Any() ? string.Join(".", fn.NamespacePath) + "." + fn.Name : fn.Name);
             else if (node is StructNode sn && sn.IsExported) exports.Add(sn.NamespacePath.Any() ? string.Join(".", sn.NamespacePath) + "." + sn.Name : sn.Name);
+            else if (node is EnumNode en && en.IsExported)
+            {
+                var enumName = en.NamespacePath.Any() ? string.Join(".", en.NamespacePath) + "." + en.Name : en.Name;
+                exports.Add(enumName);
+                exports.AddRange(en.Members.Select(member => $"{enumName}.{member.Name}"));
+            }
+            else if (node is UnionNode unionNode && unionNode.IsExported)
+            {
+                var unionName = unionNode.NamespacePath.Any() ? string.Join(".", unionNode.NamespacePath) + "." + unionNode.Name : unionNode.Name;
+                var tagEnumName = GetUnionTagEnumFullName(unionNode);
+                exports.Add(unionName);
+                exports.Add(tagEnumName);
+                exports.AddRange(unionNode.Variants.Select(variant => $"{tagEnumName}.{variant.Name}"));
+            }
             else if (node is VariableDeclarationNode vd && vd.IsExported) exports.Add(vd.Name);
         }
         
@@ -802,11 +866,13 @@ public class TypeChecker
                 var switchType = GetExpressionType(switchStmt.Expression);
                 if (switchType != null && !IsSwitchOperandType(switchType))
                 {
-                    _errors.Error(switchStmt.Expression, $"Switch expression must have numeric or bool type, got '{FormatType(switchType)}'.");
+                    _errors.Error(switchStmt.Expression, $"Switch expression must have numeric, bool, or enum type, got '{FormatType(switchType)}'.");
                 }
 
                 var seenCaseValues = new Dictionary<string, Expr>(StringComparer.Ordinal);
+                var seenEnumCaseValues = new HashSet<long>();
                 var caseOutcomes = new List<FlowOutcome>();
+                var isExhaustiveEnumSwitch = false;
                 foreach (var switchCase in switchStmt.Cases)
                 {
                     CheckExpression(switchCase.Value);
@@ -822,12 +888,40 @@ public class TypeChecker
                             _errors.Error(switchCase.Value, $"Duplicate switch case value '{caseKey}'.{FormatPreviousDeclarationSuffix(seenCaseValues[caseKey])}");
                     }
 
+                    if (switchType != null && IsEnumType(switchType) && TryEvaluateConstIntExpr(switchCase.Value, out var enumCaseValue, out _))
+                        seenEnumCaseValues.Add(enumCaseValue);
+
                     var caseFlow = CheckBlock(switchCase.Body);
                     caseOutcomes.Add(caseFlow);
                 }
 
+                if (switchType != null && IsEnumType(switchType) && switchStmt.ElseBody.Count == 0)
+                {
+                    var enumDefinition = LookupEnumDefinition(switchType);
+                    if (enumDefinition != null)
+                    {
+                        var missingMembers = enumDefinition.Members
+                            .Where(member => member.ResolvedValue.HasValue && !seenEnumCaseValues.Contains(member.ResolvedValue.Value))
+                            .Select(member => $"{enumDefinition.Name}.{member.Name}")
+                            .ToList();
+                        if (missingMembers.Count > 0)
+                            _errors.Error(switchStmt, $"Switch over enum '{FormatType(switchType)}' must cover all members or provide an else branch. Missing: {string.Join(", ", missingMembers)}.");
+                        else
+                            isExhaustiveEnumSwitch = true;
+                    }
+                }
+
                 if (switchStmt.ElseBody.Count == 0)
+                {
+                    if (isExhaustiveEnumSwitch &&
+                        caseOutcomes.Count > 0 &&
+                        caseOutcomes.All(outcome => outcome == caseOutcomes[0] && outcome != FlowOutcome.FallsThrough))
+                    {
+                        return caseOutcomes[0];
+                    }
+
                     return FlowOutcome.FallsThrough;
+                }
 
                 var switchElseFlow = CheckBlock(switchStmt.ElseBody);
                 caseOutcomes.Add(switchElseFlow);
@@ -944,6 +1038,173 @@ public class TypeChecker
             return;
 
         _constValueScopes.Peek()[declaration.Name] = value;
+    }
+
+    private void RegisterEnumMembers(EnumNode enumNode)
+    {
+        if (_constValueScopes.Count == 0)
+            return;
+
+        var enumFullName = enumNode.NamespacePath.Any()
+            ? string.Join(".", enumNode.NamespacePath) + "." + enumNode.Name
+            : enumNode.Name;
+
+        var enumType = new TypeNode
+        {
+            Name = enumNode.Name,
+            NamespacePath = new List<string>(enumNode.NamespacePath)
+        };
+
+        var seenNames = new Dictionary<string, EnumMember>(StringComparer.Ordinal);
+        long nextValue = 0;
+        foreach (var member in enumNode.Members)
+        {
+            if (!seenNames.TryAdd(member.Name, member))
+            {
+                _errors.Error(member, $"Duplicate enum member '{enumFullName}.{member.Name}'.{FormatPreviousDeclarationSuffix(seenNames[member.Name])}");
+                continue;
+            }
+
+            long resolvedValue;
+            if (member.Value != null)
+            {
+                member.Value = NormalizeAliasReferences(member.Value);
+                CheckExpression(member.Value);
+                if (!TryEvaluateConstIntExpr(member.Value, out resolvedValue, out var constError))
+                {
+                    _errors.Error(member.Value, constError ?? $"Enum member '{enumFullName}.{member.Name}' must use a constant integer expression.");
+                    resolvedValue = nextValue;
+                }
+            }
+            else
+            {
+                resolvedValue = nextValue;
+            }
+
+            member.ResolvedValue = resolvedValue;
+            nextValue = resolvedValue + 1;
+
+            var memberFullName = $"{enumFullName}.{member.Name}";
+            MakeVisible(memberFullName);
+            if (!_symbolTable.IsDefined(memberFullName))
+                _symbolTable.DefineVariable(memberFullName, enumType.Clone(), isConst: true);
+
+            _constValueScopes.Peek()[memberFullName] = resolvedValue;
+        }
+    }
+
+    private void RegisterUnionTagEnum(UnionNode unionNode)
+    {
+        var tagEnum = BuildUnionTagEnum(unionNode);
+        var tagEnumFullName = GetUnionTagEnumFullName(unionNode);
+        MakeVisible(tagEnumFullName);
+        if (!_symbolTable.IsDefined(tagEnumFullName))
+            _symbolTable.DefineEnum(tagEnumFullName, tagEnum);
+        RegisterEnumMembers(tagEnum);
+    }
+
+    private void ValidateUnionDeclaration(UnionNode unionNode)
+    {
+        var unionFullName = unionNode.NamespacePath.Any()
+            ? string.Join(".", unionNode.NamespacePath) + "." + unionNode.Name
+            : unionNode.Name;
+
+        var seenNames = new Dictionary<string, UnionVariant>(StringComparer.Ordinal);
+        foreach (var variant in unionNode.Variants)
+        {
+            NormalizeTypeReferenceInPlace(variant.TypeName);
+            ValidateTypeReference(variant.TypeName, variant);
+
+            if (!seenNames.TryAdd(variant.Name, variant))
+            {
+                _errors.Error(variant, $"Union '{unionFullName}' declares variant '{variant.Name}' more than once.{FormatPreviousDeclarationSuffix(seenNames[variant.Name])}");
+                continue;
+            }
+
+            if (variant.Name == "tag")
+                _errors.Error(variant, $"Union '{unionFullName}' cannot declare a variant named 'tag' because '.tag' is reserved for the discriminator.");
+
+            if (variant.TypeName.Name == "void" && !variant.TypeName.IsPointer && !variant.TypeName.IsSlice && variant.TypeName.ArraySize == null)
+                _errors.Error(variant, $"Union variant '{unionFullName}.{variant.Name}' cannot have type 'void'.");
+        }
+    }
+
+    private static string GetUnionTagEnumFullName(UnionNode unionNode)
+    {
+        var unionFullName = unionNode.NamespacePath.Any()
+            ? string.Join(".", unionNode.NamespacePath) + "." + unionNode.Name
+            : unionNode.Name;
+        return $"{unionFullName}.Tag";
+    }
+
+    private static TypeNode GetUnionTagType(UnionNode unionNode)
+    {
+        return new TypeNode
+        {
+            Name = "Tag",
+            NamespacePath = unionNode.NamespacePath
+                .Concat(new[] { unionNode.Name })
+                .ToList()
+        };
+    }
+
+    private static EnumNode BuildUnionTagEnum(UnionNode unionNode)
+    {
+        return new EnumNode
+        {
+            Name = "Tag",
+            NamespacePath = unionNode.NamespacePath
+                .Concat(new[] { unionNode.Name })
+                .ToList(),
+            UnderlyingType = new TypeNode { Name = "i32" },
+            Members = unionNode.Variants
+                .Select((variant, index) => new EnumMember
+                {
+                    Name = variant.Name,
+                    ResolvedValue = index
+                })
+                .ToList()
+        };
+    }
+
+    private void ValidateEnumDeclaration(EnumNode enumNode)
+    {
+        ValidateTypeReference(enumNode.UnderlyingType, enumNode);
+        var enumFullName = enumNode.NamespacePath.Any()
+            ? string.Join(".", enumNode.NamespacePath) + "." + enumNode.Name
+            : enumNode.Name;
+
+        if (!IsIntegerScalarType(enumNode.UnderlyingType))
+        {
+            _errors.Error(enumNode, $"Enum '{enumFullName}' must use a built-in integer underlying type, got '{FormatType(enumNode.UnderlyingType)}'.");
+            return;
+        }
+
+        var seenValues = new Dictionary<long, EnumMember>();
+        foreach (var member in enumNode.Members)
+        {
+            if (member.Value != null)
+            {
+                member.Value = NormalizeAliasReferences(member.Value);
+                CheckExpression(member.Value);
+                if (!TryEvaluateConstIntExpr(member.Value, out var resolvedValue, out var constError))
+                {
+                    _errors.Error(member.Value, constError ?? $"Enum member '{enumFullName}.{member.Name}' must use a constant integer expression.");
+                    continue;
+                }
+
+                member.ResolvedValue = resolvedValue;
+            }
+
+            if (member.ResolvedValue is not long memberValue)
+                continue;
+
+            if (!NumericLiteralFits(enumNode.UnderlyingType, memberValue))
+                _errors.Error(member, $"Enum member '{enumFullName}.{member.Name}' value '{memberValue}' does not fit underlying type '{FormatType(enumNode.UnderlyingType)}'.");
+
+            if (!seenValues.TryAdd(memberValue, member))
+                _errors.Error(member, $"Duplicate enum value '{memberValue}' in enum '{enumFullName}'.{FormatPreviousDeclarationSuffix(seenValues[memberValue])}");
+        }
     }
 
     private static bool IsIntegerTypeName(string typeName)
@@ -1137,6 +1398,14 @@ public class TypeChecker
                 {
                     ReportNotVisible(ident, "Symbol", ident.Name);
                 }
+                else if (_symbolTable.TryLookup(ident.Name, out var symbolInfo) && symbolInfo!.Kind == SymbolKind.Enum)
+                {
+                    _errors.Error(ident, $"Enum type '{ident.Name}' is not a value. Use a member such as '{ident.Name}.Member'.");
+                }
+                else if (_symbolTable.TryLookup(ident.Name, out symbolInfo) && symbolInfo!.Kind == SymbolKind.Union)
+                {
+                    _errors.Error(ident, $"Union type '{ident.Name}' is not a value. Construct it with a literal such as '{ident.Name}{{ Variant: value }}'.");
+                }
                 break;
 
             case ErrorNamespaceExpr:
@@ -1152,10 +1421,51 @@ public class TypeChecker
                 break;
 
             case FieldExpr field:
+                var sourceQualifiedFieldName = TryGetQualifiedName(field);
+                var qualifiedFieldName = field.ResolvedQualifiedName ?? sourceQualifiedFieldName;
+                if (!string.IsNullOrEmpty(qualifiedFieldName))
+                {
+                    var resolvedFieldName = qualifiedFieldName;
+                    var aliasResolvedFieldName = resolvedFieldName;
+                    var resolvedViaAlias = field.ResolvedQualifiedName != null;
+                    if (!resolvedViaAlias && string.Equals(sourceQualifiedFieldName, qualifiedFieldName, StringComparison.Ordinal))
+                        resolvedViaAlias = TryResolveAliasQualifiedName(qualifiedFieldName, out aliasResolvedFieldName);
+                    if (resolvedViaAlias)
+                        resolvedFieldName = aliasResolvedFieldName;
+
+                    if (_symbolTable.TryLookup(resolvedFieldName, out var qualifiedFieldInfo) &&
+                        (qualifiedFieldInfo!.Kind == SymbolKind.Variable || qualifiedFieldInfo.Kind == SymbolKind.Function))
+                    {
+                        if (!resolvedViaAlias && !CheckVisibility(resolvedFieldName))
+                            ReportNotVisible(field, "Symbol", resolvedFieldName);
+                        break;
+                    }
+
+                    if (_symbolTable.TryLookup(resolvedFieldName, out qualifiedFieldInfo) &&
+                        (qualifiedFieldInfo!.Kind == SymbolKind.Enum || qualifiedFieldInfo.Kind == SymbolKind.Union))
+                    {
+                        if (!resolvedViaAlias && !CheckVisibility(resolvedFieldName))
+                        {
+                            ReportNotVisible(field, qualifiedFieldInfo.Kind == SymbolKind.Enum ? "Enum" : "Union", resolvedFieldName);
+                        }
+                        else if (qualifiedFieldInfo.Kind == SymbolKind.Enum)
+                        {
+                            _errors.Error(field, $"Enum type '{resolvedFieldName}' is not a value. Use a member such as '{resolvedFieldName}.Member'.");
+                        }
+                        else
+                        {
+                            _errors.Error(field, $"Union type '{resolvedFieldName}' is not a value. Construct it with a literal such as '{resolvedFieldName}{{ Variant: value }}'.");
+                        }
+                        break;
+                    }
+                }
+
                 CheckExpression(field.Target);
                 var fieldTargetType = GetExpressionType(field.Target, reportErrors: false);
                 if (fieldTargetType != null && fieldTargetType.IsSlice && field.Field is not ("ptr" or "len"))
                     _errors.Error(field, $"Slice values expose only '.ptr' and '.len', not '{field.Field}'.");
+                else if (IsUnionType(fieldTargetType) && !IsValidUnionField(fieldTargetType!, field.Field))
+                    _errors.Error(field, $"Union values expose '.tag' and declared variant fields. '{FormatType(fieldTargetType)}' does not have '{field.Field}'.");
                 break;
 
             case UnaryExpr un:
@@ -1365,7 +1675,7 @@ public class TypeChecker
         if (type == null)
             return false;
 
-        if (type.IsErrorUnion || type.IsFunction || type.IsSlice || type.ArraySize != null || type.Name == "void")
+        if (type.IsErrorUnion || type.IsFunction || type.IsSlice || type.ArraySize != null || type.Name == "void" || IsUnionType(type))
             return false;
 
         if (type.IsPointer)
@@ -1391,6 +1701,7 @@ public class TypeChecker
             type.NamespacePath = parts.Length > 1
                 ? parts[..^1].ToList()
                 : new List<string>();
+            type.IsAliasQualifiedReference = true;
         }
         else
         {
@@ -1449,13 +1760,27 @@ public class TypeChecker
             ? string.Join(".", type.NamespacePath) + "." + type.Name
             : type.Name;
 
+        if (_symbolTable.LookupEnumNode(fullName) != null)
+        {
+            if (!type.IsAliasQualifiedReference && !CheckVisibility(fullName))
+                ReportNotVisible(context, "Enum", fullName);
+            return;
+        }
+
+        if (_symbolTable.LookupUnionNode(fullName) != null)
+        {
+            if (!type.IsAliasQualifiedReference && !CheckVisibility(fullName))
+                ReportNotVisible(context, "Union", fullName);
+            return;
+        }
+
         if (!_symbolTable.TryLookupStruct(fullName, out _))
         {
             _errors.Error(context, $"Unknown type '{fullName}'");
             return;
         }
 
-        if (!wasAliasQualified && !CheckVisibility(fullName))
+        if (!type.IsAliasQualifiedReference && !CheckVisibility(fullName))
             ReportNotVisible(context, "Struct", fullName);
     }
 
@@ -1523,7 +1848,7 @@ public class TypeChecker
 
     private bool IsSwitchOperandType(TypeNode type)
     {
-        return IsNumericType(type) || IsBoolType(type);
+        return IsNumericType(type) || IsBoolType(type) || IsEnumType(type);
     }
 
     private bool TryGetSwitchCaseKey(Expr expr, out string key)
@@ -1552,6 +1877,9 @@ public class TypeChecker
 
     private bool AreEqualityComparableTypes(TypeNode leftType, TypeNode rightType)
     {
+        if (IsEnumType(leftType) || IsEnumType(rightType))
+            return IsEnumType(leftType) && IsEnumType(rightType) && SameType(leftType, rightType);
+
         if (IsNumericType(leftType) && IsNumericType(rightType))
             return true;
 
@@ -1586,6 +1914,12 @@ public class TypeChecker
         var fullName = structLiteral.TypeName.NamespacePath.Any()
             ? string.Join(".", structLiteral.TypeName.NamespacePath) + "." + structLiteral.TypeName.Name
             : structLiteral.TypeName.Name;
+
+        if (_symbolTable.LookupUnionNode(fullName) is UnionNode unionNode)
+        {
+            CheckUnionLiteralExpression(structLiteral, unionNode, fullName);
+            return;
+        }
 
         if (!_symbolTable.TryLookupStruct(fullName, out var structFields))
             return;
@@ -1623,6 +1957,34 @@ public class TypeChecker
         {
             if (!seen.Contains(field.Name))
                 _errors.Error(structLiteral, $"Struct literal for '{fullName}' is missing required field '{field.Name}'.");
+        }
+    }
+
+    private void CheckUnionLiteralExpression(StructLiteralExpr unionLiteral, UnionNode unionNode, string fullName)
+    {
+        if (unionLiteral.Fields.Count != 1)
+        {
+            _errors.Error(unionLiteral, $"Union literal for '{fullName}' must initialize exactly one variant.");
+            return;
+        }
+
+        var field = unionLiteral.Fields[0];
+        CheckExpression(field.Value);
+
+        var variant = unionNode.Variants.FirstOrDefault(candidate => candidate.Name == field.Name);
+        if (variant == null)
+        {
+            _errors.Error(field, $"Union '{fullName}' does not have a variant named '{field.Name}'.");
+            return;
+        }
+
+        var valueType = GetExpressionType(field.Value);
+        if (!IsAssignableTo(variant.TypeName, field.Value, valueType))
+        {
+            if (TryBuildNumericConversionDiagnostic(variant.TypeName, field.Value, valueType, out var numericDiagnostic))
+                _errors.Error(field, $"Cannot initialize union variant '{field.Name}' of type '{FormatType(variant.TypeName)}' from expression of type '{FormatType(valueType)}'. {numericDiagnostic}");
+            else
+                _errors.Error(field, $"Cannot assign expression of type '{FormatType(valueType)}' to union variant '{field.Name}' of type '{FormatType(variant.TypeName)}'.");
         }
     }
 
@@ -1953,14 +2315,24 @@ public class TypeChecker
 
             case FieldExpr field:
                 var targetName = TryGetQualifiedName(field.Target);
-                var potentialName = string.IsNullOrEmpty(targetName) ? "" : $"{targetName}.{field.Field}";
-                
-                if (!string.IsNullOrEmpty(potentialName) && _symbolTable.TryLookup(potentialName, out var fieldInfo))
+                var potentialName = field.ResolvedQualifiedName ?? (string.IsNullOrEmpty(targetName) ? "" : $"{targetName}.{field.Field}");
+
+                var resolvedPotentialName = potentialName;
+                var aliasResolvedPotentialName = string.Empty;
+                var resolvedViaAlias = field.ResolvedQualifiedName != null;
+                if (!resolvedViaAlias && !string.IsNullOrEmpty(potentialName))
+                    resolvedViaAlias = TryResolveAliasQualifiedName(potentialName, out aliasResolvedPotentialName);
+                else
+                    aliasResolvedPotentialName = resolvedPotentialName;
+                if (resolvedViaAlias)
+                    resolvedPotentialName = aliasResolvedPotentialName;
+
+                if (!string.IsNullOrEmpty(resolvedPotentialName) && _symbolTable.TryLookup(resolvedPotentialName, out var fieldInfo))
                 {
                     if (fieldInfo!.Kind == SymbolKind.Variable || fieldInfo.Kind == SymbolKind.Function)
                     {
-                        if (!CheckVisibility(potentialName)) {
-                            ReportNotVisible(field, "Symbol", potentialName);
+                        if (!resolvedViaAlias && !CheckVisibility(resolvedPotentialName)) {
+                            ReportNotVisible(field, "Symbol", resolvedPotentialName);
                             return new TypeNode { Name = "i32" };
                         }
                         return fieldInfo.Type.Clone();
@@ -2004,7 +2376,7 @@ public class TypeChecker
 
                 if (_symbolTable.TryLookupStruct(structName, out var structDef))
                 {
-                    if (!CheckVisibility(structName)) {
+                    if (!ft.IsAliasQualifiedReference && !CheckVisibility(structName)) {
                         if (reportErrors)
                             ReportNotVisible(field, "Struct", structName);
                         return new TypeNode { Name = "i32" };
@@ -2017,10 +2389,28 @@ public class TypeChecker
                     if (reportErrors)
                         _errors.Error(field, $"Struct '{structName}' does not have a field named '{field.Field}'.");
                 }
+                else if (_symbolTable.LookupUnionNode(structName) is UnionNode unionDefinition)
+                {
+                    if (!ft.IsAliasQualifiedReference && !CheckVisibility(structName)) {
+                        if (reportErrors)
+                            ReportNotVisible(field, "Union", structName);
+                        return new TypeNode { Name = "i32" };
+                    }
+
+                    if (field.Field == "tag")
+                        return GetUnionTagType(unionDefinition);
+
+                    var variant = unionDefinition.Variants.FirstOrDefault(candidate => candidate.Name == field.Field);
+                    if (variant != null)
+                        return variant.TypeName.Clone();
+
+                    if (reportErrors)
+                        _errors.Error(field, $"Union '{structName}' does not have a field named '{field.Field}'.");
+                }
                 else
                 {
                     if (reportErrors)
-                        _errors.Error(field, $"Type '{structName}' is not a known struct");
+                        _errors.Error(field, $"Type '{structName}' is not a known struct or union");
                 }
                 return new TypeNode { Name = "i32" };
 
@@ -2121,6 +2511,65 @@ public class TypeChecker
     private static bool IsStringType(TypeNode? type)
     {
         return type != null && !type.IsSlice && !type.IsPointer && !type.IsErrorUnion && type.Name == "string";
+    }
+
+    private bool IsEnumType(TypeNode? type)
+    {
+        if (type == null ||
+            type.IsSlice ||
+            type.IsPointer ||
+            type.IsErrorUnion ||
+            type.IsFunction ||
+            type.ArraySize != null)
+        {
+            return false;
+        }
+
+        var fullName = type.NamespacePath.Any()
+            ? string.Join(".", type.NamespacePath) + "." + type.Name
+            : type.Name;
+        return _symbolTable.LookupEnumNode(fullName) != null;
+    }
+
+    private EnumNode? LookupEnumDefinition(TypeNode? type)
+    {
+        if (!IsEnumType(type))
+            return null;
+
+        var fullName = type!.NamespacePath.Any()
+            ? string.Join(".", type.NamespacePath) + "." + type.Name
+            : type.Name;
+        return _symbolTable.LookupEnumNode(fullName);
+    }
+
+    private bool IsUnionType(TypeNode? type)
+    {
+        if (type == null ||
+            type.IsSlice ||
+            type.IsPointer ||
+            type.IsErrorUnion ||
+            type.IsFunction ||
+            type.ArraySize != null)
+        {
+            return false;
+        }
+
+        var fullName = type.NamespacePath.Any()
+            ? string.Join(".", type.NamespacePath) + "." + type.Name
+            : type.Name;
+        return _symbolTable.LookupUnionNode(fullName) != null;
+    }
+
+    private bool IsValidUnionField(TypeNode unionType, string fieldName)
+    {
+        var fullName = unionType.NamespacePath.Any()
+            ? string.Join(".", unionType.NamespacePath) + "." + unionType.Name
+            : unionType.Name;
+        var unionDefinition = _symbolTable.LookupUnionNode(fullName);
+        if (unionDefinition == null)
+            return false;
+
+        return fieldName == "tag" || unionDefinition.Variants.Any(variant => variant.Name == fieldName);
     }
 
     private static string FormatType(TypeNode? type)
@@ -2435,6 +2884,23 @@ public class TypeChecker
                 {
                     error = null;
                     return true;
+                }
+
+                value = 0;
+                error = null;
+                return false;
+
+            case FieldExpr field:
+                if (TryGetQualifiedName(field) is string qualifiedName)
+                {
+                    var resolvedQualifiedName = TryResolveAliasQualifiedName(qualifiedName, out var aliasResolvedQualifiedName)
+                        ? aliasResolvedQualifiedName
+                        : qualifiedName;
+                    if (TryLookupConstValue(resolvedQualifiedName, out value))
+                    {
+                        error = null;
+                        return true;
+                    }
                 }
 
                 value = 0;

@@ -10,6 +10,8 @@ public enum SymbolKind
     Variable,
     Function,
     Struct,
+    Enum,
+    Union,
     Parameter
 }
 
@@ -20,6 +22,8 @@ public class SymbolInfo
     public TypeNode Type { get; set; } = null!;
     public List<Parameter>? Parameters { get; set; }
     public StructNode? StructDefinition { get; set; }
+    public EnumNode? EnumDefinition { get; set; }
+    public UnionNode? UnionDefinition { get; set; }
     public bool IsConst { get; set; }
 }
 
@@ -93,8 +97,32 @@ public class SymbolTable
         {
             Name = name,
             Kind = SymbolKind.Struct,
-            Type = new TypeNode { Name = name },
+            Type = new TypeNode { Name = name, NamespacePath = new List<string>(structDefinition.NamespacePath) },
             StructDefinition = structDefinition
+        };
+        CurrentScope[name] = info;
+    }
+
+    public void DefineEnum(string name, EnumNode enumDefinition)
+    {
+        var info = new SymbolInfo
+        {
+            Name = name,
+            Kind = SymbolKind.Enum,
+            Type = new TypeNode { Name = name, NamespacePath = new List<string>(enumDefinition.NamespacePath) },
+            EnumDefinition = enumDefinition
+        };
+        CurrentScope[name] = info;
+    }
+
+    public void DefineUnion(string name, UnionNode unionDefinition)
+    {
+        var info = new SymbolInfo
+        {
+            Name = name,
+            Kind = SymbolKind.Union,
+            Type = new TypeNode { Name = name, NamespacePath = new List<string>(unionDefinition.NamespacePath) },
+            UnionDefinition = unionDefinition
         };
         CurrentScope[name] = info;
     }
@@ -143,6 +171,22 @@ public class SymbolTable
         var info = Lookup(name);
         if (info != null && info.Kind == SymbolKind.Struct)
             return info.StructDefinition;
+        return null;
+    }
+
+    public EnumNode? LookupEnumNode(string name)
+    {
+        var info = Lookup(name);
+        if (info != null && info.Kind == SymbolKind.Enum)
+            return info.EnumDefinition;
+        return null;
+    }
+
+    public UnionNode? LookupUnionNode(string name)
+    {
+        var info = Lookup(name);
+        if (info != null && info.Kind == SymbolKind.Union)
+            return info.UnionDefinition;
         return null;
     }
 

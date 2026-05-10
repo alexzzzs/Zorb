@@ -1,0 +1,1 @@
+Enum 'Bad' must use a built-in integer underlying type, got 'Box'.

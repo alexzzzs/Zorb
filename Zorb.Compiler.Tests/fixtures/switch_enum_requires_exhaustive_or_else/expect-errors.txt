@@ -1,0 +1,1 @@
+Switch over enum 'Mode' must cover all members or provide an else branch. Missing: Mode.Stop.

@@ -1,0 +1,4 @@
+export enum Mode: i32 {
+    Idle,
+    Run
+}

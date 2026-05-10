@@ -10,6 +10,7 @@ public class TypeNode
 {
     public string Name { get; set; } = "i32";
     public List<string> NamespacePath { get; set; } = new();
+    public bool IsAliasQualifiedReference { get; set; }
     public bool IsVolatile { get; set; }
     public bool IsSlice { get; set; }
     public bool IsPointer { get; set; }
@@ -29,6 +30,7 @@ public class TypeNode
         {
             Name = Name,
             NamespacePath = new List<string>(NamespacePath),
+            IsAliasQualifiedReference = IsAliasQualifiedReference,
             IsVolatile = IsVolatile,
             IsSlice = IsSlice,
             IsPointer = IsPointer,
@@ -159,6 +161,36 @@ public class StructNode : Node
     public List<string> Attributes { get; set; } = new();
     public List<StructField> Fields { get; set; } = new();
     public Expr? AlignExpr { get; set; }
+}
+
+public class EnumMember : Node
+{
+    public string Name { get; set; } = null!;
+    public Expr? Value { get; set; }
+    public long? ResolvedValue { get; set; }
+}
+
+public class EnumNode : Node
+{
+    public bool IsExported { get; set; }
+    public List<string> NamespacePath { get; set; } = new();
+    public string Name { get; set; } = null!;
+    public TypeNode UnderlyingType { get; set; } = null!;
+    public List<EnumMember> Members { get; set; } = new();
+}
+
+public class UnionVariant : Node
+{
+    public string Name { get; set; } = null!;
+    public TypeNode TypeName { get; set; } = null!;
+}
+
+public class UnionNode : Node
+{
+    public bool IsExported { get; set; }
+    public List<string> NamespacePath { get; set; } = new();
+    public string Name { get; set; } = null!;
+    public List<UnionVariant> Variants { get; set; } = new();
 }
 
 public class ImportNode : Statement
