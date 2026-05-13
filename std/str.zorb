@@ -26,6 +26,99 @@ export fn std.str.reverse(buf: []u8) {
     }
 }
 
+export fn std.str.eql(a: string, b: string) -> bool {
+    a_len: i64 = std.str.len(a)
+    b_len: i64 = std.str.len(b)
+    if a_len != b_len {
+        return false
+    }
+
+    a_ptr: *u8 = cast(*u8, a)
+    b_ptr: *u8 = cast(*u8, b)
+    i: i64 = 0
+    while i < a_len {
+        if a_ptr[i] != b_ptr[i] {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+export fn std.str.slice_eql(a: []u8, b: []u8) -> bool {
+    if a.len != b.len {
+        return false
+    }
+
+    i: i64 = 0
+    while i < a.len {
+        if a[i] != b[i] {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+export fn std.str.starts_with(s: string, prefix: string) -> bool {
+    s_len: i64 = std.str.len(s)
+    prefix_len: i64 = std.str.len(prefix)
+    if prefix_len > s_len {
+        return false
+    }
+
+    s_ptr: *u8 = cast(*u8, s)
+    prefix_ptr: *u8 = cast(*u8, prefix)
+    i: i64 = 0
+    while i < prefix_len {
+        if s_ptr[i] != prefix_ptr[i] {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+export fn std.str.ends_with(s: string, suffix: string) -> bool {
+    s_len: i64 = std.str.len(s)
+    suffix_len: i64 = std.str.len(suffix)
+    if suffix_len > s_len {
+        return false
+    }
+
+    s_ptr: *u8 = cast(*u8, s)
+    suffix_ptr: *u8 = cast(*u8, suffix)
+    start: i64 = s_len - suffix_len
+    i: i64 = 0
+    while i < suffix_len {
+        if s_ptr[start + i] != suffix_ptr[i] {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+export fn std.str.copy(dst: []u8, src: string) -> i64 {
+    src_len: i64 = std.str.len(src)
+    if dst.len < src_len {
+        return -1
+    }
+
+    src_ptr: *u8 = cast(*u8, src)
+    i: i64 = 0
+    while i < src_len {
+        dst[i] = src_ptr[i]
+        i = i + 1
+    }
+
+    return src_len
+}
+
 export fn std.str.from_i64(value: i64, buf: []u8) -> i64 {
     if buf.len < 2 {
         return -1
@@ -79,6 +172,49 @@ export fn std.str.from_i64(value: i64, buf: []u8) -> i64 {
     if i >= buf.len {
         return -1
     }
+    buf[i] = cast(u8, 0)
+    return i
+}
+
+export fn std.str.from_u64(value: u64, buf: []u8) -> i64 {
+    if buf.len < 2 {
+        return -1
+    }
+
+    if value == 0 {
+        buf[0] = cast(u8, 48)
+        buf[1] = cast(u8, 0)
+        return 1
+    }
+
+    required_capacity: i64 = 21
+    if buf.len < required_capacity {
+        return -1
+    }
+
+    i: i64 = 0
+    v: u64 = value
+    limit: i64 = buf.len - 1
+
+    while v > 0 && i < limit {
+        rem: u64 = v % cast(u64, 10)
+        buf[i] = cast(u8, rem + cast(u64, 48))
+        v = v / cast(u64, 10)
+        i = i + 1
+    }
+
+    if v > 0 {
+        return -1
+    }
+
+    digits: []u8 = buf
+    digits.len = i
+    std.str.reverse(digits)
+
+    if i >= buf.len {
+        return -1
+    }
+
     buf[i] = cast(u8, 0)
     return i
 }

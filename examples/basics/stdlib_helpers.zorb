@@ -1,0 +1,52 @@
+import "../../std/io.zorb"
+import "../../std/os.zorb"
+import "../../std/str.zorb"
+import "../../std/mem.zorb"
+
+fn _start() {
+    buf1: [16]u8
+    buf2: [16]u8
+    view1: []u8 = buf1
+    view2: []u8 = buf2
+
+    std.mem.zero(view1)
+    std.mem.zero(view2)
+
+    copied: i64 = std.str.copy(view1, "zorb")
+    if copied < 0 {
+        std.io.eprintln("copy failed")
+        std.os.exit(1)
+        return
+    }
+    view1.len = copied
+
+    copied_again: i64 = std.mem.copy(view2, view1)
+    if copied_again < 0 {
+        std.io.eprintln("mem copy failed")
+        std.os.exit(2)
+        return
+    }
+    view2.len = copied_again
+
+    if !std.str.slice_eql(view1, view2) {
+        std.io.eprintln("slice compare failed")
+        std.os.exit(3)
+        return
+    }
+
+    if !std.str.starts_with("zorb-lang", "zorb") || !std.str.ends_with("zorb-lang", "lang") {
+        std.io.eprintln("prefix/suffix failed")
+        std.os.exit(4)
+        return
+    }
+
+    digits_buf: [32]u8
+    digits: []u8 = digits_buf
+    digits.len = std.str.from_u64(cast(u64, 42), digits)
+
+    std.io.print("copied=")
+    std.io.print_bool(std.str.eql("zorb", "zorb"))
+    std.io.print(" count=")
+    std.io.println_i64(digits.len)
+    std.os.exit(0)
+}

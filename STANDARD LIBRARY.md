@@ -218,7 +218,7 @@ fn main() -> i64 {
 
 ## I/O: `std/io.zorb`
 
-`std/io.zorb` imports `str.zorb`, registers `windows.h`, declares Windows file-output externs, and exports the `std.io` namespace marker struct.
+`std/io.zorb` imports `str.zorb`, registers `windows.h`, declares Windows file-input/output externs, and exports the `std.io` namespace marker struct.
 
 ### Internal Declarations
 
@@ -228,6 +228,7 @@ export struct std.io {}
 
 import c "windows.h"
 extern fn GetStdHandle(nStdHandle: i32) -> i64
+extern fn ReadFile(h: i64, buf: *i8, len: u32, read: *u32, overlapped: i64) -> i32
 extern fn WriteFile(h: i64, buf: *i8, len: u32, written: *u32, overlapped: i64) -> i32
 ```
 
@@ -282,9 +283,19 @@ fn _start() {
 ```zorb
 export fn std.io.print_i64(val: i64)
 export fn std.io.eprint_i64(val: i64)
+export fn std.io.println_i64(val: i64)
+export fn std.io.eprintln_i64(val: i64)
 ```
 
 These allocate a local `[32]u8`, coerce it to `[]u8`, call `std.str.from_i64`, then write the produced prefix.
+
+### Boolean Output
+
+```zorb
+export fn std.io.print_bool(val: bool)
+```
+
+Prints `true` or `false`.
 
 Example:
 
@@ -317,6 +328,26 @@ Windows stderr: GetStdHandle(-12), WriteFile
 ```
 
 On Windows, lengths greater than `4294967295` are clamped to that value before calling `WriteFile`.
+
+### Raw Read
+
+```zorb
+export fn std.io.read(fd: i32, buf: []u8) -> i64
+```
+
+Behavior:
+
+```text
+buf.len < 0: return -1
+bare-metal: return -1
+Linux x86_64: syscall 0
+Linux AArch64: syscall 63
+Windows stdin: GetStdHandle(-10), ReadFile
+Windows stdout/stderr: resolves those handles too, though stdin is the intended use
+unknown/unsupported: return -1
+```
+
+On Windows, lengths greater than `4294967295` are clamped before calling `ReadFile`. Failed Windows reads return `-1`.
 
 Example:
 
@@ -382,13 +413,40 @@ fn main() {
 }
 ```
 
+### Equality And Prefix/Suffix Checks
+
+```zorb
+export fn std.str.eql(a: string, b: string) -> bool
+export fn std.str.slice_eql(a: []u8, b: []u8) -> bool
+export fn std.str.starts_with(s: string, prefix: string) -> bool
+export fn std.str.ends_with(s: string, suffix: string) -> bool
+```
+
+Current behavior:
+
+```text
+eql: compares string lengths, then byte-by-byte contents
+slice_eql: compares slice lengths, then byte-by-byte contents
+starts_with: false when prefix is longer than s
+ends_with: false when suffix is longer than s
+```
+
+### String Copy
+
+```zorb
+export fn std.str.copy(dst: []u8, src: string) -> i64
+```
+
+Copies the bytes of `src` into `dst` without appending a terminator. Returns the copied byte count on success or `-1` when `dst.len < std.str.len(src)`.
+
 ### Integer Formatting
 
 ```zorb
 export fn std.str.from_i64(value: i64, buf: []u8) -> i64
+export fn std.str.from_u64(value: u64, buf: []u8) -> i64
 ```
 
-Formats an `i64` into a caller-provided byte buffer as ASCII decimal, writes a nul terminator, and returns the number of digits written. It returns `-1` on insufficient capacity.
+Formats an integer into a caller-provided byte buffer as ASCII decimal, writes a nul terminator, and returns the number of digits written. It returns `-1` on insufficient capacity.
 
 Current capacity rules:
 
@@ -398,7 +456,8 @@ value == 0: writes "0\0", returns 1
 otherwise: requires buf.len >= 21
 ```
 
-The implementation writes digits in reverse, optionally appends `-`, reverses only the written prefix, then writes the terminator.
+`from_i64` writes digits in reverse, optionally appends `-`, reverses only the written prefix, then writes the terminator.
+`from_u64` follows the same flow without signed handling.
 
 Example:
 
@@ -434,6 +493,20 @@ export struct std.mem.HeapAllocator {
     len: i64,
     pos: i64
 }
+```
+
+### Slice Helpers
+
+```zorb
+export fn std.mem.zero(buf: []u8)
+export fn std.mem.copy(dst: []u8, src: []u8) -> i64
+```
+
+Behavior:
+
+```text
+zero: writes 0 to every byte in the slice
+copy: returns -1 when dst.len < src.len, otherwise copies src.len bytes and returns src.len
 ```
 
 `HeapAllocator` is a simple bump allocator over one contiguous region. It does not free memory.
@@ -500,6 +573,126 @@ fn main() -> i64 {
     }
 
     return cast(i64, ptr)
+}
+```
+
+## Networking: `std/net.zorb`
+
+`std/net.zorb` is a Linux-first low-level networking layer. It currently focuses on raw TCP socket setup rather than higher-level protocols.
+
+### Internal Definitions
+
+```zorb
+import "errors.zorb"
+
+export struct std.net {}
+
+export struct std.net.SockAddrV4 {
+    family: u16,
+    port: u16,
+    addr: u32,
+    zero: [8]u8
+}
+```
+
+### Support Check
+
+```zorb
+export fn std.net.is_supported() -> bool
+```
+
+Current behavior:
+
+```text
+bare-metal: false
+Linux x86_64: true
+Linux AArch64: true
+Windows: false
+other targets: false
+```
+
+### Byte Order And IPv4 Helpers
+
+```zorb
+export fn std.net.errno(result: i64) -> i32
+export fn std.net.htons(value: u16) -> u16
+export fn std.net.htonl(value: u32) -> u32
+export fn std.net.ipv4(a: u8, b: u8, c: u8, d: u8) -> u32
+export fn std.net.sockaddr_v4(addr_be: u32, port: u16) -> std.net.SockAddrV4
+export fn std.net.sockaddr_v4_loopback(port: u16) -> std.net.SockAddrV4
+export fn std.net.sockaddr_v4_any(port: u16) -> std.net.SockAddrV4
+```
+
+Notes:
+
+```text
+errno(result): returns 0 on success, otherwise -result cast to i32
+htons/htonl: current implementations assume the supported little-endian Linux targets in this repo
+sockaddr_v4 helpers write family = AF_INET and store port/address in network byte order
+```
+
+### Raw Socket Operations
+
+```zorb
+export fn std.net.socket(domain: i32, kind: i32, protocol: i32) -> i64
+export fn std.net.socket_tcp_v4() -> i64
+export fn std.net.bind_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64
+export fn std.net.listen(fd: i32, backlog: i32) -> i64
+export fn std.net.accept(fd: i32) -> i64
+export fn std.net.connect_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64
+export fn std.net.send(fd: i32, buf: []u8) -> i64
+export fn std.net.recv(fd: i32, buf: []u8) -> i64
+export fn std.net.close(fd: i32) -> i64
+```
+
+Behavior:
+
+```text
+on supported Linux targets: these return raw syscall-style results
+on unsupported targets: these return negative sentinel values derived from std.errors
+socket_tcp_v4(): shorthand for socket(AF_INET, SOCK_STREAM, 0)
+bind_v4/connect_v4(): pass a 16-byte IPv4 sockaddr
+send/recv(): lower through sendto/recvfrom with null address arguments
+accept(): currently accepts without returning peer address metadata
+```
+
+Example:
+
+```zorb
+import "std/io.zorb"
+import "std/os.zorb"
+import "std/net.zorb"
+
+fn _start() {
+    if !std.net.is_supported() {
+        std.io.println("net unsupported")
+        std.os.exit(0)
+        return
+    }
+
+    fd_raw: i64 = std.net.socket_tcp_v4()
+    if fd_raw < 0 {
+        std.os.exit(std.net.errno(fd_raw))
+        return
+    }
+
+    fd: i32 = cast(i32, fd_raw)
+    addr: std.net.SockAddrV4 = std.net.sockaddr_v4_any(0)
+
+    if std.net.bind_v4(fd, &addr) < 0 {
+        std.net.close(fd)
+        std.os.exit(1)
+        return
+    }
+
+    if std.net.listen(fd, 8) < 0 {
+        std.net.close(fd)
+        std.os.exit(2)
+        return
+    }
+
+    std.net.close(fd)
+    std.os.exit(0)
 }
 ```
 
@@ -606,9 +799,9 @@ Behavior:
 
 ```text
 gpa == null: error.InvalidArgument
+!std.task.is_supported(): error.UnsupportedPlatform
 x86_64: allocate stack and Fiber, initialize x86_64 stack frame, enqueue, return 0
 AArch64: allocate stack and Fiber, initialize AArch64 context frame, enqueue, return 0
-unsupported architecture: error.NotImplemented
 allocation failure: error.OutOfMemory
 ```
 
@@ -655,6 +848,15 @@ export fn std.task.yield()
 ```
 
 If tasks are unsupported, it returns immediately. Otherwise it enqueues `current_fiber` and yields to the scheduler.
+If `current_fiber == null`, it also returns immediately.
+
+### Ready Queue Check
+
+```zorb
+export fn std.task.has_ready_fibers() -> bool
+```
+
+Returns whether the ready queue is non-empty.
 
 ### Queue Operations
 
@@ -678,9 +880,10 @@ import "task.zorb"
 
 export struct std.async {}
 epoll_fd: i32 = -1
+polling_enabled: bool = false
 ```
 
-`epoll_fd` is module-private because it is not exported.
+These globals are module-private because they are not exported.
 
 ### Support Check
 
@@ -702,14 +905,14 @@ std.task.is_supported()
 export fn std.async.init()
 ```
 
-If async is supported, calls `epoll_create1(0)` using raw syscall numbers:
+Resets `epoll_fd` to `-1` and `polling_enabled` to `false`, then, if async is supported, calls `epoll_create1(0)` using raw syscall numbers:
 
 ```text
 x86_64: 291
 AArch64: 20
 ```
 
-The return value is stored in private global `epoll_fd`.
+When `epoll_create1` succeeds, the returned descriptor is stored in `epoll_fd` and `polling_enabled` becomes `true`.
 
 ### Event Loop
 
@@ -724,7 +927,8 @@ Otherwise:
 1. Runs while `active_fibers > 0`.
 2. Dequeues and resumes ready fibers.
 3. Skips fibers whose `state == 2`.
-4. Calls `std.async.poll_events()` when active fibers remain.
+4. If active fibers remain but polling is unavailable, returns immediately.
+5. Otherwise calls `std.async.poll_events()`.
 
 Internal polling:
 
@@ -732,7 +936,8 @@ Internal polling:
 fn std.async.poll_events()
 ```
 
-Uses timeout `0` when the ready queue is non-empty and `-1` when it is empty. It allocates a local `[128]u8` event buffer and calls `epoll_wait`.
+Returns immediately when async support or polling setup is unavailable.
+Otherwise it uses timeout `0` when the ready queue is non-empty and `-1` when it is empty, allocates a local `[128]u8` event buffer, and calls `epoll_wait`.
 
 Syscall numbers:
 
@@ -1007,6 +1212,7 @@ export struct std.io {}
 
 import c "windows.h"
 extern fn GetStdHandle(nStdHandle: i32) -> i64
+extern fn ReadFile(h: i64, buf: *i8, len: u32, read: *u32, overlapped: i64) -> i32
 extern fn WriteFile(h: i64, buf: *i8, len: u32, written: *u32, overlapped: i64) -> i32
 
 fn std.io.stdout_fd() -> i32 {
@@ -1047,6 +1253,15 @@ export fn std.io.eprintln(msg: string) {
     std.io.write(std.io.stderr_fd(), newline)
 }
 
+export fn std.io.print_bool(val: bool) {
+    if val {
+        std.io.print("true")
+        return
+    }
+
+    std.io.print("false")
+}
+
 export fn std.io.print_i64(val: i64) {
     buf: [32]u8
     digits: []u8 = buf
@@ -1059,6 +1274,16 @@ export fn std.io.eprint_i64(val: i64) {
     digits: []u8 = buf
     digits.len = std.str.from_i64(val, digits)
     std.io.write(std.io.stderr_fd(), digits)
+}
+
+export fn std.io.println_i64(val: i64) {
+    std.io.print_i64(val)
+    std.io.print("\n")
+}
+
+export fn std.io.eprintln_i64(val: i64) {
+    std.io.eprint_i64(val)
+    std.io.eprint("\n")
 }
 
 export fn std.io.write(fd: i32, buf: []u8) {
@@ -1117,6 +1342,62 @@ export fn std.io.write(fd: i32, buf: []u8) {
         }
     }
 }
+
+export fn std.io.read(fd: i32, buf: []u8) -> i64 {
+    if buf.len < 0 {
+        return -1
+    }
+
+    if Builtin.IsBareMetal {
+        return -1
+    }
+
+    if Builtin.IsLinux {
+        read_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            read_nr = 0
+        }
+        if Builtin.IsAArch64 {
+            read_nr = 63
+        }
+        if read_nr == 0 && !Builtin.IsX86_64 {
+            return -1
+        }
+
+        return syscall(read_nr, cast(i64, fd), cast(i64, buf.ptr), buf.len)
+    }
+
+    if Builtin.IsWindows {
+        windows_len: u32 = cast(u32, buf.len)
+        if buf.len > 4294967295 {
+            windows_len = cast(u32, 4294967295)
+        }
+
+        handle: i64 = 0
+        if fd == std.io.stdout_fd() {
+            handle = GetStdHandle(-11)
+        }
+        if fd == std.io.stderr_fd() {
+            handle = GetStdHandle(-12)
+        }
+        if fd == 0 {
+            handle = GetStdHandle(-10)
+        }
+        if handle == 0 {
+            return -1
+        }
+
+        bytes_read: u32 = 0
+        result: i32 = ReadFile(handle, cast(*i8, buf.ptr), windows_len, &bytes_read, 0)
+        if result == 0 {
+            return -1
+        }
+
+        return cast(i64, bytes_read)
+    }
+
+    return -1
+}
 ```
 
 ### `std/str.zorb`
@@ -1145,6 +1426,99 @@ export fn std.str.reverse(buf: []u8) {
         i = i + 1
         j = j - 1
     }
+}
+
+export fn std.str.eql(a: string, b: string) -> bool {
+    a_len: i64 = std.str.len(a)
+    b_len: i64 = std.str.len(b)
+    if a_len != b_len {
+        return false
+    }
+
+    a_ptr: *u8 = cast(*u8, a)
+    b_ptr: *u8 = cast(*u8, b)
+    i: i64 = 0
+    while i < a_len {
+        if a_ptr[i] != b_ptr[i] {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+export fn std.str.slice_eql(a: []u8, b: []u8) -> bool {
+    if a.len != b.len {
+        return false
+    }
+
+    i: i64 = 0
+    while i < a.len {
+        if a[i] != b[i] {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+export fn std.str.starts_with(s: string, prefix: string) -> bool {
+    s_len: i64 = std.str.len(s)
+    prefix_len: i64 = std.str.len(prefix)
+    if prefix_len > s_len {
+        return false
+    }
+
+    s_ptr: *u8 = cast(*u8, s)
+    prefix_ptr: *u8 = cast(*u8, prefix)
+    i: i64 = 0
+    while i < prefix_len {
+        if s_ptr[i] != prefix_ptr[i] {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+export fn std.str.ends_with(s: string, suffix: string) -> bool {
+    s_len: i64 = std.str.len(s)
+    suffix_len: i64 = std.str.len(suffix)
+    if suffix_len > s_len {
+        return false
+    }
+
+    s_ptr: *u8 = cast(*u8, s)
+    suffix_ptr: *u8 = cast(*u8, suffix)
+    start: i64 = s_len - suffix_len
+    i: i64 = 0
+    while i < suffix_len {
+        if s_ptr[start + i] != suffix_ptr[i] {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+export fn std.str.copy(dst: []u8, src: string) -> i64 {
+    src_len: i64 = std.str.len(src)
+    if dst.len < src_len {
+        return -1
+    }
+
+    src_ptr: *u8 = cast(*u8, src)
+    i: i64 = 0
+    while i < src_len {
+        dst[i] = src_ptr[i]
+        i = i + 1
+    }
+
+    return src_len
 }
 
 export fn std.str.from_i64(value: i64, buf: []u8) -> i64 {
@@ -1202,6 +1576,49 @@ export fn std.str.from_i64(value: i64, buf: []u8) -> i64 {
     buf[i] = cast(u8, 0)
     return i
 }
+
+export fn std.str.from_u64(value: u64, buf: []u8) -> i64 {
+    if buf.len < 2 {
+        return -1
+    }
+
+    if value == 0 {
+        buf[0] = cast(u8, 48)
+        buf[1] = cast(u8, 0)
+        return 1
+    }
+
+    required_capacity: i64 = 21
+    if buf.len < required_capacity {
+        return -1
+    }
+
+    i: i64 = 0
+    v: u64 = value
+    limit: i64 = buf.len - 1
+
+    while v > 0 && i < limit {
+        rem: u64 = v % cast(u64, 10)
+        buf[i] = cast(u8, rem + cast(u64, 48))
+        v = v / cast(u64, 10)
+        i = i + 1
+    }
+
+    if v > 0 {
+        return -1
+    }
+
+    digits: []u8 = buf
+    digits.len = i
+    std.str.reverse(digits)
+
+    if i >= buf.len {
+        return -1
+    }
+
+    buf[i] = cast(u8, 0)
+    return i
+}
 ```
 
 ### `std/mem.zorb`
@@ -1216,6 +1633,28 @@ export struct std.mem.HeapAllocator {
     buffer: *u8,
     len: i64,
     pos: i64
+}
+
+export fn std.mem.zero(buf: []u8) {
+    i: i64 = 0
+    while i < buf.len {
+        buf[i] = cast(u8, 0)
+        i = i + 1
+    }
+}
+
+export fn std.mem.copy(dst: []u8, src: []u8) -> i64 {
+    if dst.len < src.len {
+        return -1
+    }
+
+    i: i64 = 0
+    while i < src.len {
+        dst[i] = src[i]
+        i = i + 1
+    }
+
+    return src.len
 }
 
 export fn std.mem.HeapAllocator.init(initial_size: i64) !std.mem.HeapAllocator {
@@ -1255,6 +1694,300 @@ export fn std.mem.HeapAllocator.alloc(self: *std.mem.HeapAllocator, size: i64) !
     ptr: *u8 = &self.buffer[self.pos]
     self.pos = self.pos + aligned_size
     return ptr
+}
+```
+
+### `std/net.zorb`
+
+```zorb
+import "errors.zorb"
+
+export struct std.net {}
+
+export struct std.net.SockAddrV4 {
+    family: u16,
+    port: u16,
+    addr: u32,
+    zero: [8]u8
+}
+
+export fn std.net.is_supported() -> bool {
+    if Builtin.IsBareMetal {
+        return false
+    }
+
+    if !Builtin.IsLinux {
+        return false
+    }
+
+    if Builtin.IsX86_64 {
+        return true
+    }
+
+    if Builtin.IsAArch64 {
+        return true
+    }
+
+    return false
+}
+
+export fn std.net.errno(result: i64) -> i32 {
+    if result >= 0 {
+        return 0
+    }
+
+    return cast(i32, -result)
+}
+
+export fn std.net.htons(value: u16) -> u16 {
+    widened: u32 = cast(u32, value)
+    upper: u32 = (widened & cast(u32, 255)) << 8
+    lower: u32 = (widened >> 8) & cast(u32, 255)
+    return cast(u16, upper | lower)
+}
+
+export fn std.net.htonl(value: u32) -> u32 {
+    b0: u32 = (value & cast(u32, 255)) << 24
+    b1: u32 = ((value >> 8) & cast(u32, 255)) << 16
+    b2: u32 = ((value >> 16) & cast(u32, 255)) << 8
+    b3: u32 = (value >> 24) & cast(u32, 255)
+    return b0 | b1 | b2 | b3
+}
+
+export fn std.net.ipv4(a: u8, b: u8, c: u8, d: u8) -> u32 {
+    host_order: u32 =
+        (cast(u32, a) << 24) |
+        (cast(u32, b) << 16) |
+        (cast(u32, c) << 8) |
+        cast(u32, d)
+    return std.net.htonl(host_order)
+}
+
+export fn std.net.sockaddr_v4(addr_be: u32, port: u16) -> std.net.SockAddrV4 {
+    addr: std.net.SockAddrV4
+    addr.family = cast(u16, 2)
+    addr.port = std.net.htons(port)
+    addr.addr = addr_be
+
+    i: i64 = 0
+    while i < 8 {
+        addr.zero[i] = cast(u8, 0)
+        i = i + 1
+    }
+
+    return addr
+}
+
+export fn std.net.sockaddr_v4_loopback(port: u16) -> std.net.SockAddrV4 {
+    return std.net.sockaddr_v4(std.net.ipv4(cast(u8, 127), cast(u8, 0), cast(u8, 0), cast(u8, 1)), port)
+}
+
+export fn std.net.sockaddr_v4_any(port: u16) -> std.net.SockAddrV4 {
+    return std.net.sockaddr_v4(cast(u32, 0), port)
+}
+
+fn std.net.socket_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 41
+    }
+
+    if Builtin.IsAArch64 {
+        return 198
+    }
+
+    return 0
+}
+
+fn std.net.connect_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 42
+    }
+
+    if Builtin.IsAArch64 {
+        return 203
+    }
+
+    return 0
+}
+
+fn std.net.accept_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 43
+    }
+
+    if Builtin.IsAArch64 {
+        return 202
+    }
+
+    return 0
+}
+
+fn std.net.sendto_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 44
+    }
+
+    if Builtin.IsAArch64 {
+        return 206
+    }
+
+    return 0
+}
+
+fn std.net.recvfrom_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 45
+    }
+
+    if Builtin.IsAArch64 {
+        return 207
+    }
+
+    return 0
+}
+
+fn std.net.close_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 3
+    }
+
+    if Builtin.IsAArch64 {
+        return 57
+    }
+
+    return 0
+}
+
+fn std.net.bind_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 49
+    }
+
+    if Builtin.IsAArch64 {
+        return 200
+    }
+
+    return 0
+}
+
+fn std.net.listen_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 50
+    }
+
+    if Builtin.IsAArch64 {
+        return 201
+    }
+
+    return 0
+}
+
+export fn std.net.socket(domain: i32, kind: i32, protocol: i32) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.socket_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, domain, kind, protocol)
+}
+
+export fn std.net.socket_tcp_v4() -> i64 {
+    return std.net.socket(2, 1, 0)
+}
+
+export fn std.net.bind_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.bind_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, cast(i64, addr), 16)
+}
+
+export fn std.net.listen(fd: i32, backlog: i32) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.listen_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, backlog)
+}
+
+export fn std.net.accept(fd: i32) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.accept_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, 0, 0)
+}
+
+export fn std.net.connect_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.connect_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, cast(i64, addr), 16)
+}
+
+export fn std.net.send(fd: i32, buf: []u8) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.sendto_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, cast(i64, buf.ptr), buf.len, 0, 0, 0)
+}
+
+export fn std.net.recv(fd: i32, buf: []u8) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.recvfrom_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, cast(i64, buf.ptr), buf.len, 0, 0, 0)
+}
+
+export fn std.net.close(fd: i32) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.close_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd)
 }
 ```
 
@@ -1376,6 +2109,10 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         return error.InvalidArgument
     }
 
+    if !std.task.is_supported() {
+        return error.UnsupportedPlatform
+    }
+
     if Builtin.IsX86_64 {
         stack_size: i64 = 65536
         raw_stack: *u8 = (std.mem.HeapAllocator.alloc(gpa, stack_size)) catch |stack_err| {
@@ -1389,6 +2126,7 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         f.func = taskFunc
         f.arg = arg
         f.state = 0
+        f.next = cast(*Fiber, 0)
         active_fibers = active_fibers + 1
         
         top: i64 = (cast(i64, raw_stack) + stack_size) & -16
@@ -1411,6 +2149,7 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         f.func = taskFunc
         f.arg = arg
         f.state = 0
+        f.next = cast(*Fiber, 0)
         active_fibers = active_fibers + 1
 
         top: i64 = (cast(i64, raw_stack) + stack_size) & -16
@@ -1441,8 +2180,20 @@ export fn std.task.yield() {
         return
     }
 
+    if cast(i64, current_fiber) == 0 {
+        return
+    }
+
     std.task.enqueue(current_fiber)
     std.task.yield_to_scheduler()
+}
+
+export fn std.task.has_ready_fibers() -> bool {
+    if cast(i64, ready_queue_head) == 0 {
+        return false
+    }
+
+    return true
 }
 
 fn std.task.enqueue(f: *Fiber) {
@@ -1472,6 +2223,7 @@ import "task.zorb"
 
 export struct std.async {}
 epoll_fd: i32 = -1
+polling_enabled: bool = false
 
 export fn std.async.is_supported() -> bool {
     if Builtin.IsBareMetal {
@@ -1490,6 +2242,9 @@ export fn std.async.is_supported() -> bool {
 }
 
 export fn std.async.init() {
+    epoll_fd = -1
+    polling_enabled = false
+
     if std.async.is_supported() {
         epoll_create1_nr: i64 = 0
         if Builtin.IsX86_64 {
@@ -1499,7 +2254,11 @@ export fn std.async.init() {
             epoll_create1_nr = 20
         }
         if epoll_create1_nr != 0 {
-            epoll_fd = cast(i32, syscall(epoll_create1_nr, 0))
+            created_fd: i64 = syscall(epoll_create1_nr, 0)
+            if created_fd >= 0 {
+                epoll_fd = cast(i32, created_fd)
+                polling_enabled = true
+            }
         }
     }
 }
@@ -1510,13 +2269,16 @@ export fn std.async.loop() {
     }
 
     while active_fibers > 0 {
-        while cast(i64, ready_queue_head) != 0 {
+        while std.task.has_ready_fibers() {
             f: *Fiber = std.task.dequeue()
             if f.state == 2 { continue }
             std.task.resume(f)
         }
 
         if active_fibers > 0 {
+            if !polling_enabled {
+                return
+            }
             std.async.poll_events()
         }
     }
@@ -1524,6 +2286,10 @@ export fn std.async.loop() {
 
 fn std.async.poll_events() {
     if !std.async.is_supported() {
+        return
+    }
+
+    if !polling_enabled {
         return
     }
 

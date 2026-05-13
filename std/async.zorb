@@ -2,6 +2,7 @@ import "task.zorb"
 
 export struct std.async {}
 epoll_fd: i32 = -1
+polling_enabled: bool = false
 
 export fn std.async.is_supported() -> bool {
     if Builtin.IsBareMetal {
@@ -20,6 +21,9 @@ export fn std.async.is_supported() -> bool {
 }
 
 export fn std.async.init() {
+    epoll_fd = -1
+    polling_enabled = false
+
     if std.async.is_supported() {
         epoll_create1_nr: i64 = 0
         if Builtin.IsX86_64 {
@@ -29,7 +33,11 @@ export fn std.async.init() {
             epoll_create1_nr = 20
         }
         if epoll_create1_nr != 0 {
-            epoll_fd = cast(i32, syscall(epoll_create1_nr, 0))
+            created_fd: i64 = syscall(epoll_create1_nr, 0)
+            if created_fd >= 0 {
+                epoll_fd = cast(i32, created_fd)
+                polling_enabled = true
+            }
         }
     }
 }
@@ -41,13 +49,16 @@ export fn std.async.loop() {
 
     // Condition fix: Exit when no more active fibers exist
     while active_fibers > 0 {
-        while cast(i64, ready_queue_head) != 0 {
+        while std.task.has_ready_fibers() {
             f: *Fiber = std.task.dequeue()
             if f.state == 2 { continue }
             std.task.resume(f)
         }
 
         if active_fibers > 0 {
+            if !polling_enabled {
+                return
+            }
             std.async.poll_events()
         }
     }
@@ -55,6 +66,10 @@ export fn std.async.loop() {
 
 fn std.async.poll_events() {
     if !std.async.is_supported() {
+        return
+    }
+
+    if !polling_enabled {
         return
     }
 
