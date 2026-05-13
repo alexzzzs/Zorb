@@ -1,0 +1,289 @@
+import "errors.zorb"
+
+export struct std.net {}
+
+export struct std.net.SockAddrV4 {
+    family: u16,
+    port: u16,
+    addr: u32,
+    zero: [8]u8
+}
+
+export fn std.net.is_supported() -> bool {
+    if Builtin.IsBareMetal {
+        return false
+    }
+
+    if !Builtin.IsLinux {
+        return false
+    }
+
+    if Builtin.IsX86_64 {
+        return true
+    }
+
+    if Builtin.IsAArch64 {
+        return true
+    }
+
+    return false
+}
+
+export fn std.net.errno(result: i64) -> i32 {
+    if result >= 0 {
+        return 0
+    }
+
+    return cast(i32, -result)
+}
+
+export fn std.net.htons(value: u16) -> u16 {
+    widened: u32 = cast(u32, value)
+    upper: u32 = (widened & cast(u32, 255)) << 8
+    lower: u32 = (widened >> 8) & cast(u32, 255)
+    return cast(u16, upper | lower)
+}
+
+export fn std.net.htonl(value: u32) -> u32 {
+    b0: u32 = (value & cast(u32, 255)) << 24
+    b1: u32 = ((value >> 8) & cast(u32, 255)) << 16
+    b2: u32 = ((value >> 16) & cast(u32, 255)) << 8
+    b3: u32 = (value >> 24) & cast(u32, 255)
+    return b0 | b1 | b2 | b3
+}
+
+export fn std.net.ipv4(a: u8, b: u8, c: u8, d: u8) -> u32 {
+    host_order: u32 =
+        (cast(u32, a) << 24) |
+        (cast(u32, b) << 16) |
+        (cast(u32, c) << 8) |
+        cast(u32, d)
+    return std.net.htonl(host_order)
+}
+
+export fn std.net.sockaddr_v4(addr_be: u32, port: u16) -> std.net.SockAddrV4 {
+    addr: std.net.SockAddrV4
+    addr.family = cast(u16, 2)
+    addr.port = std.net.htons(port)
+    addr.addr = addr_be
+
+    i: i64 = 0
+    while i < 8 {
+        addr.zero[i] = cast(u8, 0)
+        i = i + 1
+    }
+
+    return addr
+}
+
+export fn std.net.sockaddr_v4_loopback(port: u16) -> std.net.SockAddrV4 {
+    return std.net.sockaddr_v4(std.net.ipv4(cast(u8, 127), cast(u8, 0), cast(u8, 0), cast(u8, 1)), port)
+}
+
+export fn std.net.sockaddr_v4_any(port: u16) -> std.net.SockAddrV4 {
+    return std.net.sockaddr_v4(cast(u32, 0), port)
+}
+
+fn std.net.socket_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 41
+    }
+
+    if Builtin.IsAArch64 {
+        return 198
+    }
+
+    return 0
+}
+
+fn std.net.connect_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 42
+    }
+
+    if Builtin.IsAArch64 {
+        return 203
+    }
+
+    return 0
+}
+
+fn std.net.accept_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 43
+    }
+
+    if Builtin.IsAArch64 {
+        return 202
+    }
+
+    return 0
+}
+
+fn std.net.sendto_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 44
+    }
+
+    if Builtin.IsAArch64 {
+        return 206
+    }
+
+    return 0
+}
+
+fn std.net.recvfrom_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 45
+    }
+
+    if Builtin.IsAArch64 {
+        return 207
+    }
+
+    return 0
+}
+
+fn std.net.close_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 3
+    }
+
+    if Builtin.IsAArch64 {
+        return 57
+    }
+
+    return 0
+}
+
+fn std.net.bind_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 49
+    }
+
+    if Builtin.IsAArch64 {
+        return 200
+    }
+
+    return 0
+}
+
+fn std.net.listen_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 50
+    }
+
+    if Builtin.IsAArch64 {
+        return 201
+    }
+
+    return 0
+}
+
+export fn std.net.socket(domain: i32, kind: i32, protocol: i32) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.socket_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, domain, kind, protocol)
+}
+
+export fn std.net.socket_tcp_v4() -> i64 {
+    return std.net.socket(2, 1, 0)
+}
+
+export fn std.net.bind_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.bind_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, cast(i64, addr), Builtin.sizeof(std.net.SockAddrV4))
+}
+
+export fn std.net.listen(fd: i32, backlog: i32) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.listen_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, backlog)
+}
+
+export fn std.net.accept(fd: i32) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.accept_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, 0, 0)
+}
+
+export fn std.net.connect_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.connect_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, cast(i64, addr), Builtin.sizeof(std.net.SockAddrV4))
+}
+
+export fn std.net.send(fd: i32, buf: []u8) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.sendto_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, cast(i64, buf.ptr), buf.len, 0, 0, 0)
+}
+
+export fn std.net.recv(fd: i32, buf: []u8) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.recvfrom_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd, cast(i64, buf.ptr), buf.len, 0, 0, 0)
+}
+
+export fn std.net.close(fd: i32) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    nr: i64 = std.net.close_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, fd)
+}

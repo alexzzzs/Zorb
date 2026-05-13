@@ -6,6 +6,7 @@ export struct std.io {}
 // Windows Externs
 import c "windows.h"
 extern fn GetStdHandle(nStdHandle: i32) -> i64
+extern fn ReadFile(h: i64, buf: *i8, len: u32, read: *u32, overlapped: i64) -> i32
 extern fn WriteFile(h: i64, buf: *i8, len: u32, written: *u32, overlapped: i64) -> i32
 
 fn std.io.stdout_fd() -> i32 {
@@ -46,6 +47,15 @@ export fn std.io.eprintln(msg: string) {
     std.io.write(std.io.stderr_fd(), newline)
 }
 
+export fn std.io.print_bool(val: bool) {
+    if val {
+        std.io.print("true")
+        return
+    }
+
+    std.io.print("false")
+}
+
 export fn std.io.print_i64(val: i64) {
     buf: [32]u8
     digits: []u8 = buf
@@ -58,6 +68,16 @@ export fn std.io.eprint_i64(val: i64) {
     digits: []u8 = buf
     digits.len = std.str.from_i64(val, digits)
     std.io.write(std.io.stderr_fd(), digits)
+}
+
+export fn std.io.println_i64(val: i64) {
+    std.io.print_i64(val)
+    std.io.print("\n")
+}
+
+export fn std.io.eprintln_i64(val: i64) {
+    std.io.eprint_i64(val)
+    std.io.eprint("\n")
 }
 
 // Writes a buffer to the specified file descriptor.
@@ -118,4 +138,60 @@ export fn std.io.write(fd: i32, buf: []u8) {
             WriteFile(handle, cast(*i8, buf.ptr), windows_len, &written, 0)
         }
     }
+}
+
+export fn std.io.read(fd: i32, buf: []u8) -> i64 {
+    if buf.len < 0 {
+        return -1
+    }
+
+    if Builtin.IsBareMetal {
+        return -1
+    }
+
+    if Builtin.IsLinux {
+        read_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            read_nr = 0
+        }
+        if Builtin.IsAArch64 {
+            read_nr = 63
+        }
+        if read_nr == 0 && !Builtin.IsX86_64 {
+            return -1
+        }
+
+        return syscall(read_nr, cast(i64, fd), cast(i64, buf.ptr), buf.len)
+    }
+
+    if Builtin.IsWindows {
+        windows_len: u32 = cast(u32, buf.len)
+        if buf.len > 4294967295 {
+            windows_len = cast(u32, 4294967295)
+        }
+
+        handle: i64 = 0
+        if fd == std.io.stdout_fd() {
+            handle = GetStdHandle(-11)
+        }
+        if fd == std.io.stderr_fd() {
+            handle = GetStdHandle(-12)
+        }
+        if fd == 0 {
+            handle = GetStdHandle(-10)
+        }
+        if handle == 0 {
+            return -1
+        }
+
+        bytes_read: u32 = 0
+        result: i32 = ReadFile(handle, cast(*i8, buf.ptr), windows_len, &bytes_read, 0)
+        if result == 0 {
+            return -1
+        }
+
+        return cast(i64, bytes_read)
+    }
+
+    return -1
 }

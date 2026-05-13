@@ -33,8 +33,11 @@ Cross-platform stdlib helpers currently include:
 
 - `std.os.is_linux()`, `std.os.is_windows()`, `std.os.platform_name()`
 - `std.os.is_x86_64()`, `std.os.is_aarch64()`, `std.os.arch_name()`
-- `std.io.print(...)`, `std.io.println(...)`, `std.io.eprint(...)`, `std.io.eprintln(...)`, and slice-based `std.io.write(fd, buf)`
+- `std.io.print(...)`, `std.io.println(...)`, `std.io.eprint(...)`, `std.io.eprintln(...)`, boolean and integer print helpers, slice-based `std.io.write(fd, buf)`, and `std.io.read(fd, buf)`
+- low-level Linux-first networking helpers in `std.net` for raw TCP socket setup, IPv4 socket addresses, send/recv, and close
 - `std.task.is_supported()` and `std.async.is_supported()` for checking runtime capability before using task or async features
+- `std.str.eql(...)`, `std.str.starts_with(...)`, `std.str.ends_with(...)`, `std.str.copy(...)`, and `std.str.from_u64(...)`
+- `std.mem.zero(...)` and `std.mem.copy(...)` for slice-oriented memory helpers
 
 ## Build
 
@@ -335,6 +338,8 @@ Current checked-in examples:
 - [`examples/basics/error_catch.zorb`](./examples/basics/error_catch.zorb): error unions with `catch`, `std.io`, and `std.os`.
 - [`examples/basics/tagged_union.zorb`](./examples/basics/tagged_union.zorb): tagged unions with payload-binding `match`.
 - [`examples/basics/platform_info.zorb`](./examples/basics/platform_info.zorb): cross-platform stdlib helpers for platform detection, stdout, and stderr.
+- [`examples/basics/net_socket.zorb`](./examples/basics/net_socket.zorb): low-level TCP socket setup using the Linux-first `std.net` APIs.
+- [`examples/basics/stdlib_helpers.zorb`](./examples/basics/stdlib_helpers.zorb): string, memory, and formatted output helpers from the standard library.
 - [`examples/basics/literals.zorb`](./examples/basics/literals.zorb): typed struct and array literals combined with logical operators.
 - [`examples/basics/switch_for.zorb`](./examples/basics/switch_for.zorb): `for` loops and `switch` with an `else` branch.
 - [`examples/dogfood/lexer/main.zorb`](./examples/dogfood/lexer/main.zorb): a small lexer demo written in Zorb that exercises real control flow, slices, and token handling.
