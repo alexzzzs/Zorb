@@ -1,0 +1,45 @@
+import "../../std/io.zorb"
+import "../../std/os.zorb"
+import "../../std/net.zorb"
+
+fn _start() {
+    if !std.net.is_supported() {
+        std.io.println("net unsupported")
+        std.os.exit(0)
+        return
+    }
+
+    fd_raw: i64 = std.net.socket_tcp_v4()
+    if fd_raw < 0 {
+        std.io.eprint("socket failed errno=")
+        std.io.eprintln_i64(std.net.errno(fd_raw))
+        std.os.exit(1)
+        return
+    }
+
+    fd: i32 = cast(i32, fd_raw)
+    addr: std.net.SockAddrV4 = std.net.sockaddr_v4_any(0)
+
+    if std.net.bind_v4(fd, &addr) < 0 {
+        std.io.eprintln("bind failed")
+        std.net.close(fd)
+        std.os.exit(2)
+        return
+    }
+
+    if std.net.listen(fd, 8) < 0 {
+        std.io.eprintln("listen failed")
+        std.net.close(fd)
+        std.os.exit(3)
+        return
+    }
+
+    if std.net.close(fd) < 0 {
+        std.io.eprintln("close failed")
+        std.os.exit(4)
+        return
+    }
+
+    std.io.println("net ready")
+    std.os.exit(0)
+}

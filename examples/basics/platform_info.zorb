@@ -5,7 +5,8 @@ fn _start() {
     if std.os.is_linux() || std.os.is_windows() {
         std.io.print("running on ")
         std.io.print(std.os.platform_name())
-        std.io.print("\n")
+        std.io.print(" ")
+        std.io.println(std.os.arch_name())
         std.io.eprintln("stderr ready")
         std.os.exit(0)
         return

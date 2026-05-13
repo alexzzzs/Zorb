@@ -53,10 +53,19 @@ All notable changes to this project will be documented in this file.
 - Tagged `union` declarations with generated `Union.Tag` enums plus literals such as `Value{ Number: 7 }`.
 - Union field access through `.tag` and payload fields, including import-alias support for tag members like `pkg.Value.Tag.Number`.
 - Fixture, runtime, and example coverage for tagged unions, invalid union declarations, and tagged-union switching.
+- Additional stdlib helpers including string equality and prefix/suffix checks, slice copying and zeroing, unsigned integer formatting, boolean and integer print helpers, and slice-based `std.io.read(...)`.
+- A Linux-first low-level `std.net` module with raw TCP socket operations, IPv4 socket-address helpers, byte-order helpers, and runtime coverage for socket-create/bind/listen/close flows.
+- New runtime fixtures covering repeated async initialization, yielding outside a fiber, and the new stdlib helper set.
 
 ### Changed
 
+- The compiler entrypoint and parser are now split across smaller partial-class source files so CLI/build logic and parsing logic are easier to work on in isolation.
+
 ### Fixed
+
+- `std.task.spawn(...)` now rejects unsupported targets up front instead of falling into architecture-specific code paths.
+- `std.task.yield()` now returns safely when called outside an active fiber.
+- `std.async.init()` now resets its internal polling state on re-entry, and `std.async.loop()` no longer assumes polling was initialized successfully.
 
 ## [0.1.6] - May 2, 2026
 
