@@ -419,26 +419,16 @@ public partial class Parser
 
         return new TypeNode
         {
-            Name = name,
-            NamespacePath = new List<string>(path),
-            IsVolatile = isVolatile,
-            IsSlice = isSlice,
-            IsPointer = pointer,
-            PointerLevel = pointerLevel,
-            ArraySize = arraySize,
-            ArraySizeExpr = arraySizeExpr,
+            Name = typeNode.Name,
+            NamespacePath = new List<string>(typeNode.NamespacePath),
+            IsVolatile = typeNode.IsVolatile,
+            IsSlice = typeNode.IsSlice,
+            IsPointer = typeNode.IsPointer,
+            PointerLevel = typeNode.PointerLevel,
+            ArraySize = typeNode.ArraySize,
+            ArraySizeExpr = typeNode.ArraySizeExpr,
             IsErrorUnion = true,
-            ErrorInnerType = new TypeNode
-            {
-                Name = name,
-                NamespacePath = new List<string>(path),
-                IsVolatile = isVolatile,
-                IsSlice = isSlice,
-                IsPointer = pointer,
-                PointerLevel = pointerLevel,
-                ArraySize = arraySize,
-                ArraySizeExpr = arraySizeExpr
-            }
+            ErrorInnerType = typeNode
         };
     }
 

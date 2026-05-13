@@ -117,14 +117,7 @@ public partial class Parser
         var elseBody = new List<Statement>();
         if (Match(TokenType.Else))
         {
-            if (Peek(1).Type == TokenType.LBrace)
-            {
-                Expect(TokenType.LBrace, "Expected '{' to start else body.");
-                while (Current.Type != TokenType.RBrace && Current.Type != TokenType.Eof)
-                    elseBody.Add(ParseStatement());
-                Expect(TokenType.RBrace, "Expected '}' to close else body.");
-            }
-            else if (Current.Type == TokenType.If)
+            if (Current.Type == TokenType.If)
             {
                 elseBody.Add(ParseIf());
             }

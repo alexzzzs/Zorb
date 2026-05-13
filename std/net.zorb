@@ -207,7 +207,7 @@ export fn std.net.bind_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
         return -cast(i64, error.NotImplemented)
     }
 
-    return syscall(nr, fd, cast(i64, addr), 16)
+    return syscall(nr, fd, cast(i64, addr), Builtin.sizeof(std.net.SockAddrV4))
 }
 
 export fn std.net.listen(fd: i32, backlog: i32) -> i64 {
@@ -246,7 +246,7 @@ export fn std.net.connect_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
         return -cast(i64, error.NotImplemented)
     }
 
-    return syscall(nr, fd, cast(i64, addr), 16)
+    return syscall(nr, fd, cast(i64, addr), Builtin.sizeof(std.net.SockAddrV4))
 }
 
 export fn std.net.send(fd: i32, buf: []u8) -> i64 {
