@@ -187,24 +187,18 @@ export fn std.str.from_u64(value: u64, buf: []u8) -> i64 {
         return 1
     }
 
-    required_capacity: i64 = 21
-    if buf.len < required_capacity {
-        return -1
-    }
-
     i: i64 = 0
     v: u64 = value
     limit: i64 = buf.len - 1
 
-    while v > 0 && i < limit {
+    while v > 0 {
+        if i >= limit {
+            return -1
+        }
         rem: u64 = v % cast(u64, 10)
         buf[i] = cast(u8, rem + cast(u64, 48))
         v = v / cast(u64, 10)
         i = i + 1
-    }
-
-    if v > 0 {
-        return -1
     }
 
     digits: []u8 = buf

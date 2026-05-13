@@ -81,6 +81,8 @@ partial class Program
                 }
                 catch
                 {
+                    // Intentionally ignored: the process may have already exited,
+                    // and a kill failure should not mask the timeout diagnostic.
                 }
 
                 throw new Zorb.Compiler.Utils.ZorbCompilerException($"Process '{fileName}' timed out after {timeoutMilliseconds.Value / 1000} seconds.");

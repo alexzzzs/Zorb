@@ -438,14 +438,25 @@ public partial class Parser
         if (Current.Type == TokenType.Number)
         {
             var startToken = Current;
-            long val;
-            if (Current.Value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            long val = 0;
+            try
             {
-                val = Convert.ToInt64(Current.Value.Substring(2), 16);
+                if (Current.Value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                {
+                    val = Convert.ToInt64(Current.Value.Substring(2), 16);
+                }
+                else
+                {
+                    val = long.Parse(Current.Value);
+                }
             }
-            else
+            catch (FormatException)
             {
-                val = long.Parse(Current.Value);
+                ErrorReporter.Error("Malformed numeric literal.", startToken.Line, startToken.Column, _fileName);
+            }
+            catch (OverflowException)
+            {
+                ErrorReporter.Error("Numeric literal is too large for i64.", startToken.Line, startToken.Column, _fileName);
             }
             Advance();
             var numExpr = new NumberExpr { Value = val };
