@@ -212,3 +212,14 @@ export fn std.str.from_u64(value: u64, buf: []u8) -> i64 {
     buf[i] = cast(u8, 0)
     return i
 }
+
+export fn std.str.find_byte(s: []u8, byte: u8) -> i64 {
+    i: i64 = 0
+    while i < s.len {
+        if s[i] == byte {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
