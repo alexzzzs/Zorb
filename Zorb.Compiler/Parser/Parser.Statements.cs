@@ -48,38 +48,7 @@ public partial class Parser
             return ParseAsm();
 
         var attributes = ParseAttributes();
-
-        if (Current.Type == TokenType.Const)
-        {
-            var varDecl = (VariableDeclarationNode)ParseVarDecl(false);
-            ApplyVariableAttributes(varDecl, attributes);
-            return varDecl;
-        }
-
-        if (Current.Type == TokenType.Identifier && Peek(1).Type == TokenType.Colon)
-        {
-            var varDecl = (VariableDeclarationNode)ParseVarDecl(false);
-            ApplyVariableAttributes(varDecl, attributes);
-            return varDecl;
-        }
-
-        if (Current.Type == TokenType.Identifier && (Peek(1).Type == TokenType.Equals || Peek(1).Type == TokenType.LBracket))
-            return ParseAssignment();
-
-        var expr = ParseExpression();
-
-        if (Current.Type == TokenType.Equals)
-        {
-            Advance();
-            var value = ParseExpression();
-            var stmt = new AssignStmt { Target = expr, Value = value };
-            StampNode(stmt, expr);
-            return stmt;
-        }
-
-        var exprStmt = new ExpressionStatement { Expression = expr };
-        StampNode(exprStmt, expr);
-        return exprStmt;
+        return ParseDeclarationAssignmentOrExpression(attributes, "Attributes in block scope are only supported on variable declarations.");
     }
 
     private Statement ParseReturn()
@@ -321,20 +290,9 @@ public partial class Parser
             return pattern;
         }
 
-        if (patternExpr is FieldExpr)
-        {
-            var pattern = new UnionMatchPattern
-            {
-                Variant = patternExpr,
-                BindingName = null
-            };
-            StampNode(pattern, patternExpr);
-            return pattern;
-        }
-
-        var enumPattern = new EnumMatchPattern { Value = patternExpr };
-        StampNode(enumPattern, patternExpr);
-        return enumPattern;
+        var qualifiedPattern = new QualifiedMatchPattern { Value = patternExpr };
+        StampNode(qualifiedPattern, patternExpr);
+        return qualifiedPattern;
     }
 
     private Expr ParseQualifiedReferenceExpression(string missingNameMessage, string missingSegmentMessage)
@@ -369,7 +327,11 @@ public partial class Parser
     private Statement ParseForClauseStatement()
     {
         var attributes = ParseAttributes();
+        return ParseDeclarationAssignmentOrExpression(attributes, "Attributes in for-loop clauses are only supported on variable declarations.");
+    }
 
+    private Statement ParseDeclarationAssignmentOrExpression(AttributeParseResult attributes, string invalidAttributeMessage)
+    {
         if (Current.Type == TokenType.Const)
         {
             var varDecl = (VariableDeclarationNode)ParseVarDecl(false);
@@ -385,7 +347,7 @@ public partial class Parser
         }
 
         if (attributes.Attributes.Count > 0 || attributes.AlignExpr != null)
-            ErrorReporter.Error("Attributes in for-loop clauses are only supported on variable declarations.", Current.Line, Current.Column, _fileName);
+            ErrorReporter.Error(invalidAttributeMessage, Current.Line, Current.Column, _fileName);
 
         if (Current.Type == TokenType.Identifier && (Peek(1).Type == TokenType.Equals || Peek(1).Type == TokenType.LBracket))
             return ParseAssignment();

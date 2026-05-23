@@ -314,9 +314,9 @@ public class TypeChecker
     {
         switch (pattern)
         {
-            case EnumMatchPattern enumPattern:
-                enumPattern.Value = NormalizeAliasReferences(enumPattern.Value);
-                return enumPattern;
+            case QualifiedMatchPattern qualifiedPattern:
+                qualifiedPattern.Value = NormalizeAliasReferences(qualifiedPattern.Value);
+                return qualifiedPattern;
 
             case UnionMatchPattern unionPattern:
                 unionPattern.Variant = NormalizeAliasReferences(unionPattern.Variant);
@@ -498,25 +498,8 @@ public class TypeChecker
                     _errors.Error(sn, $"Duplicate top-level declaration '{fullName}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[fullName])}");
                 MakeVisible(fullName);
                 if (!_symbolTable.IsDefined(fullName)) _symbolTable.DefineStruct(fullName, sn);
-
                 foreach (var field in sn.Fields)
-                {
                     NormalizeTypeReferenceInPlace(field.TypeName);
-                    var fieldFullName = field.TypeName.NamespacePath.Any() 
-                        ? string.Join(".", field.TypeName.NamespacePath) + "." + field.TypeName.Name 
-                        : field.TypeName.Name;
-
-                    if (field.TypeName.IsFunction || field.TypeName.Name == "void" || field.TypeName.Name == "string" || field.TypeName.Name == "bool") 
-                        continue;
-
-                    if (!_numericTypes.Contains(field.TypeName.Name) &&
-                        !_symbolTable.TryLookupStruct(fieldFullName, out _) &&
-                        _symbolTable.LookupEnumNode(fieldFullName) == null &&
-                        _symbolTable.LookupUnionNode(fieldFullName) == null)
-                    {
-                        _errors.Error(sn, $"Unknown type '{fieldFullName}' in struct '{fullName}'");
-                    }
-                }
             }
             else if (node is EnumNode enumNode) {
                 NormalizeTypeReferenceInPlace(enumNode.UnderlyingType);
@@ -1009,45 +992,25 @@ public class TypeChecker
 
         foreach (var matchCase in matchStmt.Cases)
         {
-            if (matchCase.Pattern is UnionMatchPattern unionPattern && string.IsNullOrEmpty(unionPattern.BindingName))
-            {
-                CheckExpression(unionPattern.Variant);
-                var unionPatternType = GetExpressionType(unionPattern.Variant);
-                if (unionPatternType != null && !SameType(matchType, unionPatternType))
-                    _errors.Error(unionPattern.Variant, $"Match case pattern of type '{FormatType(unionPatternType)}' does not match enum type '{FormatType(matchType)}'.");
-
-                if (TryGetSwitchCaseKey(unionPattern.Variant, out var unionCaseKey))
-                {
-                    if (!seenCaseValues.TryAdd(unionCaseKey, unionPattern))
-                        _errors.Error(unionPattern.Variant, $"Duplicate match case value '{unionCaseKey}'.{FormatPreviousDeclarationSuffix(seenCaseValues[unionCaseKey])}");
-                }
-
-                if (TryEvaluateConstIntExpr(unionPattern.Variant, out var unionEnumCaseValue, out _))
-                    seenEnumCaseValues.Add(unionEnumCaseValue);
-
-                caseOutcomes.Add(CheckBlock(matchCase.Body));
-                continue;
-            }
-
-            if (matchCase.Pattern is not EnumMatchPattern enumPattern)
+            if (matchCase.Pattern is not QualifiedMatchPattern qualifiedPattern)
             {
                 _errors.Error(matchCase.Pattern, $"Match over enum '{FormatType(matchType)}' requires enum-member patterns like '{enumDefinition?.Name}.Member'.");
                 caseOutcomes.Add(CheckBlock(matchCase.Body));
                 continue;
             }
 
-            CheckExpression(enumPattern.Value);
-            var patternType = GetExpressionType(enumPattern.Value);
+            CheckExpression(qualifiedPattern.Value);
+            var patternType = GetExpressionType(qualifiedPattern.Value);
             if (patternType != null && !SameType(matchType, patternType))
-                _errors.Error(enumPattern.Value, $"Match case pattern of type '{FormatType(patternType)}' does not match enum type '{FormatType(matchType)}'.");
+                _errors.Error(qualifiedPattern.Value, $"Match case pattern of type '{FormatType(patternType)}' does not match enum type '{FormatType(matchType)}'.");
 
-            if (TryGetSwitchCaseKey(enumPattern.Value, out var caseKey))
+            if (TryGetSwitchCaseKey(qualifiedPattern.Value, out var caseKey))
             {
-                if (!seenCaseValues.TryAdd(caseKey, enumPattern))
-                    _errors.Error(enumPattern.Value, $"Duplicate match case value '{caseKey}'.{FormatPreviousDeclarationSuffix(seenCaseValues[caseKey])}");
+                if (!seenCaseValues.TryAdd(caseKey, qualifiedPattern))
+                    _errors.Error(qualifiedPattern.Value, $"Duplicate match case value '{caseKey}'.{FormatPreviousDeclarationSuffix(seenCaseValues[caseKey])}");
             }
 
-            if (TryEvaluateConstIntExpr(enumPattern.Value, out var enumCaseValue, out _))
+            if (TryEvaluateConstIntExpr(qualifiedPattern.Value, out var enumCaseValue, out _))
                 seenEnumCaseValues.Add(enumCaseValue);
 
             caseOutcomes.Add(CheckBlock(matchCase.Body));
@@ -1077,17 +1040,28 @@ public class TypeChecker
 
         foreach (var matchCase in matchStmt.Cases)
         {
-            if (matchCase.Pattern is not UnionMatchPattern unionPattern)
+            Expr variantExpr;
+            UnionMatchPattern? bindingPattern = null;
+            if (matchCase.Pattern is QualifiedMatchPattern qualifiedPattern)
+            {
+                variantExpr = qualifiedPattern.Value;
+            }
+            else if (matchCase.Pattern is UnionMatchPattern unionPattern)
+            {
+                variantExpr = unionPattern.Variant;
+                bindingPattern = unionPattern;
+            }
+            else
             {
                 _errors.Error(matchCase.Pattern, $"Match over union '{FormatType(matchType)}' requires union-variant patterns like '{unionDefinition?.Name}.Variant(payload)'.");
                 caseOutcomes.Add(CheckBlock(matchCase.Body));
                 continue;
             }
 
-            var variantQualifiedName = TryGetQualifiedName(unionPattern.Variant);
+            var variantQualifiedName = TryGetQualifiedName(variantExpr);
             if (string.IsNullOrEmpty(variantQualifiedName))
             {
-                _errors.Error(unionPattern.Variant, "Union match patterns must be qualified variant names.");
+                _errors.Error(variantExpr, "Union match patterns must be qualified variant names.");
                 caseOutcomes.Add(CheckBlock(matchCase.Body));
                 continue;
             }
@@ -1098,39 +1072,43 @@ public class TypeChecker
             var lastDot = resolvedVariantName.LastIndexOf('.');
             if (lastDot < 0)
             {
-                _errors.Error(unionPattern.Variant, "Union match patterns must reference a specific variant.");
+                _errors.Error(variantExpr, "Union match patterns must reference a specific variant.");
                 caseOutcomes.Add(CheckBlock(matchCase.Body));
                 continue;
             }
 
             var resolvedUnionName = resolvedVariantName[..lastDot];
             var variantName = resolvedVariantName[(lastDot + 1)..];
-            unionPattern.ResolvedUnionName = resolvedUnionName;
-            unionPattern.VariantName = variantName;
+            if (bindingPattern != null)
+            {
+                bindingPattern.ResolvedUnionName = resolvedUnionName;
+                bindingPattern.VariantName = variantName;
+            }
 
             var expectedUnionName = matchType.NamespacePath.Any()
                 ? string.Join(".", matchType.NamespacePath) + "." + matchType.Name
                 : matchType.Name;
             if (!string.Equals(resolvedUnionName, expectedUnionName, StringComparison.Ordinal))
-                _errors.Error(unionPattern.Variant, $"Match case variant '{resolvedVariantName}' does not belong to union '{FormatType(matchType)}'.");
+                _errors.Error(variantExpr, $"Match case variant '{resolvedVariantName}' does not belong to union '{FormatType(matchType)}'.");
 
             var variant = unionDefinition?.Variants.FirstOrDefault(candidate => candidate.Name == variantName);
             if (variant == null)
             {
-                _errors.Error(unionPattern.Variant, $"Union '{FormatType(matchType)}' does not have a variant named '{variantName}'.");
+                _errors.Error(variantExpr, $"Union '{FormatType(matchType)}' does not have a variant named '{variantName}'.");
                 caseOutcomes.Add(CheckBlock(matchCase.Body));
                 continue;
             }
 
-            unionPattern.BindingType = variant.TypeName.Clone();
-            if (!seenVariants.TryAdd(variantName, unionPattern))
-                _errors.Error(unionPattern.Variant, $"Duplicate match case variant '{variantName}'.{FormatPreviousDeclarationSuffix(seenVariants[variantName])}");
+            if (bindingPattern != null)
+                bindingPattern.BindingType = variant.TypeName.Clone();
+            if (!seenVariants.TryAdd(variantName, matchCase.Pattern))
+                _errors.Error(variantExpr, $"Duplicate match case variant '{variantName}'.{FormatPreviousDeclarationSuffix(seenVariants[variantName])}");
 
             PushScopedState();
             try
             {
-                if (!string.IsNullOrEmpty(unionPattern.BindingName))
-                    _symbolTable.DefineVariable(unionPattern.BindingName!, unionPattern.BindingType.Clone());
+                if (!string.IsNullOrEmpty(bindingPattern?.BindingName))
+                    _symbolTable.DefineVariable(bindingPattern.BindingName!, bindingPattern.BindingType!.Clone());
                 caseOutcomes.Add(CheckBlock(matchCase.Body, pushScope: false));
             }
             finally

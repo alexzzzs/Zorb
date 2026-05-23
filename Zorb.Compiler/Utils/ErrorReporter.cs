@@ -13,63 +13,56 @@ public class ErrorReporter
     private const string Cyan = "\u001b[36m";
     private const string Reset = "\u001b[0m";
     private const string White = "\u001b[37;1m";
+    private const string Yellow = "\u001b[33;1m";
 
-    private readonly List<string> _errors = new();
-    private readonly List<string> _warnings = new();
+    private sealed record DiagnosticEntry(string Message, Node? Node, string Severity, string Color);
+
+    private readonly List<DiagnosticEntry> _errors = new();
+    private readonly List<DiagnosticEntry> _warnings = new();
     public bool HasErrors => _errors.Count > 0;
     public bool HasWarnings => _warnings.Count > 0;
 
-    public List<string> Errors => _errors;
-    public List<string> Warnings => _warnings;
+    public List<string> Errors => _errors.Select(FormatDiagnosticMessage).ToList();
+    public List<string> Warnings => _warnings.Select(FormatDiagnosticMessage).ToList();
 
     public void Error(string message)
     {
-        _errors.Add(message);
+        _errors.Add(new DiagnosticEntry(message, null, "error", Red));
     }
 
     public void Error(string message, int line, int column)
     {
-        _errors.Add($"{message} at line {line}, column {column}");
+        _errors.Add(new DiagnosticEntry($"{message} at line {line}, column {column}", null, "error", Red));
     }
 
     public void Error(string message, int line, int column, string file)
     {
-        _errors.Add($"{file}:{line}:{column}: error: {message}");
+        _errors.Add(new DiagnosticEntry($"{file}:{line}:{column}: error: {message}", null, "error", Red));
     }
 
     public void Error(Node node, string message)
     {
-        ReportError(node, message);
+        _errors.Add(new DiagnosticEntry(message, node, "error", Red));
     }
 
     public void Warning(string message)
     {
-        _warnings.Add(message);
+        _warnings.Add(new DiagnosticEntry(message, null, "warning", Yellow));
     }
 
     public void Warning(string message, int line, int column)
     {
-        _warnings.Add($"{message} at line {line}, column {column}");
+        _warnings.Add(new DiagnosticEntry($"{message} at line {line}, column {column}", null, "warning", Yellow));
     }
 
     public void Warning(string message, int line, int column, string file)
     {
-        _warnings.Add($"{file}:{line}:{column}: warning: {message}");
+        _warnings.Add(new DiagnosticEntry($"{file}:{line}:{column}: warning: {message}", null, "warning", Yellow));
     }
 
     public void Warning(Node node, string message)
     {
-        ReportWarning(node, message);
-    }
-
-    public void ReportError(Node node, string message)
-    {
-        ReportDiagnostic(_errors, node, message, "error", Red);
-    }
-
-    public void ReportWarning(Node node, string message)
-    {
-        ReportDiagnostic(_warnings, node, message, "warning", "\u001b[33;1m");
+        _warnings.Add(new DiagnosticEntry(message, node, "warning", Yellow));
     }
 
     public void ReportAll()
@@ -81,17 +74,13 @@ public class ErrorReporter
     public void ReportErrors()
     {
         foreach (var error in _errors)
-        {
-            Console.Error.WriteLine(HasLocationPrefix(error) ? error : $"Error: {error}");
-        }
+            RenderDiagnostic(error, Console.Error);
     }
 
     public void ReportWarnings()
     {
         foreach (var warning in _warnings)
-        {
-            Console.Error.WriteLine(HasLocationPrefix(warning) ? warning : $"Warning: {warning}");
-        }
+            RenderDiagnostic(warning, Console.Error);
     }
 
     private static bool HasLocationPrefix(string error)
@@ -119,32 +108,48 @@ public class ErrorReporter
         return text.Length > 0 && text.All(char.IsDigit);
     }
 
-    private void ReportDiagnostic(List<string> sink, Node node, string message, string severity, string color)
+    private static string FormatDiagnosticMessage(DiagnosticEntry diagnostic)
     {
-        sink.Add($"{node.File}:{node.Line}:{node.Column}: {severity}: {message}");
+        if (diagnostic.Node != null)
+            return $"{diagnostic.Node.File}:{diagnostic.Node.Line}:{diagnostic.Node.Column}: {diagnostic.Severity}: {diagnostic.Message}";
 
-        Console.WriteLine($"{White}{node.File}:{node.Line}:{node.Column}: {color}{severity}: {White}{message}{Reset}");
+        return diagnostic.Message;
+    }
 
+    private static void RenderDiagnostic(DiagnosticEntry diagnostic, TextWriter writer)
+    {
+        var formattedMessage = FormatDiagnosticMessage(diagnostic);
+        if (diagnostic.Node == null)
+        {
+            writer.WriteLine(HasLocationPrefix(formattedMessage)
+                ? formattedMessage
+                : $"{char.ToUpperInvariant(diagnostic.Severity[0])}{diagnostic.Severity[1..]}: {formattedMessage}");
+            return;
+        }
+
+        var node = diagnostic.Node;
+        writer.WriteLine($"{White}{node.File}:{node.Line}:{node.Column}: {diagnostic.Color}{diagnostic.Severity}: {White}{diagnostic.Message}{Reset}");
         try
         {
             var lines = File.ReadLines(node.File).ToList();
             if (node.Line > 0 && node.Line <= lines.Count)
             {
-                string sourceLine = lines[node.Line - 1];
+                var sourceLine = lines[node.Line - 1];
 
-                Console.WriteLine($"{Cyan}{node.Line,4} | {Reset}{sourceLine}");
+                writer.WriteLine($"{Cyan}{node.Line,4} | {Reset}{sourceLine}");
 
-                string padding = new string(' ', Math.Max(0, node.Column - 1));
-                string underline = new string('^', Math.Max(1, node.Length));
+                var padding = new string(' ', Math.Max(0, node.Column - 1));
+                var underline = new string('^', Math.Max(1, node.Length));
 
-                Console.WriteLine($"{Cyan}     | {color}{padding}{underline}{Reset}");
+                writer.WriteLine($"{Cyan}     | {diagnostic.Color}{padding}{underline}{Reset}");
             }
         }
         catch (Exception)
         {
-            Console.WriteLine($"{color}Could not load source snippet.{Reset}");
+            writer.WriteLine($"{diagnostic.Color}Could not load source snippet.{Reset}");
         }
-        Console.WriteLine();
+
+        writer.WriteLine();
     }
 
     public void ThrowIfErrors()

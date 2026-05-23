@@ -145,7 +145,7 @@ public class SwitchStmt : Statement
 
 public abstract class MatchPattern : Node { }
 
-public class EnumMatchPattern : MatchPattern
+public class QualifiedMatchPattern : MatchPattern
 {
     public Expr Value { get; set; } = null!;
 }

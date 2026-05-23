@@ -64,6 +64,17 @@ catch (Exception ex)
     Console.WriteLine("FAIL cli_args");
 }
 
+try
+{
+    RunSemanticDiagnosticOutputTests(fixtureRoot);
+    Console.WriteLine("PASS semantic_output");
+}
+catch (Exception ex)
+{
+    failures.Add($"semantic_output: {ex.Message}");
+    Console.WriteLine("FAIL semantic_output");
+}
+
 var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
     ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
 var examplesRoot = Path.Combine(projectRoot, "examples");
@@ -192,6 +203,45 @@ static void RunCliArgumentValidationTests(string fixtureRoot)
     {
         if (Directory.Exists(tempDir))
             Directory.Delete(tempDir, recursive: true);
+    }
+}
+
+static void RunSemanticDiagnosticOutputTests(string fixtureRoot)
+{
+    var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
+    var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
+        ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
+    var compilerInvocation = GetCompilerInvocation(projectRoot);
+    var sampleInput = Path.Combine(fixtureRoot, "error_undeclared", "main.zorb");
+    var result = RunProcessWithTimeout(
+        compilerInvocation.FileName,
+        CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"\"{sampleInput}\""),
+        projectRoot,
+        TimeSpan.FromSeconds(30));
+
+    if (result.ExitCode != 1)
+        throw new Exception($"Expected semantic failure exit code 1, got {result.ExitCode}.");
+
+    var stdout = NormalizeNewlines(result.StdOut);
+    var stderr = NormalizeNewlines(result.StdErr);
+
+    if (!string.IsNullOrWhiteSpace(stdout))
+        throw new Exception($"Semantic diagnostics should not be written to stdout.{Environment.NewLine}Actual stdout:{Environment.NewLine}{stdout}");
+
+    if (!stderr.Contains("Semantic check failed.", StringComparison.Ordinal))
+        throw new Exception($"Semantic failure stderr did not contain the expected phase banner.{Environment.NewLine}Actual stderr:{Environment.NewLine}{stderr}");
+
+    var declarationDiagnostic = "Use of undeclared error 'error.Fail'. Declare it first with 'error Fail = ...'.";
+    var diagnosticCount = CountOccurrences(stderr, declarationDiagnostic);
+    if (diagnosticCount != 2)
+        throw new Exception($"Expected exactly 2 semantic diagnostic messages for the two distinct source locations, got {diagnosticCount}.{Environment.NewLine}Actual stderr:{Environment.NewLine}{stderr}");
+
+    var firstLocationCount = CountOccurrences(stderr, $"{sampleInput}:2:18:");
+    var secondLocationCount = CountOccurrences(stderr, $"{sampleInput}:2:5:");
+    if (firstLocationCount != 1 || secondLocationCount != 1)
+    {
+        throw new Exception(
+            $"Expected exactly one rendered diagnostic per source location, got {firstLocationCount} for 2:18 and {secondLocationCount} for 2:5.{Environment.NewLine}Actual stderr:{Environment.NewLine}{stderr}");
     }
 }
 
@@ -1110,28 +1160,21 @@ static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeEx
 
 static string EnsureToolAvailable(params string[] toolNames)
 {
-    if (toolNames.Length == 0)
-        throw new ArgumentException("At least one tool name must be provided.", nameof(toolNames));
-
-    foreach (var toolName in toolNames)
+    try
     {
-        if (IsAnyToolAvailable(toolName))
-            return toolName;
+        return ExternalTools.EnsureToolAvailable(toolNames);
     }
-
-    if (toolNames.Length == 1)
-        throw new Exception($"Required runtime tool '{toolNames[0]}' was not found in PATH.");
-
-    throw new Exception($"Required runtime tools were not found in PATH. Install one of: {string.Join(", ", toolNames)}.");
+    catch (ZorbCompilerException ex)
+    {
+        throw new Exception(ex.Message, ex);
+    }
 }
 
 static bool IsAnyToolAvailable(params string[] toolNames)
 {
-    var locator = OperatingSystem.IsWindows() ? "where" : "which";
     foreach (var toolName in toolNames)
     {
-        var check = RunProcess(locator, toolName, Directory.GetCurrentDirectory());
-        if (check.ExitCode == 0 && !string.IsNullOrWhiteSpace(check.StdOut))
+        if (ExternalTools.IsToolAvailable(toolName))
             return true;
     }
 
@@ -1155,58 +1198,33 @@ static string FindAncestorContainingFile(string startPath, string fileName)
 
 static string GetWindowsCompileArguments(string compiler, string cSourcePath, string outputPath)
 {
-    return compiler switch
+    try
     {
-        "clang-cl" => $"/nologo /TC /O2 \"{cSourcePath}\" /Fe:\"{outputPath}\" /link kernel32.lib",
-        "cl" => $"/nologo /TC /O2 \"{cSourcePath}\" /Fe:\"{outputPath}\" /link kernel32.lib",
-        _ => throw new Exception($"Unsupported Windows compiler '{compiler}'.")
-    };
+        return ExternalTools.GetWindowsCompileArguments(compiler, cSourcePath, outputPath);
+    }
+    catch (ZorbCompilerException ex)
+    {
+        throw new Exception(ex.Message, ex);
+    }
 }
 
 static ProcessResult RunProcess(string fileName, string arguments, string workingDirectory)
 {
-    return RunProcessCore(fileName, arguments, workingDirectory, timeout: null);
+    var result = ExternalTools.RunProcess(fileName, arguments, workingDirectory);
+    return new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
 }
 
 static ProcessResult RunProcessWithTimeout(string fileName, string arguments, string workingDirectory, TimeSpan timeout)
 {
-    return RunProcessCore(fileName, arguments, workingDirectory, timeout);
-}
-
-static ProcessResult RunProcessCore(string fileName, string arguments, string workingDirectory, TimeSpan? timeout)
-{
-    var startInfo = new ProcessStartInfo
+    try
     {
-        FileName = fileName,
-        Arguments = arguments,
-        WorkingDirectory = workingDirectory,
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false
-    };
-
-    using var process = Process.Start(startInfo) ?? throw new Exception($"Failed to start process '{fileName}'.");
-    var stdOutTask = process.StandardOutput.ReadToEndAsync();
-    var stdErrTask = process.StandardError.ReadToEndAsync();
-
-    if (timeout.HasValue && !process.WaitForExit((int)timeout.Value.TotalMilliseconds))
-    {
-        try
-        {
-            process.Kill(entireProcessTree: true);
-        }
-        catch (InvalidOperationException)
-        {
-        }
-
-        process.WaitForExit();
-        Task.WaitAll(stdOutTask, stdErrTask);
-        throw new Exception($"Process '{fileName}' timed out after {timeout.Value.TotalSeconds:0} seconds.");
+        var result = ExternalTools.RunProcessWithTimeout(fileName, arguments, workingDirectory, timeout);
+        return new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
     }
-
-    process.WaitForExit();
-    Task.WaitAll(stdOutTask, stdErrTask);
-    return new ProcessResult(process.ExitCode, stdOutTask.Result, stdErrTask.Result);
+    catch (ZorbCompilerException ex)
+    {
+        throw new Exception(ex.Message, ex);
+    }
 }
 
 static string CombineCommandArguments(string prefix, string arguments)

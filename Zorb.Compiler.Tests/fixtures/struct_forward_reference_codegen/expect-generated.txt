@@ -1,0 +1,3 @@
+struct Foo {
+struct Bar {
+return (struct Foo){ .bar = (struct Bar){ .x = 7 } };

@@ -1096,13 +1096,9 @@ static void __zorb_slice_oob(void) {
         foreach (var matchCase in matchStmt.Cases)
         {
             Expr caseValue;
-            if (matchCase.Pattern is EnumMatchPattern enumPattern)
+            if (matchCase.Pattern is QualifiedMatchPattern qualifiedPattern)
             {
-                caseValue = enumPattern.Value;
-            }
-            else if (matchCase.Pattern is UnionMatchPattern unionPattern && string.IsNullOrEmpty(unionPattern.BindingName))
-            {
-                caseValue = unionPattern.Variant;
+                caseValue = qualifiedPattern.Value;
             }
             else
             {
@@ -1127,25 +1123,45 @@ static void __zorb_slice_oob(void) {
 
         foreach (var matchCase in matchStmt.Cases)
         {
-            if (matchCase.Pattern is not UnionMatchPattern unionPattern || string.IsNullOrEmpty(unionPattern.VariantName))
+            string variantName;
+            string? bindingName = null;
+            TypeNode? bindingType = null;
+            if (matchCase.Pattern is QualifiedMatchPattern qualifiedPattern)
+            {
+                var qualifiedName = TryGetQualifiedName(qualifiedPattern.Value)
+                    ?? throw new InvalidOperationException($"Unexpected match pattern '{matchCase.Pattern.GetType().Name}' in union match over '{FormatType(matchType)}'.");
+                var lastDot = qualifiedName.LastIndexOf('.');
+                if (lastDot < 0)
+                    throw new InvalidOperationException($"Unexpected match pattern '{matchCase.Pattern.GetType().Name}' in union match over '{FormatType(matchType)}'.");
+                variantName = qualifiedName[(lastDot + 1)..];
+            }
+            else if (matchCase.Pattern is UnionMatchPattern unionPattern && !string.IsNullOrEmpty(unionPattern.VariantName))
+            {
+                variantName = unionPattern.VariantName;
+                bindingName = unionPattern.BindingName;
+                bindingType = unionPattern.BindingType?.Clone();
+            }
+            else
+            {
                 throw new InvalidOperationException($"Unexpected match pattern '{matchCase.Pattern.GetType().Name}' in union match over '{FormatType(matchType)}'.");
+            }
 
-            var tagCode = GetUnionTagMemberCode(unionDefinition, unionPattern.VariantName);
+            var tagCode = GetUnionTagMemberCode(unionDefinition, variantName);
             sb.AppendLine($"    if (!{matchMatchedTemp}) {{");
             sb.AppendLine($"        if ({matchValueTemp}.tag == {tagCode}) {{");
             sb.AppendLine($"            {matchMatchedTemp} = 1;");
 
-            if (!string.IsNullOrEmpty(unionPattern.BindingName))
+            if (!string.IsNullOrEmpty(bindingName))
             {
                 var bindingValue = new FieldExpr
                 {
                     Target = new IdentifierExpr { Name = matchValueTemp },
-                    Field = unionPattern.VariantName
+                    Field = variantName
                 };
                 var bindingDecl = new VariableDeclarationNode
                 {
-                    Name = unionPattern.BindingName!,
-                    TypeName = unionPattern.BindingType?.Clone() ?? GetUnionVariantType(matchType, unionPattern.VariantName) ?? throw new Exception($"Unknown union variant '{unionPattern.VariantName}'."),
+                    Name = bindingName!,
+                    TypeName = bindingType ?? GetUnionVariantType(matchType, variantName) ?? throw new Exception($"Unknown union variant '{variantName}'."),
                     Value = bindingValue
                 };
                 AppendIndentedBlock(sb, GenerateStatement(bindingDecl), "            ");
