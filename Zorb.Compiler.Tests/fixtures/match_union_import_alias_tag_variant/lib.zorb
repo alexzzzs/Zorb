@@ -1,0 +1,4 @@
+export union Value {
+    Number: i64,
+    Flag: bool
+}

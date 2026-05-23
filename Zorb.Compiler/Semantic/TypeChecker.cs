@@ -1088,8 +1088,14 @@ public class TypeChecker
             var expectedUnionName = matchType.NamespacePath.Any()
                 ? string.Join(".", matchType.NamespacePath) + "." + matchType.Name
                 : matchType.Name;
-            if (!string.Equals(resolvedUnionName, expectedUnionName, StringComparison.Ordinal))
+            var expectedTagUnionName = expectedUnionName + ".Tag";
+            if (!string.Equals(resolvedUnionName, expectedUnionName, StringComparison.Ordinal) &&
+                !string.Equals(resolvedUnionName, expectedTagUnionName, StringComparison.Ordinal))
+            {
                 _errors.Error(variantExpr, $"Match case variant '{resolvedVariantName}' does not belong to union '{FormatType(matchType)}'.");
+                caseOutcomes.Add(CheckBlock(matchCase.Body));
+                continue;
+            }
 
             var variant = unionDefinition?.Variants.FirstOrDefault(candidate => candidate.Name == variantName);
             if (variant == null)
@@ -1108,7 +1114,10 @@ public class TypeChecker
             try
             {
                 if (!string.IsNullOrEmpty(bindingPattern?.BindingName))
+                {
                     _symbolTable.DefineVariable(bindingPattern.BindingName!, bindingPattern.BindingType!.Clone());
+                    _declarationNodeScopes.Peek()[bindingPattern.BindingName!] = bindingPattern;
+                }
                 caseOutcomes.Add(CheckBlock(matchCase.Body, pushScope: false));
             }
             finally

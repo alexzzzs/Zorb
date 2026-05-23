@@ -1,0 +1,12 @@
+import "lib.zorb" as util
+
+fn score(value: util.Value) -> i64 {
+    match value {
+        case util.Value.Tag.Number {
+            return value.Number
+        }
+        case util.Value.Tag.Flag {
+            return 0
+        }
+    }
+}

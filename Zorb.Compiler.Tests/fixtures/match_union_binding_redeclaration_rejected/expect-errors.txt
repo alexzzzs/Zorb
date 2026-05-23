@@ -1,0 +1,2 @@
+Duplicate local declaration 'n'.
+First declaration was at main.zorb:8:20.

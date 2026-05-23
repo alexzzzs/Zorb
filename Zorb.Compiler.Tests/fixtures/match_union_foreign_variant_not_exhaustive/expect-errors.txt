@@ -1,0 +1,2 @@
+Match case variant 'Other.Number' does not belong to union 'Value'.
+Match over union 'Value' must cover all variants or provide an else branch. Missing: Value.Number, Value.Flag.

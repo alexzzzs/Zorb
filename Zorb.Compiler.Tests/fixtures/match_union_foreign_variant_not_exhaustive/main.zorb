@@ -1,0 +1,16 @@
+union Value {
+    Number: i64,
+    Flag: bool
+}
+
+union Other {
+    Number: i64
+}
+
+fn score(value: Value) -> i64 {
+    match value {
+        case Other.Number {
+            return 1
+        }
+    }
+}

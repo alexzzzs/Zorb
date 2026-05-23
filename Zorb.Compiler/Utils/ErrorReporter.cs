@@ -156,7 +156,7 @@ public class ErrorReporter
     {
         if (_errors.Count > 0)
         {
-            throw new ZorbCompilerException(string.Join(Environment.NewLine, _errors));
+            throw new ZorbCompilerException(string.Join(Environment.NewLine, _errors.Select(FormatDiagnosticMessage)));
         }
     }
 }
