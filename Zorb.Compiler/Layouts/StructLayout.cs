@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Zorb.Compiler.AST.Statements;
+using Zorb.Compiler.Utils;
 
 namespace Zorb.Compiler.Layouts;
 
@@ -111,7 +112,7 @@ public static class StructLayout
         layout = null;
         error = null;
 
-        var fullName = GetFullName(node.NamespacePath, node.Name);
+        var fullName = QualifiedNames.GetFullName(node.NamespacePath, node.Name);
         if (!activeStructs.Add(fullName))
         {
             error = $"Struct '{fullName}' has a recursive layout that cannot be computed.";
@@ -281,7 +282,7 @@ public static class StructLayout
                 return true;
         }
 
-        var fullName = GetFullName(type.NamespacePath, type.Name);
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
         var structNode = resolveStruct(fullName);
         if (structNode == null)
         {
@@ -306,10 +307,4 @@ public static class StructLayout
         return remainder == 0 ? value : value + (alignment - remainder);
     }
 
-    private static string GetFullName(List<string> namespacePath, string name)
-    {
-        return namespacePath.Count > 0
-            ? string.Join(".", namespacePath) + "." + name
-            : name;
-    }
 }

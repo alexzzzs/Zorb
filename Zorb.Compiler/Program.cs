@@ -77,7 +77,6 @@ SECTIONS
         public string? LinkerScriptPath { get; set; }
         public string? EmitLinkerScriptPath { get; set; }
         public bool CheckOnly { get; set; }
-        public bool EmitC { get; set; } = true;
         public bool DumpTokens { get; set; }
         public bool LegacyNoStdLib { get; set; }
         public bool ShowHelp { get; set; }
@@ -137,8 +136,8 @@ SECTIONS
         }
         catch (Exception ex)
         {
-            Console.WriteLine("--- INTERNAL COMPILER ERROR (BUG) ---");
-            Console.WriteLine(ex);
+            Console.Error.WriteLine("--- INTERNAL COMPILER ERROR (BUG) ---");
+            Console.Error.WriteLine(ex);
             return 1;
         }
     }

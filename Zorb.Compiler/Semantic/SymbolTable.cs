@@ -97,7 +97,7 @@ public class SymbolTable
         {
             Name = name,
             Kind = SymbolKind.Struct,
-            Type = new TypeNode { Name = name, NamespacePath = new List<string>(structDefinition.NamespacePath) },
+            Type = new TypeNode { Name = structDefinition.Name, NamespacePath = new List<string>(structDefinition.NamespacePath) },
             StructDefinition = structDefinition
         };
         CurrentScope[name] = info;
@@ -109,7 +109,7 @@ public class SymbolTable
         {
             Name = name,
             Kind = SymbolKind.Enum,
-            Type = new TypeNode { Name = name, NamespacePath = new List<string>(enumDefinition.NamespacePath) },
+            Type = new TypeNode { Name = enumDefinition.Name, NamespacePath = new List<string>(enumDefinition.NamespacePath) },
             EnumDefinition = enumDefinition
         };
         CurrentScope[name] = info;
@@ -121,7 +121,7 @@ public class SymbolTable
         {
             Name = name,
             Kind = SymbolKind.Union,
-            Type = new TypeNode { Name = name, NamespacePath = new List<string>(unionDefinition.NamespacePath) },
+            Type = new TypeNode { Name = unionDefinition.Name, NamespacePath = new List<string>(unionDefinition.NamespacePath) },
             UnionDefinition = unionDefinition
         };
         CurrentScope[name] = info;
@@ -141,6 +141,15 @@ public class SymbolTable
     {
         info = Lookup(name);
         return info != null;
+    }
+
+    public bool TryLookupCallable(string? name, out SymbolInfo? info)
+    {
+        info = null;
+        return !string.IsNullOrEmpty(name) &&
+            TryLookup(name, out info) &&
+            info != null &&
+            info.IsCallable();
     }
 
     public bool IsDefined(string name)

@@ -5,6 +5,40 @@ using Zorb.Compiler.Utils;
 
 partial class Program
 {
+    private static string CreateTempWorkDir(string prefix, string name)
+    {
+        var tempDir = Path.Combine(
+            Path.GetTempPath(),
+            prefix,
+            name + "-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        return tempDir;
+    }
+
+    private static string ResolveCSourcePath(string outputOrTempDir, string? keepCPath, string fallbackName)
+    {
+        var cSourcePath = keepCPath != null
+            ? Path.GetFullPath(keepCPath)
+            : Path.Combine(outputOrTempDir, fallbackName);
+        Directory.CreateDirectory(Path.GetDirectoryName(cSourcePath) ?? outputOrTempDir);
+        return cSourcePath;
+    }
+
+    private static void WriteCSource(string cSourcePath, string cCode)
+    {
+        File.WriteAllText(cSourcePath, cCode);
+    }
+
+    private static int ReportFailedProcess(string banner, ProcessResult process)
+    {
+        Console.Error.WriteLine(banner);
+        if (!string.IsNullOrWhiteSpace(process.StdErr))
+            Console.Error.Write(process.StdErr);
+        if (!string.IsNullOrWhiteSpace(process.StdOut))
+            Console.Error.Write(process.StdOut);
+        return process.ExitCode;
+    }
+
     private static int BuildExecutable(string inputPath, string cCode, string outputPath, string? keepCPath, string? linkerScriptPath, string? emitLinkerScriptPath, CompilationTarget target)
     {
         if (target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux)
@@ -27,12 +61,11 @@ partial class Program
         var fullOutputPath = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory());
 
-        var cSourcePath = keepCPath != null
-            ? Path.GetFullPath(keepCPath)
-            : Path.Combine(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(fullOutputPath) + ".c");
-
-        Directory.CreateDirectory(Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
-        File.WriteAllText(cSourcePath, cCode);
+        var cSourcePath = ResolveCSourcePath(
+            Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory(),
+            keepCPath,
+            Path.GetFileNameWithoutExtension(fullOutputPath) + ".c");
+        WriteCSource(cSourcePath, cCode);
 
         var compile = RunProcess(
             "gcc",
@@ -40,14 +73,7 @@ partial class Program
             Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
 
         if (compile.ExitCode != 0)
-        {
-            Console.Error.WriteLine("Native build failed.");
-            if (!string.IsNullOrWhiteSpace(compile.StdErr))
-                Console.Error.Write(compile.StdErr);
-            if (!string.IsNullOrWhiteSpace(compile.StdOut))
-                Console.Error.Write(compile.StdOut);
-            return compile.ExitCode;
-        }
+            return ReportFailedProcess("Native build failed.", compile);
 
         Console.WriteLine($"Executable built at {fullOutputPath}");
         Console.WriteLine($"Intermediate C written to {cSourcePath}");
@@ -62,18 +88,13 @@ partial class Program
         var fullOutputPath = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory());
 
-        var cSourcePath = keepCPath != null
-            ? Path.GetFullPath(keepCPath)
-            : Path.Combine(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(fullOutputPath) + ".c");
+        var cSourcePath = ResolveCSourcePath(
+            Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory(),
+            keepCPath,
+            Path.GetFileNameWithoutExtension(fullOutputPath) + ".c");
+        WriteCSource(cSourcePath, cCode);
 
-        Directory.CreateDirectory(Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
-        File.WriteAllText(cSourcePath, cCode);
-
-        var tempDir = Path.Combine(
-            Path.GetTempPath(),
-            "zorb-bare-metal-build",
-            Path.GetFileNameWithoutExtension(fullOutputPath) + "-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDir);
+        var tempDir = CreateTempWorkDir("zorb-bare-metal-build", Path.GetFileNameWithoutExtension(fullOutputPath));
 
         try
         {
@@ -89,14 +110,7 @@ partial class Program
                 Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
 
             if (compile.ExitCode != 0)
-            {
-                Console.Error.WriteLine("Bare-metal object build failed.");
-                if (!string.IsNullOrWhiteSpace(compile.StdErr))
-                    Console.Error.Write(compile.StdErr);
-                if (!string.IsNullOrWhiteSpace(compile.StdOut))
-                    Console.Error.Write(compile.StdOut);
-                return compile.ExitCode;
-            }
+                return ReportFailedProcess("Bare-metal object build failed.", compile);
 
             var link = RunProcess(
                 "ld",
@@ -104,14 +118,7 @@ partial class Program
                 tempDir);
 
             if (link.ExitCode != 0)
-            {
-                Console.Error.WriteLine("Bare-metal link failed.");
-                if (!string.IsNullOrWhiteSpace(link.StdErr))
-                    Console.Error.Write(link.StdErr);
-                if (!string.IsNullOrWhiteSpace(link.StdOut))
-                    Console.Error.Write(link.StdOut);
-                return link.ExitCode;
-            }
+                return ReportFailedProcess("Bare-metal link failed.", link);
 
             Console.WriteLine($"Bare-metal kernel image built at {fullOutputPath}");
             Console.WriteLine($"Intermediate C written to {cSourcePath}");
@@ -157,12 +164,11 @@ partial class Program
         var fullOutputPath = NormalizeWindowsExecutablePath(Path.GetFullPath(outputPath));
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory());
 
-        var cSourcePath = keepCPath != null
-            ? Path.GetFullPath(keepCPath)
-            : Path.Combine(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(fullOutputPath) + ".c");
-
-        Directory.CreateDirectory(Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
-        File.WriteAllText(cSourcePath, cCode);
+        var cSourcePath = ResolveCSourcePath(
+            Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory(),
+            keepCPath,
+            Path.GetFileNameWithoutExtension(fullOutputPath) + ".c");
+        WriteCSource(cSourcePath, cCode);
 
         var compile = RunProcess(
             compiler,
@@ -170,14 +176,7 @@ partial class Program
             Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
 
         if (compile.ExitCode != 0)
-        {
-            Console.Error.WriteLine("Native build failed.");
-            if (!string.IsNullOrWhiteSpace(compile.StdErr))
-                Console.Error.Write(compile.StdErr);
-            if (!string.IsNullOrWhiteSpace(compile.StdOut))
-                Console.Error.Write(compile.StdOut);
-            return compile.ExitCode;
-        }
+            return ReportFailedProcess("Native build failed.", compile);
 
         Console.WriteLine($"Executable built at {fullOutputPath}");
         Console.WriteLine($"Intermediate C written to {cSourcePath}");
@@ -207,19 +206,13 @@ partial class Program
     {
         EnsureToolAvailable("gcc");
 
-        var tempDir = Path.Combine(
-            Path.GetTempPath(),
-            "zorb-run",
-            Path.GetFileNameWithoutExtension(inputPath) + "-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDir);
+        var tempDir = CreateTempWorkDir("zorb-run", Path.GetFileNameWithoutExtension(inputPath));
 
         try
         {
             var binaryPath = Path.Combine(tempDir, Path.GetFileNameWithoutExtension(inputPath));
-            var cSourcePath = keepCPath != null ? Path.GetFullPath(keepCPath) : Path.Combine(tempDir, "out.c");
-
-            Directory.CreateDirectory(Path.GetDirectoryName(cSourcePath) ?? tempDir);
-            File.WriteAllText(cSourcePath, cCode);
+            var cSourcePath = ResolveCSourcePath(tempDir, keepCPath, "out.c");
+            WriteCSource(cSourcePath, cCode);
 
             var compile = RunProcess(
                 "gcc",
@@ -227,14 +220,7 @@ partial class Program
                 Path.GetDirectoryName(cSourcePath) ?? tempDir);
 
             if (compile.ExitCode != 0)
-            {
-                Console.Error.WriteLine("Native build failed.");
-                if (!string.IsNullOrWhiteSpace(compile.StdErr))
-                    Console.Error.Write(compile.StdErr);
-                if (!string.IsNullOrWhiteSpace(compile.StdOut))
-                    Console.Error.Write(compile.StdOut);
-                return compile.ExitCode;
-            }
+                return ReportFailedProcess("Native build failed.", compile);
 
             var execution = RunProcessWithTimeout(binaryPath, "", tempDir, RunTimeoutMilliseconds);
             if (!string.IsNullOrEmpty(execution.StdOut))
@@ -255,20 +241,14 @@ partial class Program
     {
         var compiler = EnsureToolAvailable("clang-cl", "cl");
 
-        var tempDir = Path.Combine(
-            Path.GetTempPath(),
-            "zorb-run",
-            Path.GetFileNameWithoutExtension(inputPath) + "-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDir);
+        var tempDir = CreateTempWorkDir("zorb-run", Path.GetFileNameWithoutExtension(inputPath));
 
         try
         {
             var binaryFileName = Path.GetFileNameWithoutExtension(inputPath) + ".exe";
             var binaryPath = Path.Combine(tempDir, binaryFileName);
-            var cSourcePath = keepCPath != null ? Path.GetFullPath(keepCPath) : Path.Combine(tempDir, "out.c");
-
-            Directory.CreateDirectory(Path.GetDirectoryName(cSourcePath) ?? tempDir);
-            File.WriteAllText(cSourcePath, cCode);
+            var cSourcePath = ResolveCSourcePath(tempDir, keepCPath, "out.c");
+            WriteCSource(cSourcePath, cCode);
 
             var compile = RunProcess(
                 compiler,
@@ -276,14 +256,7 @@ partial class Program
                 Path.GetDirectoryName(cSourcePath) ?? tempDir);
 
             if (compile.ExitCode != 0)
-            {
-                Console.Error.WriteLine("Native build failed.");
-                if (!string.IsNullOrWhiteSpace(compile.StdErr))
-                    Console.Error.Write(compile.StdErr);
-                if (!string.IsNullOrWhiteSpace(compile.StdOut))
-                    Console.Error.Write(compile.StdOut);
-                return compile.ExitCode;
-            }
+                return ReportFailedProcess("Native build failed.", compile);
 
             var execution = RunProcessWithTimeout(binaryPath, "", tempDir, RunTimeoutMilliseconds);
             if (!string.IsNullOrEmpty(execution.StdOut))
@@ -327,8 +300,14 @@ partial class Program
         if (mode != CommandMode.Build && mode != CommandMode.Run)
             return;
 
-        if ((target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux) && !OperatingSystem.IsLinux())
-            throw new ZorbCompilerException($"Target '{FormatTarget(target)}' currently requires a Linux host for build and run. Current host: {DescribeCurrentHost()}.");
+        if (target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux)
+        {
+            if (!OperatingSystem.IsLinux())
+                throw new ZorbCompilerException($"Target '{FormatTarget(target)}' currently requires a Linux host for build and run. Current host: {DescribeCurrentHost()}.");
+
+            if (!IsSupportedHostedArchitecture())
+                throw new ZorbCompilerException($"Target '{FormatTarget(target)}' currently requires an x86_64 or aarch64 Linux host. Current host: {DescribeCurrentHost()}.");
+        }
 
         if (target == CompilationTarget.BareMetalX86_64)
         {
@@ -340,8 +319,19 @@ partial class Program
             return;
         }
 
-        if (target == CompilationTarget.HostWindows && !OperatingSystem.IsWindows())
-            throw new ZorbCompilerException($"Target 'host-windows' currently requires a Windows host for build and run. Current host: {DescribeCurrentHost()}.");
+        if (target == CompilationTarget.HostWindows)
+        {
+            if (!OperatingSystem.IsWindows())
+                throw new ZorbCompilerException($"Target 'host-windows' currently requires a Windows host for build and run. Current host: {DescribeCurrentHost()}.");
+
+            if (!IsSupportedHostedArchitecture())
+                throw new ZorbCompilerException($"Target 'host-windows' currently requires an x86_64 or aarch64 Windows host. Current host: {DescribeCurrentHost()}.");
+        }
+    }
+
+    private static bool IsSupportedHostedArchitecture()
+    {
+        return RuntimeInformation.ProcessArchitecture is Architecture.X64 or Architecture.Arm64;
     }
 
     private static string DescribeCurrentHost()

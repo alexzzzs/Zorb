@@ -110,16 +110,11 @@ public partial class Parser
         return (path, name);
     }
 
-    private TokenType? GetContextualKeywordType()
+    private bool MatchContextualKeyword(string keyword)
     {
-        if (Current.Type == TokenType.Identifier)
-            return Lexer.Lexer.MapContextualKeyword(Current.Value);
-        return null;
-    }
-
-    private bool MatchContextualKeyword(string keyword, TokenType expectedType)
-    {
-        if (Current.Type == TokenType.Identifier && Current.Value == keyword)
+        var mappedType = Lexer.Lexer.MapContextualKeyword(keyword);
+        if ((Current.Type == TokenType.Identifier && Current.Value == keyword) ||
+            (mappedType.HasValue && Current.Type == mappedType.Value))
         {
             Advance();
             return true;
@@ -151,6 +146,7 @@ public partial class Parser
                 case TokenType.Error:
                 case TokenType.Export:
                 case TokenType.Break:
+                case TokenType.Extern:
                 case TokenType.Enum:
                 case TokenType.Union:
                     return;

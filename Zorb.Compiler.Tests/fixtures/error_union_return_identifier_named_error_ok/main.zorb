@@ -1,0 +1,13 @@
+fn pick(ok: bool) -> !i32 {
+    ErrorBuffer: i32 = 7
+    if ok {
+        return ErrorBuffer
+    }
+
+    return 1
+}
+
+fn main() -> i32 {
+    value: !i32 = pick(true)
+    return value.value
+}
