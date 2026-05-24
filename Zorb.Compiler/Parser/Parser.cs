@@ -112,7 +112,9 @@ public partial class Parser
 
     private bool MatchContextualKeyword(string keyword)
     {
-        if (Current.Type == TokenType.Identifier && Current.Value == keyword)
+        var mappedType = Lexer.Lexer.MapContextualKeyword(keyword);
+        if ((Current.Type == TokenType.Identifier && Current.Value == keyword) ||
+            (mappedType.HasValue && Current.Type == mappedType.Value))
         {
             Advance();
             return true;

@@ -1524,7 +1524,7 @@ static void __zorb_slice_oob(void) {
                     $"{targetCode}[{generatedIndex.Code}]",
                     GetExprType(expr));
             case FieldExpr field:
-                var qualifiedName = field.ResolvedQualifiedName ?? QualifiedNames.TryGetQualifiedName(expr);
+                var qualifiedName = field.ResolvedQualifiedName;
                 if (!string.IsNullOrEmpty(qualifiedName) &&
                     _symbolTable.TryLookup(qualifiedName, out var varInfo))
                 {
@@ -1687,7 +1687,7 @@ static void __zorb_slice_oob(void) {
                 }
                 return null;
             case FieldExpr field:
-                var qualifiedName = field.ResolvedQualifiedName ?? QualifiedNames.TryGetQualifiedName(expr);
+                var qualifiedName = field.ResolvedQualifiedName;
                 if (!string.IsNullOrEmpty(qualifiedName) &&
                     _symbolTable.TryLookup(qualifiedName, out var fieldInfo) &&
                     (fieldInfo!.Kind == SymbolKind.Variable || fieldInfo.Kind == SymbolKind.Function))

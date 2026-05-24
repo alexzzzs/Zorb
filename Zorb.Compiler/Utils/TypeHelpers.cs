@@ -9,13 +9,14 @@ public static class TypeHelpers
         // `&array` is intentionally element-pointer sugar, not pointer-to-array.
         if (operandType.ArraySize != null)
         {
+            var pointerLevel = Math.Max(operandType.PointerLevel, operandType.IsPointer ? 1 : 0) + 1;
             return new TypeNode
             {
                 Name = operandType.Name,
                 NamespacePath = new List<string>(operandType.NamespacePath),
                 IsVolatile = operandType.IsVolatile,
                 IsPointer = true,
-                PointerLevel = 1
+                PointerLevel = pointerLevel
             };
         }
 

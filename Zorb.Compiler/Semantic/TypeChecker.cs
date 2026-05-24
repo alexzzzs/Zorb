@@ -334,10 +334,17 @@ public class TypeChecker
     private ResolvedFieldSymbolInfo? ResolveQualifiedFieldSymbol(FieldExpr field)
     {
         var sourceQualifiedName = QualifiedNames.TryGetQualifiedName(field);
-        var qualifiedFieldName = field.ResolvedQualifiedName ?? sourceQualifiedName;
-        if (string.IsNullOrEmpty(qualifiedFieldName))
+        if (string.IsNullOrEmpty(sourceQualifiedName))
             return null;
 
+        var leftmostSeparator = sourceQualifiedName.IndexOf('.');
+        var leftmostIdentifier = leftmostSeparator >= 0
+            ? sourceQualifiedName[..leftmostSeparator]
+            : sourceQualifiedName;
+        if (_symbolTable.IsLocal(leftmostIdentifier))
+            return null;
+
+        var qualifiedFieldName = field.ResolvedQualifiedName ?? sourceQualifiedName;
         var resolvedFieldName = qualifiedFieldName;
         var aliasResolvedFieldName = resolvedFieldName;
         var resolvedViaAlias = field.ResolvedQualifiedName != null;
@@ -349,6 +356,7 @@ public class TypeChecker
         if (!_symbolTable.TryLookup(resolvedFieldName, out var qualifiedFieldInfo) || qualifiedFieldInfo == null)
             return null;
 
+        field.ResolvedQualifiedName = resolvedFieldName;
         return new ResolvedFieldSymbolInfo(
             sourceQualifiedName ?? qualifiedFieldName,
             resolvedFieldName,
@@ -2331,6 +2339,7 @@ public class TypeChecker
 
         for (int i = 0; i < argCount; i++)
         {
+            CheckExpression(call.Args[i]);
             var argType = GetExpressionType(call.Args[i]);
             var paramType = parameters[i].TypeName;
 
