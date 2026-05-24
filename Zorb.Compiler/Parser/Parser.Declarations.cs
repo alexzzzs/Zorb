@@ -329,7 +329,7 @@ public partial class Parser
 
     private TypeNode ParseType()
     {
-        var isVolatile = MatchContextualKeyword("volatile", TokenType.Volatile);
+        var isVolatile = MatchContextualKeyword("volatile");
         bool isSlice = false;
         int? arraySize = null;
         Expr? arraySizeExpr = null;
@@ -533,8 +533,7 @@ public partial class Parser
             if (Peek(1).Type == TokenType.Number)
                 return new AttributeParseResult(attributes, alignExpr);
 
-            Advance();
-            while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
+            ParseBracketedAttributeList("attribute list", token => $"Unknown attribute {token}.", () =>
             {
                 if (Current.Type == TokenType.Align)
                 {
@@ -542,39 +541,30 @@ public partial class Parser
                     Expect(TokenType.LParen);
                     alignExpr = ParseExpression();
                     Expect(TokenType.RParen);
+                    return true;
                 }
-                else if (MatchContextualKeyword("section", TokenType.Section))
+                if (MatchContextualKeyword("section"))
                 {
                     attributes.Add(ParseSectionAttribute());
+                    return true;
                 }
-                else if (MatchContextualKeyword("volatile", TokenType.Volatile))
+                if (MatchContextualKeyword("volatile"))
                 {
                     attributes.Add("volatile");
+                    return true;
                 }
-                else if (MatchContextualKeyword("noinline", TokenType.NoInline))
+                if (MatchContextualKeyword("noinline"))
                 {
                     attributes.Add("noinline");
+                    return true;
                 }
-                else if (MatchContextualKeyword("noclone", TokenType.NoClone))
+                if (MatchContextualKeyword("noclone"))
                 {
                     attributes.Add("noclone");
+                    return true;
                 }
-                else
-                {
-                    ErrorReporter.Error($"Unknown attribute {DescribeToken(Current)}.", Current.Line, Current.Column, _fileName);
-                    Advance();
-                }
-
-                if (Current.Type == TokenType.Comma)
-                {
-                    Advance();
-                }
-                else if (Current.Type != TokenType.RBracket)
-                {
-                    ReportAttributeSeparatorError("attribute list");
-                }
-            }
-            Expect(TokenType.RBracket, "Expected ']' to close attribute list.");
+                return false;
+            });
         }
         return new AttributeParseResult(attributes, alignExpr);
     }
@@ -585,8 +575,7 @@ public partial class Parser
         Expr? alignExpr = null;
         while (Current.Type == TokenType.LBracket)
         {
-            Advance();
-            while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
+            ParseBracketedAttributeList("function attribute list", token => $"Unknown attribute {token} in function attribute list.", () =>
             {
                 if (Current.Type == TokenType.Align)
                 {
@@ -594,42 +583,33 @@ public partial class Parser
                     Expect(TokenType.LParen);
                     alignExpr = ParseExpression();
                     Expect(TokenType.RParen);
+                    return true;
                 }
-                else if (MatchContextualKeyword("abi", TokenType.Abi))
+                if (MatchContextualKeyword("abi"))
                 {
                     Expect(TokenType.LParen, "Expected '(' after 'abi' attribute.");
                     var abiToken = Expect(TokenType.Identifier, "Expected ABI name inside abi(...).");
                     Expect(TokenType.RParen, "Expected ')' to close abi attribute.");
                     attributes.Add(ParseAbiAttribute(abiToken));
+                    return true;
                 }
-                else if (MatchContextualKeyword("section", TokenType.Section))
+                if (MatchContextualKeyword("section"))
                 {
                     attributes.Add(ParseSectionAttribute());
+                    return true;
                 }
-                else if (MatchContextualKeyword("noinline", TokenType.NoInline))
+                if (MatchContextualKeyword("noinline"))
                 {
                     attributes.Add("noinline");
+                    return true;
                 }
-                else if (MatchContextualKeyword("noclone", TokenType.NoClone))
+                if (MatchContextualKeyword("noclone"))
                 {
                     attributes.Add("noclone");
+                    return true;
                 }
-                else
-                {
-                    ErrorReporter.Error($"Unknown attribute {DescribeToken(Current)} in function attribute list.", Current.Line, Current.Column, _fileName);
-                    Advance();
-                }
-
-                if (Current.Type == TokenType.Comma)
-                {
-                    Advance();
-                }
-                else if (Current.Type != TokenType.RBracket)
-                {
-                    ReportAttributeSeparatorError("function attribute list");
-                }
-            }
-            Expect(TokenType.RBracket, "Expected ']' to close function attribute list.");
+                return false;
+            });
         }
 
         return new AttributeParseResult(attributes, alignExpr);
@@ -641,43 +621,31 @@ public partial class Parser
         Expr? alignExpr = null;
         while (Current.Type == TokenType.LBracket)
         {
-            Advance();
-            while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
+            ParseBracketedAttributeList("struct attribute list", token => $"Unknown attribute {token} in struct attribute list.", () =>
             {
-                if (MatchContextualKeyword("packed", TokenType.Packed))
+                if (MatchContextualKeyword("packed"))
                 {
                     attributes.Add("packed");
+                    return true;
                 }
-                else if (MatchContextualKeyword("layout", TokenType.Layout))
+                if (MatchContextualKeyword("layout"))
                 {
                     Expect(TokenType.LParen, "Expected '(' after 'layout' attribute.");
                     var layoutToken = Expect(TokenType.Identifier, "Expected layout kind inside layout(...).");
                     Expect(TokenType.RParen, "Expected ')' to close layout attribute.");
                     attributes.Add(ParseLayoutAttribute(layoutToken));
+                    return true;
                 }
-                else if (Current.Type == TokenType.Align)
+                if (Current.Type == TokenType.Align)
                 {
                     Advance();
                     Expect(TokenType.LParen);
                     alignExpr = ParseExpression();
                     Expect(TokenType.RParen);
+                    return true;
                 }
-                else
-                {
-                    ErrorReporter.Error($"Unknown attribute {DescribeToken(Current)} in struct attribute list.", Current.Line, Current.Column, _fileName);
-                    Advance();
-                }
-
-                if (Current.Type == TokenType.Comma)
-                {
-                    Advance();
-                }
-                else if (Current.Type != TokenType.RBracket)
-                {
-                    ReportAttributeSeparatorError("struct attribute list");
-                }
-            }
-            Expect(TokenType.RBracket, "Expected ']' to close struct attribute list.");
+                return false;
+            });
         }
 
         return new AttributeParseResult(attributes, alignExpr);
@@ -689,34 +657,44 @@ public partial class Parser
         Expr? offsetExpr = null;
         while (Current.Type == TokenType.LBracket)
         {
-            Advance();
-            while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
+            ParseBracketedAttributeList("struct field attribute list", token => $"Unknown attribute {token} in struct field attribute list.", () =>
             {
-                if (MatchContextualKeyword("offset", TokenType.Offset))
+                if (MatchContextualKeyword("offset"))
                 {
                     Expect(TokenType.LParen, "Expected '(' after 'offset' attribute.");
                     offsetExpr = ParseExpression();
                     Expect(TokenType.RParen, "Expected ')' to close offset attribute.");
+                    return true;
                 }
-                else
-                {
-                    ErrorReporter.Error($"Unknown attribute {DescribeToken(Current)} in struct field attribute list.", Current.Line, Current.Column, _fileName);
-                    Advance();
-                }
-
-                if (Current.Type == TokenType.Comma)
-                {
-                    Advance();
-                }
-                else if (Current.Type != TokenType.RBracket)
-                {
-                    ReportAttributeSeparatorError("struct field attribute list");
-                }
-            }
-            Expect(TokenType.RBracket, "Expected ']' to close struct field attribute list.");
+                return false;
+            });
         }
 
         return new FieldAttributeParseResult(attributes, offsetExpr);
+    }
+
+    private void ParseBracketedAttributeList(string listName, Func<string, string> formatUnknownAttributeMessage, Func<bool> parseAttribute)
+    {
+        Advance();
+        while (Current.Type != TokenType.RBracket && Current.Type != TokenType.Eof)
+        {
+            if (!parseAttribute())
+            {
+                ErrorReporter.Error(formatUnknownAttributeMessage(DescribeToken(Current)), Current.Line, Current.Column, _fileName);
+                Advance();
+            }
+
+            if (Current.Type == TokenType.Comma)
+            {
+                Advance();
+            }
+            else if (Current.Type != TokenType.RBracket)
+            {
+                ReportAttributeSeparatorError(listName);
+            }
+        }
+
+        Expect(TokenType.RBracket, $"Expected ']' to close {listName}.");
     }
 
     private string ParseAbiAttribute(Token abiToken)

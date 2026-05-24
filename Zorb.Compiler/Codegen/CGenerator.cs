@@ -47,8 +47,6 @@ public class CGenerator
 
     private static bool IsNumericType(TypeNode? type) => TypePredicates.IsNumericType(type);
 
-    private static bool IsLinux => RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
-
     private const string LinuxSyscallWrapper = @"
 #if defined(__x86_64__)
 static int64_t __zorb_syscall(int64_t n, int64_t a1, int64_t a2, int64_t a3, int64_t a4, int64_t a5, int64_t a6) {
@@ -143,22 +141,15 @@ static void __zorb_slice_oob(void) {
         var allNodes = new List<Node>();
         var processed = new HashSet<string>();
         var emittedItems = new HashSet<string>();
-        
-        _dynamicStructs.Clear();
-        _generatedResultTypes.Clear();
-        _generatedSliceTypes.Clear();
+
+        ResetGenerationState(allNodes, parsedFilesByPath);
         _allNodes = allNodes;
-        _parsedFilesByPath = parsedFilesByPath;
-        _tempCounter = 0;
-        _insideFunctionBody = false;
-        _continueTargets.Clear();
-        
+
         CollectNodes(nodes, allNodes, processed, emittedItems, _currentDir);
 
         // PASS 1: Generate variables and functions first. 
         // This ensures MapType is called and all dynamic structs (like Result_u8_ptr) are generated.
         var varsSb = new StringBuilder();
-        var emittedConstants = new HashSet<string>();
         var emittedVars = new HashSet<string>();
         var variables = allNodes.OfType<VariableDeclarationNode>().ToList();
         foreach (var v in variables)
@@ -167,13 +158,6 @@ static void __zorb_slice_oob(void) {
             emittedVars.Add(v.Name);
             
             var stmt = GenerateStatement(v);
-            if (v.IsConst && v.TypeName.Name == "i32" && v.Value is NumberExpr)
-            {
-                var constKey = v.Name;
-                if (emittedConstants.Contains(constKey))
-                    continue;
-                emittedConstants.Add(constKey);
-            }
             varsSb.AppendLine(stmt);
         }
 
@@ -282,6 +266,23 @@ static void __zorb_slice_oob(void) {
 
         _parsedFilesByPath = null;
         return sb.ToString();
+    }
+
+    private void ResetGenerationState(List<Node> allNodes, IReadOnlyDictionary<string, IReadOnlyList<Node>>? parsedFilesByPath)
+    {
+        _structs.Clear();
+        _includes.Clear();
+        _includes.Add("stdint.h");
+        _cHeaders.Clear();
+        _localVars.Clear();
+        _dynamicStructs.Clear();
+        _generatedResultTypes.Clear();
+        _generatedSliceTypes.Clear();
+        _allNodes = allNodes;
+        _parsedFilesByPath = parsedFilesByPath;
+        _tempCounter = 0;
+        _insideFunctionBody = false;
+        _continueTargets.Clear();
     }
 
     private void CollectNodes(List<Node> nodes, List<Node> result, HashSet<string> processed, HashSet<string> emittedItems, string currentDir)
@@ -525,9 +526,7 @@ static void __zorb_slice_oob(void) {
         }
 
         string baseType;
-        var fullName = type.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
         var enumDefinition = _symbolTable.LookupEnumNode(fullName);
         if (enumDefinition != null)
         {
@@ -654,7 +653,7 @@ static void __zorb_slice_oob(void) {
         _generatedSliceTypes.Add(sliceName);
 
         var elementType = GetSliceElementType(sliceType);
-        var pointerType = AddressOfType(elementType);
+        var pointerType = TypeHelpers.AddressOfType(elementType);
         var structCode = $"struct {sliceName} {{\n    {MapType(pointerType, "ptr")};\n    int64_t len;\n}};\n";
 
         _dynamicStructs.AppendLine(structCode);
@@ -1128,7 +1127,7 @@ static void __zorb_slice_oob(void) {
             TypeNode? bindingType = null;
             if (matchCase.Pattern is QualifiedMatchPattern qualifiedPattern)
             {
-                var qualifiedName = TryGetQualifiedName(qualifiedPattern.Value)
+                var qualifiedName = QualifiedNames.TryGetQualifiedName(qualifiedPattern.Value)
                     ?? throw new InvalidOperationException($"Unexpected match pattern '{matchCase.Pattern.GetType().Name}' in union match over '{FormatType(matchType)}'.");
                 var lastDot = qualifiedName.LastIndexOf('.');
                 if (lastDot < 0)
@@ -1181,7 +1180,7 @@ static void __zorb_slice_oob(void) {
         var elementType = arrayType.Clone();
         elementType.ArraySize = null;
 
-        var elementPointerType = AddressOfType(elementType);
+        var elementPointerType = TypeHelpers.AddressOfType(elementType);
         var restrictedElementPointerType = $"{MapType(elementPointerType)} restrict";
         var targetTemp = NewTemp("array_copy_target");
         var sourceTemp = NewTemp("array_copy_source");
@@ -1275,51 +1274,8 @@ static void __zorb_slice_oob(void) {
 
     private List<TypeNode> GetCallParameterTypes(CallExpr call)
     {
-        if (call.TargetExpr != null)
-        {
-            if (!string.IsNullOrEmpty(call.ResolvedTargetQualifiedName) &&
-                _symbolTable.TryLookup(call.ResolvedTargetQualifiedName, out var resolvedInfo))
-            {
-                return resolvedInfo!.Kind == SymbolKind.Function
-                    ? resolvedInfo.Parameters!.Select(parameter => parameter.TypeName.Clone()).ToList()
-                    : resolvedInfo.Type.ParamTypes.Select(type => type.Clone()).ToList();
-            }
-
-            var qualifiedName = TryGetQualifiedName(call.TargetExpr);
-            if (!string.IsNullOrEmpty(qualifiedName) &&
-                _symbolTable.TryLookup(qualifiedName, out var qualifiedInfo))
-            {
-                return qualifiedInfo!.Kind == SymbolKind.Function
-                    ? qualifiedInfo.Parameters!.Select(parameter => parameter.TypeName.Clone()).ToList()
-                    : qualifiedInfo.Type.ParamTypes.Select(type => type.Clone()).ToList();
-            }
-
-            var targetType = GetExprType(call.TargetExpr);
-            if (targetType != null && targetType.IsFunction)
-                return targetType.ParamTypes.Select(type => type.Clone()).ToList();
-
-            return new List<TypeNode>();
-        }
-
-        var fullName = call.NamespacePath.Any()
-            ? string.Join(".", call.NamespacePath) + "." + call.Name
-            : call.Name;
-
-        if (_symbolTable.TryLookup(fullName, out var info))
-        {
-            return info!.Kind == SymbolKind.Function
-                ? info.Parameters!.Select(parameter => parameter.TypeName.Clone()).ToList()
-                : info.Type.ParamTypes.Select(type => type.Clone()).ToList();
-        }
-
-        if (_symbolTable.TryLookup(call.Name, out var bareInfo))
-        {
-            return bareInfo!.Kind == SymbolKind.Function
-                ? bareInfo.Parameters!.Select(parameter => parameter.TypeName.Clone()).ToList()
-                : bareInfo.Type.ParamTypes.Select(type => type.Clone()).ToList();
-        }
-
-        return new List<TypeNode>();
+        return GetCallFunctionType(call)?.ParamTypes.Select(type => type.Clone()).ToList()
+            ?? new List<TypeNode>();
     }
 
     private string GenerateExpression(Expr expr)
@@ -1354,7 +1310,9 @@ static void __zorb_slice_oob(void) {
             case CallExpr call:
                 var callPrelude = new StringBuilder();
                 var generatedArgs = new List<string>();
-                var parameterTypes = GetCallParameterTypes(call);
+                var resolvedFunctionType = GetCallFunctionType(call);
+                var parameterTypes = resolvedFunctionType?.ParamTypes.Select(type => type.Clone()).ToList()
+                    ?? new List<TypeNode>();
                 for (int i = 0; i < call.Args.Count; i++)
                 {
                     var arg = call.Args[i];
@@ -1367,13 +1325,10 @@ static void __zorb_slice_oob(void) {
 
                 if (call.TargetExpr != null)
                 {
-                    if (!string.IsNullOrEmpty(call.ResolvedTargetQualifiedName))
+                    if (TryGetDirectFunctionSymbol(call.ResolvedTargetQualifiedName, out _) &&
+                        !string.IsNullOrEmpty(call.ResolvedTargetQualifiedName))
                     {
-                        var resolvedParts = call.ResolvedTargetQualifiedName.Split('.');
-                        var resolvedName = resolvedParts[^1];
-                        var resolvedNamespacePath = resolvedParts.Length > 1
-                            ? resolvedParts[..^1].ToList()
-                            : new List<string>();
+                        var (resolvedNamespacePath, resolvedName) = QualifiedNames.SplitQualifiedName(call.ResolvedTargetQualifiedName);
                         var resolvedTarget = GetFunctionCName(resolvedNamespacePath, resolvedName, null);
                         return new GeneratedExpression(callPrelude.ToString(), $"{resolvedTarget}({args})", GetExprType(expr));
                     }
@@ -1384,7 +1339,13 @@ static void __zorb_slice_oob(void) {
                     return new GeneratedExpression(callPrelude.ToString(), $"{target}({args})", GetExprType(expr));
                 }
 
-                var cCallName = GetFunctionCName(call.NamespacePath, call.Name, null);
+                var cCallName = call.Name;
+                if (TryGetDirectFunctionSymbol(call.ResolvedQualifiedName, out var resolvedFunctionSymbol))
+                {
+                    var resolvedFunctionName = resolvedFunctionSymbol!.Name;
+                    var (resolvedNamespacePath, resolvedName) = QualifiedNames.SplitQualifiedName(resolvedFunctionName);
+                    cCallName = GetFunctionCName(resolvedNamespacePath, resolvedName, null);
+                }
                 return new GeneratedExpression(callPrelude.ToString(), $"{cCallName}({args})", GetExprType(expr));
             case NumberExpr num:
                 return new GeneratedExpression("", num.Value.ToString(), GetExprType(expr));
@@ -1563,12 +1524,18 @@ static void __zorb_slice_oob(void) {
                     $"{targetCode}[{generatedIndex.Code}]",
                     GetExprType(expr));
             case FieldExpr field:
-                var qualifiedName = field.ResolvedQualifiedName ?? TryGetQualifiedName(expr);
+                var qualifiedName = field.ResolvedQualifiedName ?? QualifiedNames.TryGetQualifiedName(expr);
                 if (!string.IsNullOrEmpty(qualifiedName) &&
-                    _symbolTable.TryLookup(qualifiedName, out var varInfo) &&
-                    varInfo!.Kind == SymbolKind.Variable)
+                    _symbolTable.TryLookup(qualifiedName, out var varInfo))
                 {
-                    return new GeneratedExpression("", qualifiedName.Replace(".", "_"), GetExprType(expr));
+                    if (varInfo!.Kind == SymbolKind.Variable)
+                        return new GeneratedExpression("", qualifiedName.Replace(".", "_"), GetExprType(expr));
+
+                    if (varInfo.Kind == SymbolKind.Function)
+                    {
+                        var (resolvedNamespacePath, resolvedName) = QualifiedNames.SplitQualifiedName(qualifiedName);
+                        return new GeneratedExpression("", GetFunctionCName(resolvedNamespacePath, resolvedName, null), GetExprType(expr));
+                    }
                 }
 
                 var generatedFieldTarget = GenerateExpressionWithPrelude(field.Target);
@@ -1720,7 +1687,7 @@ static void __zorb_slice_oob(void) {
                 }
                 return null;
             case FieldExpr field:
-                var qualifiedName = field.ResolvedQualifiedName ?? TryGetQualifiedName(expr);
+                var qualifiedName = field.ResolvedQualifiedName ?? QualifiedNames.TryGetQualifiedName(expr);
                 if (!string.IsNullOrEmpty(qualifiedName) &&
                     _symbolTable.TryLookup(qualifiedName, out var fieldInfo) &&
                     (fieldInfo!.Kind == SymbolKind.Variable || fieldInfo.Kind == SymbolKind.Function))
@@ -1735,7 +1702,7 @@ static void __zorb_slice_oob(void) {
                     if (field.Field == "len")
                         return new TypeNode { Name = "i64" };
                     if (field.Field == "ptr")
-                        return AddressOfType(GetSliceElementType(targetType));
+                        return TypeHelpers.AddressOfType(GetSliceElementType(targetType));
                     return null;
                 }
                 return GetStructFieldType(targetType, field.Field);
@@ -1756,41 +1723,7 @@ static void __zorb_slice_oob(void) {
 
                 return leftType;
             case CallExpr call:
-                if (call.TargetExpr != null)
-                {
-                    var targetName = TryGetQualifiedName(call.TargetExpr);
-                    if (!string.IsNullOrEmpty(targetName) &&
-                        _symbolTable.TryLookup(targetName, out var targetSym) &&
-                        targetSym!.Kind == SymbolKind.Function)
-                    {
-                        return targetSym.Type.ReturnType?.Clone();
-                    }
-
-                    var targetExprType = GetExprType(call.TargetExpr);
-                    if (targetExprType != null && targetExprType.IsFunction)
-                        return targetExprType.ReturnType?.Clone();
-                    return null;
-                }
-
-                var fullName = call.NamespacePath.Any()
-                    ? string.Join(".", call.NamespacePath) + "." + call.Name
-                    : call.Name;
-
-                if (_symbolTable.TryLookup(fullName, out var sym) && sym!.Kind == SymbolKind.Function)
-                    return sym.Type.ReturnType?.Clone();
-                
-                // Fallback: scan AST for function declaration if not in symbol table
-                foreach (var node in _allNodes)
-                {
-                    if (node is FunctionDecl fn && fn.Name == call.Name)
-                    {
-                        if (call.NamespacePath.Count > 0 && fn.NamespacePath.SequenceEqual(call.NamespacePath))
-                            return fn.ReturnType.Clone();
-                        else if (call.NamespacePath.Count == 0)
-                            return fn.ReturnType.Clone();
-                    }
-                }
-                return null;
+                return GetCallFunctionType(call)?.ReturnType?.Clone();
             case CastExpr cast:
                 return cast.TargetType.Clone();
             case StructLiteralExpr structLiteral:
@@ -1809,7 +1742,7 @@ static void __zorb_slice_oob(void) {
                     if (operandType == null)
                         return null;
 
-                    return AddressOfType(operandType);
+                    return TypeHelpers.AddressOfType(operandType);
                 }
                 if (un.Operator == "!")
                     return new TypeNode { Name = "bool" };
@@ -1824,29 +1757,6 @@ static void __zorb_slice_oob(void) {
         var name = $"__zorb_{prefix}_{_tempCounter}";
         _tempCounter++;
         return name;
-    }
-
-    private static TypeNode AddressOfType(TypeNode operandType)
-    {
-        if (operandType.ArraySize != null)
-        {
-            return new TypeNode
-            {
-                Name = operandType.Name,
-                NamespacePath = new List<string>(operandType.NamespacePath),
-                IsVolatile = operandType.IsVolatile,
-                IsPointer = true,
-                PointerLevel = 1
-            };
-        }
-
-        var result = operandType.Clone();
-        result.IsPointer = true;
-        result.PointerLevel = operandType.IsPointer
-            ? Math.Max(operandType.PointerLevel, 1) + 1
-            : 1;
-        result.ArraySize = null;
-        return result;
     }
 
     private static TypeNode GetSliceElementType(TypeNode sliceType)
@@ -1869,7 +1779,7 @@ static void __zorb_slice_oob(void) {
         var sourceElement = sourceType.Clone();
         sourceElement.ArraySize = null;
 
-        return SameType(targetElement, sourceElement);
+        return TypeHelpers.SameType(targetElement, sourceElement);
     }
 
     private GeneratedExpression CoerceExpressionToTargetType(TypeNode? targetType, Expr sourceExpr, GeneratedExpression generated)
@@ -1898,42 +1808,6 @@ static void __zorb_slice_oob(void) {
         }
 
         return new GeneratedExpression(generated.Prelude, code, sourceType);
-    }
-
-    private static bool SameType(TypeNode? left, TypeNode? right)
-    {
-        if (left == null || right == null)
-            return left == right;
-
-        if (left.Name != right.Name ||
-            left.IsVolatile != right.IsVolatile ||
-            left.IsSlice != right.IsSlice ||
-            left.IsPointer != right.IsPointer ||
-            left.PointerLevel != right.PointerLevel ||
-            left.ArraySize != right.ArraySize ||
-            left.IsErrorUnion != right.IsErrorUnion ||
-            left.IsFunction != right.IsFunction ||
-            !left.NamespacePath.SequenceEqual(right.NamespacePath))
-        {
-            return false;
-        }
-
-        if (left.IsErrorUnion && !SameType(left.ErrorInnerType, right.ErrorInnerType))
-            return false;
-
-        if (left.IsFunction)
-        {
-            if (!SameType(left.ReturnType, right.ReturnType) || left.ParamTypes.Count != right.ParamTypes.Count)
-                return false;
-
-            for (int i = 0; i < left.ParamTypes.Count; i++)
-            {
-                if (!SameType(left.ParamTypes[i], right.ParamTypes[i]))
-                    return false;
-            }
-        }
-
-        return true;
     }
 
     private static string FormatConditionExpression(string code)
@@ -2025,13 +1899,11 @@ static void __zorb_slice_oob(void) {
             if (fieldName == "len")
                 return new TypeNode { Name = "i64" };
             if (fieldName == "ptr")
-                return AddressOfType(GetSliceElementType(structType));
+                return TypeHelpers.AddressOfType(GetSliceElementType(structType));
             return null;
         }
 
-        var fullName = structType.NamespacePath.Any()
-            ? string.Join(".", structType.NamespacePath) + "." + structType.Name
-            : structType.Name;
+        var fullName = QualifiedNames.GetFullName(structType.NamespacePath, structType.Name);
 
         if (_symbolTable.LookupUnionNode(fullName) is UnionNode unionDefinition)
         {
@@ -2068,17 +1940,13 @@ static void __zorb_slice_oob(void) {
 
     private bool IsUnionType(TypeNode type)
     {
-        var fullName = type.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
         return _symbolTable.LookupUnionNode(fullName) != null;
     }
 
     private UnionNode? GetUnionDefinition(TypeNode type)
     {
-        var fullName = type.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
         return _symbolTable.LookupUnionNode(fullName);
     }
 
@@ -2126,9 +1994,7 @@ static void __zorb_slice_oob(void) {
 
     private static string FormatType(TypeNode type)
     {
-        var baseName = type.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var baseName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
 
         if (type.IsPointer)
             baseName = new string('*', Math.Max(type.PointerLevel, 1)) + baseName;
@@ -2174,16 +2040,34 @@ static void __zorb_slice_oob(void) {
             _localVars[entry.Key] = entry.Value;
     }
 
-    private static string? TryGetQualifiedName(Expr expr)
+    private TypeNode? GetCallFunctionType(CallExpr call)
     {
-        return expr switch
-        {
-            IdentifierExpr id => id.Name,
-            FieldExpr field => TryGetQualifiedName(field.Target) is string targetName
-                ? $"{targetName}.{field.Field}"
-                : null,
-            _ => null
-        };
+        if (call.ResolvedFunctionType != null)
+            return call.ResolvedFunctionType.Clone();
+
+        if (call.TargetExpr != null)
+            return GetExprType(call.TargetExpr) is TypeNode targetType && targetType.IsFunction
+                ? targetType.Clone()
+                : null;
+
+        if (_symbolTable.TryLookupCallable(call.ResolvedQualifiedName, out var resolvedSymbol))
+            return resolvedSymbol!.GetCallableFunctionType();
+
+        var fullName = QualifiedNames.GetFullName(call.NamespacePath, call.Name);
+        if (_symbolTable.TryLookupCallable(fullName, out var qualifiedSymbol))
+            return qualifiedSymbol!.GetCallableFunctionType();
+
+        if (_symbolTable.TryLookupCallable(call.Name, out var bareSymbol))
+            return bareSymbol!.GetCallableFunctionType();
+
+        return null;
+    }
+
+    private bool TryGetDirectFunctionSymbol(string? name, out SymbolInfo? symbolInfo)
+    {
+        symbolInfo = null;
+        return _symbolTable.TryLookupCallable(name, out symbolInfo) &&
+            symbolInfo!.Kind == SymbolKind.Function;
     }
 
     private static void AppendBuiltinDefine(StringBuilder sb, string macroName, string value)

@@ -22,6 +22,9 @@ public class TypeChecker
         Continues
     }
 
+    private sealed record ResolvedCallInfo(string DisplayName, List<Parameter> Parameters, TypeNode? ReturnType);
+    private sealed record ResolvedFieldSymbolInfo(string SourceName, string ResolvedName, SymbolInfo SymbolInfo, bool ResolvedViaAlias);
+
     private readonly SymbolTable _symbolTable = new();
     private readonly ErrorReporter _errors = new();
     private readonly HashSet<string> _numericTypes = new() { "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64" };
@@ -121,19 +124,12 @@ public class TypeChecker
         if (type.IsErrorUnion && type.ErrorInnerType != null && !ReferenceEquals(type.ErrorInnerType, type))
             NormalizeTypeReferenceInPlace(type.ErrorInnerType);
 
-        var fullName = type.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
 
         if (!TryResolveAliasQualifiedName(fullName, out var resolvedName))
             return;
 
-        var parts = resolvedName.Split('.');
-        type.Name = parts[^1];
-        type.NamespacePath = parts.Length > 1
-            ? parts[..^1].ToList()
-            : new List<string>();
-        type.IsAliasQualifiedReference = true;
+        QualifiedNames.ApplyResolvedQualifiedName(type, resolvedName);
 
         if (type.IsErrorUnion && type.ErrorInnerType != null && ReferenceEquals(type.ErrorInnerType, type))
         {
@@ -161,13 +157,7 @@ public class TypeChecker
                 }
 
                 if (!call.NamespacePath.Any() && TryResolveAliasQualifiedName(call.Name, out var resolvedBareCallName))
-                {
-                    var parts = resolvedBareCallName.Split('.');
-                    call.Name = parts[^1];
-                    call.NamespacePath = parts.Length > 1
-                        ? parts[..^1].ToList()
-                        : new List<string>();
-                }
+                    QualifiedNames.ApplyResolvedQualifiedName(call, resolvedBareCallName);
 
                 return call;
 
@@ -178,7 +168,7 @@ public class TypeChecker
 
             case FieldExpr field:
                 field.Target = NormalizeAliasReferences(field.Target);
-                if (TryGetQualifiedName(field) is string qualifiedName &&
+                if (QualifiedNames.TryGetQualifiedName(field) is string qualifiedName &&
                     TryResolveAliasQualifiedName(qualifiedName, out var resolvedQualifiedName))
                     field.ResolvedQualifiedName = resolvedQualifiedName;
                 else
@@ -334,25 +324,41 @@ public class TypeChecker
         return false;
     }
 
-    private bool IsVisibleThroughAlias(string fullName)
-    {
-        foreach (var scope in _importAliasScopes)
-        {
-            foreach (var exports in scope.Values)
-            {
-                if (exports.Contains(fullName))
-                    return true;
-            }
-        }
-
-        return false;
-    }
-
     private void ReportNotVisible(Node context, string subjectKind, string fullName)
     {
         _errors.Error(
             context,
             $"{subjectKind} '{fullName}' is not visible from this file. It may be private or not re-exported by an import.");
+    }
+
+    private ResolvedFieldSymbolInfo? ResolveQualifiedFieldSymbol(FieldExpr field)
+    {
+        var sourceQualifiedName = QualifiedNames.TryGetQualifiedName(field);
+        var qualifiedFieldName = field.ResolvedQualifiedName ?? sourceQualifiedName;
+        if (string.IsNullOrEmpty(qualifiedFieldName))
+            return null;
+
+        var resolvedFieldName = qualifiedFieldName;
+        var aliasResolvedFieldName = resolvedFieldName;
+        var resolvedViaAlias = field.ResolvedQualifiedName != null;
+        if (!resolvedViaAlias && string.Equals(sourceQualifiedName, qualifiedFieldName, StringComparison.Ordinal))
+            resolvedViaAlias = TryResolveAliasQualifiedName(qualifiedFieldName, out aliasResolvedFieldName);
+        if (resolvedViaAlias)
+            resolvedFieldName = aliasResolvedFieldName;
+
+        if (!_symbolTable.TryLookup(resolvedFieldName, out var qualifiedFieldInfo) || qualifiedFieldInfo == null)
+            return null;
+
+        return new ResolvedFieldSymbolInfo(
+            sourceQualifiedName ?? qualifiedFieldName,
+            resolvedFieldName,
+            qualifiedFieldInfo,
+            resolvedViaAlias);
+    }
+
+    private bool IsVisibleResolvedFieldSymbol(ResolvedFieldSymbolInfo resolvedField)
+    {
+        return resolvedField.ResolvedViaAlias || CheckVisibility(resolvedField.ResolvedName);
     }
 
     private static bool IsErrorConstantName(string name)
@@ -442,14 +448,7 @@ public class TypeChecker
 
     private static string? TryGetQualifiedName(Expr expr)
     {
-        return expr switch
-        {
-            IdentifierExpr id => id.Name,
-            FieldExpr field => TryGetQualifiedName(field.Target) is string targetName
-                ? $"{targetName}.{field.Field}"
-                : null,
-            _ => null
-        };
+        return QualifiedNames.TryGetQualifiedName(expr);
     }
 
     public void Check(IReadOnlyList<Node> nodes, string currentDir = ".", IReadOnlyDictionary<string, IReadOnlyList<Node>>? parsedFilesByPath = null)
@@ -486,14 +485,14 @@ public class TypeChecker
                 NormalizeTypeReferenceInPlace(fn.ReturnType);
                 foreach (var param in fn.Parameters)
                     NormalizeTypeReferenceInPlace(param.TypeName);
-                var fullName = fn.NamespacePath.Any() ? string.Join(".", fn.NamespacePath) + "." + fn.Name : fn.Name;
+                var fullName = QualifiedNames.GetFullName(fn.NamespacePath, fn.Name);
                 if (!declaredInThisFile.TryAdd(fullName, fn))
                     _errors.Error(fn, $"Duplicate top-level declaration '{fullName}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[fullName])}");
                 MakeVisible(fullName);
                 if (!_symbolTable.IsDefined(fullName)) _symbolTable.DefineFunction(fullName, fn.ReturnType, fn.Parameters);
             }
             else if (node is StructNode sn) {
-                var fullName = sn.NamespacePath.Any() ? string.Join(".", sn.NamespacePath) + "." + sn.Name : sn.Name;
+                var fullName = QualifiedNames.GetFullName(sn.NamespacePath, sn.Name);
                 if (!declaredInThisFile.TryAdd(fullName, sn))
                     _errors.Error(sn, $"Duplicate top-level declaration '{fullName}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[fullName])}");
                 MakeVisible(fullName);
@@ -503,7 +502,7 @@ public class TypeChecker
             }
             else if (node is EnumNode enumNode) {
                 NormalizeTypeReferenceInPlace(enumNode.UnderlyingType);
-                var fullName = enumNode.NamespacePath.Any() ? string.Join(".", enumNode.NamespacePath) + "." + enumNode.Name : enumNode.Name;
+                var fullName = QualifiedNames.GetFullName(enumNode.NamespacePath, enumNode.Name);
                 if (!declaredInThisFile.TryAdd(fullName, enumNode))
                     _errors.Error(enumNode, $"Duplicate top-level declaration '{fullName}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[fullName])}");
                 MakeVisible(fullName);
@@ -512,7 +511,7 @@ public class TypeChecker
                 RegisterEnumMembers(enumNode);
             }
             else if (node is UnionNode unionNode) {
-                var fullName = unionNode.NamespacePath.Any() ? string.Join(".", unionNode.NamespacePath) + "." + unionNode.Name : unionNode.Name;
+                var fullName = QualifiedNames.GetFullName(unionNode.NamespacePath, unionNode.Name);
                 if (!declaredInThisFile.TryAdd(fullName, unionNode))
                     _errors.Error(unionNode, $"Duplicate top-level declaration '{fullName}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[fullName])}");
                 MakeVisible(fullName);
@@ -535,8 +534,7 @@ public class TypeChecker
         // Pass 2: Process imports and check bodies
         foreach (var node in nodes)
         {
-            if (node is ImportNode importNode) ProcessImport(importNode, currentDir);
-            else if (node is VariableDeclarationNode varDecl)
+            if (node is VariableDeclarationNode varDecl)
             {
                 ResolveAlignmentAttribute(varDecl.Attributes, varDecl.AlignExpr, varDecl, $"Variable '{varDecl.Name}' Alignment");
                 ValidateTypeReference(varDecl.TypeName, varDecl);
@@ -547,7 +545,7 @@ public class TypeChecker
                 ResolveStructAttributes(structNode);
                 foreach (var field in structNode.Fields)
                     ValidateTypeReference(field.TypeName, field);
-                var fullName = structNode.NamespacePath.Any() ? string.Join(".", structNode.NamespacePath) + "." + structNode.Name : structNode.Name;
+                var fullName = QualifiedNames.GetFullName(structNode.NamespacePath, structNode.Name);
                 ValidateStructAttributes(structNode, fullName);
             }
             else if (node is EnumNode enumNode)
@@ -647,17 +645,17 @@ public class TypeChecker
         var exports = new List<string>();
         foreach (var node in importedNodes)
         {
-            if (node is FunctionDecl fn && fn.IsExported) exports.Add(fn.NamespacePath.Any() ? string.Join(".", fn.NamespacePath) + "." + fn.Name : fn.Name);
-            else if (node is StructNode sn && sn.IsExported) exports.Add(sn.NamespacePath.Any() ? string.Join(".", sn.NamespacePath) + "." + sn.Name : sn.Name);
+            if (node is FunctionDecl fn && fn.IsExported) exports.Add(QualifiedNames.GetFullName(fn.NamespacePath, fn.Name));
+            else if (node is StructNode sn && sn.IsExported) exports.Add(QualifiedNames.GetFullName(sn.NamespacePath, sn.Name));
             else if (node is EnumNode en && en.IsExported)
             {
-                var enumName = en.NamespacePath.Any() ? string.Join(".", en.NamespacePath) + "." + en.Name : en.Name;
+                var enumName = QualifiedNames.GetFullName(en.NamespacePath, en.Name);
                 exports.Add(enumName);
                 exports.AddRange(en.Members.Select(member => $"{enumName}.{member.Name}"));
             }
             else if (node is UnionNode unionNode && unionNode.IsExported)
             {
-                var unionName = unionNode.NamespacePath.Any() ? string.Join(".", unionNode.NamespacePath) + "." + unionNode.Name : unionNode.Name;
+                var unionName = QualifiedNames.GetFullName(unionNode.NamespacePath, unionNode.Name);
                 var tagEnumName = GetUnionTagEnumFullName(unionNode);
                 exports.Add(unionName);
                 exports.Add(tagEnumName);
@@ -734,6 +732,147 @@ public class TypeChecker
         return functionDecl.ReturnType.Name != "void" || functionDecl.ReturnType.IsPointer || functionDecl.ReturnType.IsErrorUnion;
     }
 
+    private void CheckBoolCondition(Expr condition)
+    {
+        CheckExpression(condition);
+        var conditionType = GetExpressionType(condition, reportErrors: false);
+        if (conditionType == null)
+            return;
+
+        if (!IsBoolType(conditionType))
+        {
+            _errors.Error(condition, $"Condition must have type 'bool', got '{FormatType(conditionType)}'. Compare explicitly if you meant truthiness.");
+        }
+    }
+
+    private static List<string> GetMissingEnumMembers(EnumNode enumDefinition, HashSet<long> seenEnumCaseValues)
+    {
+        return enumDefinition.Members
+            .Where(member => member.ResolvedValue.HasValue && !seenEnumCaseValues.Contains(member.ResolvedValue.Value))
+            .Select(member => $"{enumDefinition.Name}.{member.Name}")
+            .ToList();
+    }
+
+    private ResolvedCallInfo? ResolveCallInfo(CallExpr call, bool reportErrors)
+    {
+        call.ResolvedFunctionType = null;
+
+        if (call.TargetExpr != null)
+        {
+            call.ResolvedQualifiedName = null;
+            var qualifiedName = QualifiedNames.TryGetQualifiedName(call.TargetExpr);
+            var resolvedQualifiedName = qualifiedName;
+            var targetResolvedViaAlias = !string.IsNullOrEmpty(qualifiedName) &&
+                TryResolveAliasQualifiedName(qualifiedName, out resolvedQualifiedName);
+            call.ResolvedTargetQualifiedName = null;
+
+            if (!string.IsNullOrEmpty(resolvedQualifiedName) && _symbolTable.TryLookup(resolvedQualifiedName, out var qualifiedInfo))
+            {
+                if (!targetResolvedViaAlias && !CheckVisibility(resolvedQualifiedName))
+                {
+                    if (reportErrors)
+                        ReportNotVisible(call, "Function", qualifiedName ?? resolvedQualifiedName);
+                    return null;
+                }
+
+                if (!qualifiedInfo!.IsCallable())
+                {
+                    if (reportErrors)
+                        _errors.Error(call, $"'{qualifiedName}' is not a function or callable variable");
+                    return null;
+                }
+
+                var resolvedTargetName = targetResolvedViaAlias
+                    ? resolvedQualifiedName
+                    : qualifiedInfo!.Name;
+                call.ResolvedTargetQualifiedName = resolvedTargetName;
+                var callableInfo = qualifiedInfo!;
+                call.ResolvedFunctionType = callableInfo.GetCallableFunctionType();
+                return new ResolvedCallInfo(
+                    qualifiedName ?? "call target",
+                    callableInfo.GetCallableParameters(),
+                    callableInfo.GetCallableReturnType());
+            }
+
+            var targetType = GetExpressionType(call.TargetExpr, reportErrors: false);
+            if (targetType == null || !targetType.IsFunction)
+            {
+                if (reportErrors)
+                {
+                    _errors.Error(call, !string.IsNullOrEmpty(qualifiedName)
+                        ? $"Function '{qualifiedName}' is not declared or is not visible from this file."
+                        : "Expression is not a function or callable");
+                }
+                return null;
+            }
+
+            call.ResolvedFunctionType = targetType.Clone();
+            return new ResolvedCallInfo(
+                !string.IsNullOrEmpty(qualifiedName) ? qualifiedName : "function pointer",
+                targetType.ParamTypes.Select(type => new Parameter("", type)).ToList(),
+                targetType.ReturnType?.Clone());
+        }
+
+        call.ResolvedTargetQualifiedName = null;
+        var displayName = call.Name;
+        var resolvedViaAlias = false;
+        if (call.NamespacePath.Any())
+        {
+            var sourceName = QualifiedNames.GetFullName(call.NamespacePath, call.Name);
+            if (TryResolveAliasQualifiedName(sourceName, out var resolvedCallName))
+            {
+                QualifiedNames.ApplyResolvedQualifiedName(call, resolvedCallName);
+                displayName = sourceName;
+                resolvedViaAlias = true;
+            }
+        }
+
+        SymbolInfo? symbolInfo = null;
+        var fullName = QualifiedNames.GetFullName(call.NamespacePath, call.Name);
+        if (_symbolTable.TryLookup(fullName, out var qualifiedSymbol))
+        {
+            symbolInfo = qualifiedSymbol;
+            if (call.NamespacePath.Any() && !resolvedViaAlias && !CheckVisibility(fullName))
+            {
+                if (reportErrors)
+                    ReportNotVisible(call, "Function", fullName);
+                return null;
+            }
+        }
+        else if (_symbolTable.TryLookup(call.Name, out var bareSymbol))
+        {
+            symbolInfo = bareSymbol;
+            if (!CheckVisibility(call.Name))
+            {
+                if (reportErrors)
+                    ReportNotVisible(call, "Function", call.Name);
+                return null;
+            }
+        }
+        else
+        {
+            if (reportErrors)
+                _errors.Error(call, $"Call to undeclared function '{fullName}'");
+            return null;
+        }
+
+        if (!symbolInfo!.IsCallable())
+        {
+            if (reportErrors)
+                _errors.Error(call, $"'{call.Name}' is not a function or callable variable");
+            return null;
+        }
+
+        var resolvedSymbolInfo = symbolInfo!;
+        call.ResolvedQualifiedName = resolvedSymbolInfo.Name;
+        call.ResolvedFunctionType = resolvedSymbolInfo.GetCallableFunctionType();
+
+        return new ResolvedCallInfo(
+            displayName,
+            resolvedSymbolInfo.GetCallableParameters(),
+            resolvedSymbolInfo.GetCallableReturnType());
+    }
+
     private FlowOutcome CheckStatement(Statement stmt)
     {
         switch (stmt)
@@ -785,10 +924,6 @@ public class TypeChecker
                                         _errors.Error(returnNode, $"Cannot return expression of type '{FormatType(exprType)}' from function '{_currentFunction.Name}' with result type '{FormatType(expectedType)}'. Return a success value of type '{FormatType(successType)}' or an error.");
                                 }
 
-                                if (returnNode.Value is IdentifierExpr ident && ident.Name.Contains("Error"))
-                                {
-                                    _errors.Error(returnNode.Value, $"Ambiguous return in '{_currentFunction.Name}'. Use lowercase 'return error.{ident.Name.Split('.').Last()}' to return an error code.");
-                                }
                             }
                             else
                             {
@@ -806,11 +941,7 @@ public class TypeChecker
                 return FlowOutcome.Returns;
 
             case IfStmt ifStmt:
-                CheckExpression(ifStmt.Condition);
-                if (!IsBoolType(ifStmt.Condition))
-                {
-                    _errors.Error(ifStmt.Condition, $"Condition must have type 'bool', got '{FormatType(GetExpressionType(ifStmt.Condition, reportErrors: false))}'. Compare explicitly if you meant truthiness.");
-                }
+                CheckBoolCondition(ifStmt.Condition);
                 var ifFlow = CheckBlock(ifStmt.Body);
                 if (ifStmt.ElseBody.Count == 0)
                     return FlowOutcome.FallsThrough;
@@ -822,11 +953,7 @@ public class TypeChecker
                 return FlowOutcome.FallsThrough;
 
             case WhileStmt whileStmt:
-                CheckExpression(whileStmt.Condition);
-                if (!IsBoolType(whileStmt.Condition))
-                {
-                    _errors.Error(whileStmt.Condition, $"Condition must have type 'bool', got '{FormatType(GetExpressionType(whileStmt.Condition, reportErrors: false))}'. Compare explicitly if you meant truthiness.");
-                }
+                CheckBoolCondition(whileStmt.Condition);
                 _loopDepth++;
                 try
                 {
@@ -847,11 +974,7 @@ public class TypeChecker
 
                     if (forStmt.Condition != null)
                     {
-                        CheckExpression(forStmt.Condition);
-                        if (!IsBoolType(forStmt.Condition))
-                        {
-                            _errors.Error(forStmt.Condition, $"Condition must have type 'bool', got '{FormatType(GetExpressionType(forStmt.Condition, reportErrors: false))}'. Compare explicitly if you meant truthiness.");
-                        }
+                        CheckBoolCondition(forStmt.Condition);
                     }
 
                     _loopDepth++;
@@ -912,10 +1035,7 @@ public class TypeChecker
                     var enumDefinition = LookupEnumDefinition(switchType);
                     if (enumDefinition != null)
                     {
-                        var missingMembers = enumDefinition.Members
-                            .Where(member => member.ResolvedValue.HasValue && !seenEnumCaseValues.Contains(member.ResolvedValue.Value))
-                            .Select(member => $"{enumDefinition.Name}.{member.Name}")
-                            .ToList();
+                            var missingMembers = GetMissingEnumMembers(enumDefinition, seenEnumCaseValues);
                         if (missingMembers.Count > 0)
                             _errors.Error(switchStmt, $"Switch over enum '{FormatType(switchType)}' must cover all members or provide an else branch. Missing: {string.Join(", ", missingMembers)}.");
                         else
@@ -1001,7 +1121,7 @@ public class TypeChecker
 
             CheckExpression(qualifiedPattern.Value);
             var patternType = GetExpressionType(qualifiedPattern.Value);
-            if (patternType != null && !SameType(matchType, patternType))
+            if (patternType != null && !TypeHelpers.SameType(matchType, patternType))
                 _errors.Error(qualifiedPattern.Value, $"Match case pattern of type '{FormatType(patternType)}' does not match enum type '{FormatType(matchType)}'.");
 
             if (TryGetSwitchCaseKey(qualifiedPattern.Value, out var caseKey))
@@ -1018,10 +1138,7 @@ public class TypeChecker
 
         if (enumDefinition != null && matchStmt.ElseBody.Count == 0)
         {
-            var missingMembers = enumDefinition.Members
-                .Where(member => member.ResolvedValue.HasValue && !seenEnumCaseValues.Contains(member.ResolvedValue.Value))
-                .Select(member => $"{enumDefinition.Name}.{member.Name}")
-                .ToList();
+            var missingMembers = GetMissingEnumMembers(enumDefinition, seenEnumCaseValues);
             if (missingMembers.Count > 0)
                 _errors.Error(matchStmt, $"Match over enum '{FormatType(matchType)}' must cover all members or provide an else branch. Missing: {string.Join(", ", missingMembers)}.");
             else
@@ -1085,9 +1202,7 @@ public class TypeChecker
                 bindingPattern.VariantName = variantName;
             }
 
-            var expectedUnionName = matchType.NamespacePath.Any()
-                ? string.Join(".", matchType.NamespacePath) + "." + matchType.Name
-                : matchType.Name;
+            var expectedUnionName = QualifiedNames.GetFullName(matchType.NamespacePath, matchType.Name);
             var expectedTagUnionName = expectedUnionName + ".Tag";
             if (!string.Equals(resolvedUnionName, expectedUnionName, StringComparison.Ordinal) &&
                 !string.Equals(resolvedUnionName, expectedTagUnionName, StringComparison.Ordinal))
@@ -1259,9 +1374,7 @@ public class TypeChecker
         if (_constValueScopes.Count == 0)
             return;
 
-        var enumFullName = enumNode.NamespacePath.Any()
-            ? string.Join(".", enumNode.NamespacePath) + "." + enumNode.Name
-            : enumNode.Name;
+        var enumFullName = QualifiedNames.GetFullName(enumNode.NamespacePath, enumNode.Name);
 
         var enumType = new TypeNode
         {
@@ -1319,9 +1432,7 @@ public class TypeChecker
 
     private void ValidateUnionDeclaration(UnionNode unionNode)
     {
-        var unionFullName = unionNode.NamespacePath.Any()
-            ? string.Join(".", unionNode.NamespacePath) + "." + unionNode.Name
-            : unionNode.Name;
+        var unionFullName = QualifiedNames.GetFullName(unionNode.NamespacePath, unionNode.Name);
 
         var seenNames = new Dictionary<string, UnionVariant>(StringComparer.Ordinal);
         foreach (var variant in unionNode.Variants)
@@ -1345,10 +1456,7 @@ public class TypeChecker
 
     private static string GetUnionTagEnumFullName(UnionNode unionNode)
     {
-        var unionFullName = unionNode.NamespacePath.Any()
-            ? string.Join(".", unionNode.NamespacePath) + "." + unionNode.Name
-            : unionNode.Name;
-        return $"{unionFullName}.Tag";
+        return $"{QualifiedNames.GetFullName(unionNode.NamespacePath, unionNode.Name)}.Tag";
     }
 
     private static TypeNode GetUnionTagType(UnionNode unionNode)
@@ -1384,9 +1492,7 @@ public class TypeChecker
     private void ValidateEnumDeclaration(EnumNode enumNode)
     {
         ValidateTypeReference(enumNode.UnderlyingType, enumNode);
-        var enumFullName = enumNode.NamespacePath.Any()
-            ? string.Join(".", enumNode.NamespacePath) + "." + enumNode.Name
-            : enumNode.Name;
+        var enumFullName = QualifiedNames.GetFullName(enumNode.NamespacePath, enumNode.Name);
 
         if (!IsIntegerScalarType(enumNode.UnderlyingType))
         {
@@ -1635,40 +1741,28 @@ public class TypeChecker
                 break;
 
             case FieldExpr field:
-                var sourceQualifiedFieldName = TryGetQualifiedName(field);
-                var qualifiedFieldName = field.ResolvedQualifiedName ?? sourceQualifiedFieldName;
-                if (!string.IsNullOrEmpty(qualifiedFieldName))
+                if (ResolveQualifiedFieldSymbol(field) is ResolvedFieldSymbolInfo resolvedField)
                 {
-                    var resolvedFieldName = qualifiedFieldName;
-                    var aliasResolvedFieldName = resolvedFieldName;
-                    var resolvedViaAlias = field.ResolvedQualifiedName != null;
-                    if (!resolvedViaAlias && string.Equals(sourceQualifiedFieldName, qualifiedFieldName, StringComparison.Ordinal))
-                        resolvedViaAlias = TryResolveAliasQualifiedName(qualifiedFieldName, out aliasResolvedFieldName);
-                    if (resolvedViaAlias)
-                        resolvedFieldName = aliasResolvedFieldName;
-
-                    if (_symbolTable.TryLookup(resolvedFieldName, out var qualifiedFieldInfo) &&
-                        (qualifiedFieldInfo!.Kind == SymbolKind.Variable || qualifiedFieldInfo.Kind == SymbolKind.Function))
+                    if (resolvedField.SymbolInfo.Kind == SymbolKind.Variable || resolvedField.SymbolInfo.Kind == SymbolKind.Function)
                     {
-                        if (!resolvedViaAlias && !CheckVisibility(resolvedFieldName))
-                            ReportNotVisible(field, "Symbol", resolvedFieldName);
+                        if (!IsVisibleResolvedFieldSymbol(resolvedField))
+                            ReportNotVisible(field, "Symbol", resolvedField.ResolvedName);
                         break;
                     }
 
-                    if (_symbolTable.TryLookup(resolvedFieldName, out qualifiedFieldInfo) &&
-                        (qualifiedFieldInfo!.Kind == SymbolKind.Enum || qualifiedFieldInfo.Kind == SymbolKind.Union))
+                    if (resolvedField.SymbolInfo.Kind == SymbolKind.Enum || resolvedField.SymbolInfo.Kind == SymbolKind.Union)
                     {
-                        if (!resolvedViaAlias && !CheckVisibility(resolvedFieldName))
+                        if (!IsVisibleResolvedFieldSymbol(resolvedField))
                         {
-                            ReportNotVisible(field, qualifiedFieldInfo.Kind == SymbolKind.Enum ? "Enum" : "Union", resolvedFieldName);
+                            ReportNotVisible(field, resolvedField.SymbolInfo.Kind == SymbolKind.Enum ? "Enum" : "Union", resolvedField.ResolvedName);
                         }
-                        else if (qualifiedFieldInfo.Kind == SymbolKind.Enum)
+                        else if (resolvedField.SymbolInfo.Kind == SymbolKind.Enum)
                         {
-                            _errors.Error(field, $"Enum type '{resolvedFieldName}' is not a value. Use a member such as '{resolvedFieldName}.Member'.");
+                            _errors.Error(field, $"Enum type '{resolvedField.ResolvedName}' is not a value. Use a member such as '{resolvedField.ResolvedName}.Member'.");
                         }
                         else
                         {
-                            _errors.Error(field, $"Union type '{resolvedFieldName}' is not a value. Construct it with a literal such as '{resolvedFieldName}{{ Variant: value }}'.");
+                            _errors.Error(field, $"Union type '{resolvedField.ResolvedName}' is not a value. Construct it with a literal such as '{resolvedField.ResolvedName}{{ Variant: value }}'.");
                         }
                         break;
                     }
@@ -1684,9 +1778,10 @@ public class TypeChecker
 
             case UnaryExpr un:
                 CheckExpression(un.Operand);
-                if (un.Operator == "!" && !IsBoolType(un.Operand))
+                var unaryOperandType = GetExpressionType(un.Operand, reportErrors: false);
+                if (un.Operator == "!" && unaryOperandType != null && !IsBoolType(unaryOperandType))
                 {
-                    _errors.Error(un, $"Operator '!' requires a bool operand, got '{FormatType(GetExpressionType(un.Operand, reportErrors: false))}'.");
+                    _errors.Error(un, $"Operator '!' requires a bool operand, got '{FormatType(unaryOperandType)}'.");
                 }
                 break;
 
@@ -1764,7 +1859,7 @@ public class TypeChecker
             return;
         }
 
-        if (isOutput && !IsAsmAssignableExpression(operand.Expression))
+        if (isOutput && !IsAssignableExpression(operand.Expression))
         {
             _errors.Error(operand.Expression, "Inline asm output operands must be assignable expressions.");
         }
@@ -1854,11 +1949,6 @@ public class TypeChecker
         }
     }
 
-    private static bool IsAsmAssignableExpression(Expr expr)
-    {
-        return expr is IdentifierExpr or FieldExpr or IndexExpr;
-    }
-
     private static bool IsAssignableExpression(Expr expr)
     {
         return expr is IdentifierExpr or FieldExpr or IndexExpr;
@@ -1903,19 +1993,12 @@ public class TypeChecker
 
     private void ValidateTypeReference(TypeNode type, Node context)
     {
-        var sourceFullName = type.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var sourceFullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
         var wasAliasQualified = TryResolveAliasQualifiedName(sourceFullName, out var resolvedTypeName);
 
         if (wasAliasQualified)
         {
-            var parts = resolvedTypeName.Split('.');
-            type.Name = parts[^1];
-            type.NamespacePath = parts.Length > 1
-                ? parts[..^1].ToList()
-                : new List<string>();
-            type.IsAliasQualifiedReference = true;
+            QualifiedNames.ApplyResolvedQualifiedName(type, resolvedTypeName);
         }
         else
         {
@@ -1970,9 +2053,7 @@ public class TypeChecker
         if (type.Name == "void" || type.Name == "string" || type.Name == "bool" || _numericTypes.Contains(type.Name))
             return;
 
-        var fullName = type.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
 
         if (_symbolTable.LookupEnumNode(fullName) != null)
         {
@@ -2092,7 +2173,7 @@ public class TypeChecker
     private bool AreEqualityComparableTypes(TypeNode leftType, TypeNode rightType)
     {
         if (IsEnumType(leftType) || IsEnumType(rightType))
-            return IsEnumType(leftType) && IsEnumType(rightType) && SameType(leftType, rightType);
+            return IsEnumType(leftType) && IsEnumType(rightType) && TypeHelpers.SameType(leftType, rightType);
 
         if (IsNumericType(leftType) && IsNumericType(rightType))
             return true;
@@ -2103,7 +2184,7 @@ public class TypeChecker
         if (IsStringType(leftType) && IsStringType(rightType))
             return true;
 
-        if (leftType.IsPointer && rightType.IsPointer && SameType(leftType, rightType))
+        if (leftType.IsPointer && rightType.IsPointer && TypeHelpers.SameType(leftType, rightType))
             return true;
 
         return false;
@@ -2125,9 +2206,7 @@ public class TypeChecker
     {
         ValidateTypeReference(structLiteral.TypeName, structLiteral);
 
-        var fullName = structLiteral.TypeName.NamespacePath.Any()
-            ? string.Join(".", structLiteral.TypeName.NamespacePath) + "." + structLiteral.TypeName.Name
-            : structLiteral.TypeName.Name;
+        var fullName = QualifiedNames.GetFullName(structLiteral.TypeName.NamespacePath, structLiteral.TypeName.Name);
 
         if (_symbolTable.LookupUnionNode(fullName) is UnionNode unionNode)
         {
@@ -2235,117 +2314,12 @@ public class TypeChecker
 
     private void CheckCallExpression(CallExpr call)
     {
-        List<Parameter>? parameters = null;
-        string errorName = string.IsNullOrEmpty(call.Name) ? "call target" : call.Name;
-        bool resolvedViaAlias = false;
+        var callInfo = ResolveCallInfo(call, reportErrors: true);
+        if (callInfo == null)
+            return;
 
-        // Handle qualified calls like std.io.println(...) before falling back to function pointers.
-        if (call.TargetExpr != null)
-        {
-            var qualifiedName = TryGetQualifiedName(call.TargetExpr);
-            var resolvedQualifiedName = qualifiedName;
-            var targetResolvedViaAlias = !string.IsNullOrEmpty(qualifiedName) &&
-                TryResolveAliasQualifiedName(qualifiedName, out resolvedQualifiedName);
-            call.ResolvedTargetQualifiedName = targetResolvedViaAlias ? resolvedQualifiedName : null;
-
-            if (!string.IsNullOrEmpty(resolvedQualifiedName) && _symbolTable.TryLookup(resolvedQualifiedName, out var qualifiedInfo))
-            {
-                if (!targetResolvedViaAlias && !CheckVisibility(resolvedQualifiedName))
-                {
-                    ReportNotVisible(call, "Function", qualifiedName ?? resolvedQualifiedName);
-                    return;
-                }
-
-                bool isCallable = qualifiedInfo!.Kind == SymbolKind.Function ||
-                                  (qualifiedInfo.Type != null && qualifiedInfo.Type.IsFunction);
-
-                if (!isCallable)
-                {
-                    _errors.Error(call, $"'{qualifiedName}' is not a function or callable variable");
-                    return;
-                }
-
-                parameters = qualifiedInfo.Kind == SymbolKind.Function
-                    ? qualifiedInfo.Parameters
-                    : qualifiedInfo.Type!.ParamTypes.Select(t => new Parameter("", t)).ToList();
-                errorName = qualifiedName ?? "call target";
-            }
-
-            if (parameters == null)
-            {
-                var targetType = GetExpressionType(call.TargetExpr, reportErrors: false);
-                if (targetType == null || !targetType.IsFunction)
-                {
-                    _errors.Error(call, !string.IsNullOrEmpty(qualifiedName)
-                        ? $"Function '{qualifiedName}' is not declared or is not visible from this file."
-                        : "Expression is not a function or callable");
-                    return;
-                }
-                parameters = targetType.ParamTypes.Select(t => new Parameter("", t)).ToList();
-                errorName = !string.IsNullOrEmpty(qualifiedName) ? qualifiedName : "function pointer";
-            }
-        }
-        else // EXISTING: Handle standard named functions
-        {
-            if (call.NamespacePath.Any())
-            {
-                var sourceName = string.Join(".", call.NamespacePath) + "." + call.Name;
-                if (TryResolveAliasQualifiedName(sourceName, out var resolvedCallName))
-                {
-                    var parts = resolvedCallName.Split('.');
-                    call.Name = parts[^1];
-                    call.NamespacePath = parts.Length > 1
-                        ? parts[..^1].ToList()
-                            : new List<string>();
-                    errorName = sourceName;
-                    resolvedViaAlias = true;
-                }
-            }
-
-            if (!_symbolTable.TryLookup(call.Name, out var funcInfo))
-            {
-                if (call.NamespacePath.Any())
-                {
-                    var fullName = string.Join(".", call.NamespacePath) + "." + call.Name;
-                    if (!_symbolTable.TryLookup(fullName, out funcInfo))
-                    {
-                        _errors.Error(call, $"Call to undeclared function '{fullName}'");
-                        return;
-                    }
-                    if (!resolvedViaAlias && !CheckVisibility(fullName)) {
-                        ReportNotVisible(call, "Function", fullName);
-                        return;
-                    }
-                }
-                else
-                {
-                    _errors.Error(call, $"Call to undeclared function '{call.Name}'");
-                    return;
-                }
-            }
-            else 
-            {
-                if (!CheckVisibility(call.Name)) {
-                    ReportNotVisible(call, "Function", call.Name);
-                    return;
-                }
-            }
-
-            bool isCallable = funcInfo!.Kind == SymbolKind.Function || 
-                             (funcInfo.Type != null && funcInfo.Type.IsFunction);
-
-            if (!isCallable)
-            {
-                _errors.Error(call, $"'{call.Name}' is not a function or callable variable");
-                return;
-            }
-
-            parameters = funcInfo.Kind == SymbolKind.Function 
-                ? funcInfo.Parameters 
-                : funcInfo.Type!.ParamTypes.Select(t => new Parameter("", t)).ToList();
-        }
-
-        if (parameters == null) parameters = new List<Parameter>();
+        var parameters = callInfo.Parameters;
+        var errorName = callInfo.DisplayName;
 
         if (call.Name != "syscall" && parameters.Count != call.Args.Count)
         {
@@ -2401,8 +2375,8 @@ public class TypeChecker
                 return new TypeNode { Name = "string" };
 
             case IdentifierExpr ident:
-                ident.Name = ResolveQualifiedName(ident.Name);
-                var info = _symbolTable.Lookup(ident.Name);
+                var resolvedName = ResolveQualifiedName(ident.Name);
+                var info = _symbolTable.Lookup(resolvedName);
                 return info?.Type;
 
             case BinaryExpr bin:
@@ -2423,65 +2397,7 @@ public class TypeChecker
                 return leftType ?? GetExpressionType(bin.Left, reportErrors);
 
             case CallExpr call:
-                // Resolve return type for qualified names and function pointers.
-                if (call.TargetExpr != null)
-                {
-                    var qualifiedName = TryGetQualifiedName(call.TargetExpr);
-                    var resolvedQualifiedName = qualifiedName;
-                    if (!string.IsNullOrEmpty(qualifiedName) &&
-                        TryResolveAliasQualifiedName(qualifiedName, out var aliasResolvedQualifiedName))
-                    {
-                        resolvedQualifiedName = aliasResolvedQualifiedName;
-                    }
-
-                    if (!string.IsNullOrEmpty(resolvedQualifiedName) && _symbolTable.TryLookup(resolvedQualifiedName, out var qualifiedInfo))
-                    {
-                        if (qualifiedInfo!.Kind == SymbolKind.Function)
-                            return qualifiedInfo.Type.ReturnType?.Clone();
-                        if (qualifiedInfo.Type != null && qualifiedInfo.Type.IsFunction)
-                            return qualifiedInfo.Type.ReturnType?.Clone();
-                    }
-
-                    var callTargetType = GetExpressionType(call.TargetExpr, reportErrors);
-                    if (callTargetType != null && callTargetType.IsFunction)
-                    {
-                        return callTargetType.ReturnType?.Clone();
-                    }
-                    return null;
-                }
-
-                // EXISTING: Resolve return type for standard named functions
-                if (_symbolTable.TryLookup(call.Name, out var funcInfo))
-                {
-                    if (funcInfo!.Kind == SymbolKind.Function)
-                        return funcInfo.Type.ReturnType?.Clone();
-                    if (funcInfo.Type != null && funcInfo.Type.IsFunction)
-                        return funcInfo.Type.ReturnType?.Clone();
-                }
-                if (call.NamespacePath.Any())
-                {
-                    var sourceName = string.Join(".", call.NamespacePath) + "." + call.Name;
-                    if (TryResolveAliasQualifiedName(sourceName, out var resolvedCallName))
-                    {
-                        if (_symbolTable.TryLookup(resolvedCallName, out funcInfo))
-                        {
-                            if (funcInfo!.Kind == SymbolKind.Function)
-                                return funcInfo.Type.ReturnType?.Clone();
-                            if (funcInfo.Type != null && funcInfo.Type.IsFunction)
-                                return funcInfo.Type.ReturnType?.Clone();
-                        }
-                    }
-
-                    var fullName = string.Join(".", call.NamespacePath) + "." + call.Name;
-                    if (_symbolTable.TryLookup(fullName, out funcInfo))
-                    {
-                        if (funcInfo!.Kind == SymbolKind.Function)
-                            return funcInfo.Type.ReturnType?.Clone();
-                        if (funcInfo.Type != null && funcInfo.Type.IsFunction)
-                            return funcInfo.Type.ReturnType?.Clone();
-                    }
-                }
-                return null;
+                return ResolveCallInfo(call, reportErrors)?.ReturnType;
 
             case CastExpr cast:
                 return cast.TargetType;
@@ -2489,7 +2405,7 @@ public class TypeChecker
             case IndexExpr idx:
                 var targetType = GetExpressionType(idx.Target, reportErrors);
                 if (targetType == null)
-                    return new TypeNode { Name = "i32" };
+                    return null;
                 if (targetType.ArraySize != null)
                     return new TypeNode
                     {
@@ -2525,31 +2441,18 @@ public class TypeChecker
                         IsVolatile = targetType.IsVolatile
                     };
                 }
-                return new TypeNode { Name = "i32" };
+                return null;
 
             case FieldExpr field:
-                var targetName = TryGetQualifiedName(field.Target);
-                var potentialName = field.ResolvedQualifiedName ?? (string.IsNullOrEmpty(targetName) ? "" : $"{targetName}.{field.Field}");
-
-                var resolvedPotentialName = potentialName;
-                var aliasResolvedPotentialName = string.Empty;
-                var resolvedViaAlias = field.ResolvedQualifiedName != null;
-                if (!resolvedViaAlias && !string.IsNullOrEmpty(potentialName))
-                    resolvedViaAlias = TryResolveAliasQualifiedName(potentialName, out aliasResolvedPotentialName);
-                else
-                    aliasResolvedPotentialName = resolvedPotentialName;
-                if (resolvedViaAlias)
-                    resolvedPotentialName = aliasResolvedPotentialName;
-
-                if (!string.IsNullOrEmpty(resolvedPotentialName) && _symbolTable.TryLookup(resolvedPotentialName, out var fieldInfo))
+                if (ResolveQualifiedFieldSymbol(field) is ResolvedFieldSymbolInfo resolvedFieldSymbol)
                 {
-                    if (fieldInfo!.Kind == SymbolKind.Variable || fieldInfo.Kind == SymbolKind.Function)
+                    if (resolvedFieldSymbol.SymbolInfo.Kind == SymbolKind.Variable || resolvedFieldSymbol.SymbolInfo.Kind == SymbolKind.Function)
                     {
-                        if (!resolvedViaAlias && !CheckVisibility(resolvedPotentialName)) {
-                            ReportNotVisible(field, "Symbol", resolvedPotentialName);
-                            return new TypeNode { Name = "i32" };
+                        if (!IsVisibleResolvedFieldSymbol(resolvedFieldSymbol)) {
+                            ReportNotVisible(field, "Symbol", resolvedFieldSymbol.ResolvedName);
+                            return null;
                         }
-                        return fieldInfo.Type.Clone();
+                        return resolvedFieldSymbol.SymbolInfo.Type.Clone();
                     }
                 }
 
@@ -2558,12 +2461,10 @@ public class TypeChecker
                 {
                     if (reportErrors)
                         _errors.Error(field, $"Cannot determine type of target in field access '{field.Field}'.");
-                    return new TypeNode { Name = "i32" };
+                    return null;
                 }
 
-                string structName = ft.NamespacePath.Any() 
-                    ? string.Join(".", ft.NamespacePath) + "." + ft.Name 
-                    : ft.Name;
+                string structName = QualifiedNames.GetFullName(ft.NamespacePath, ft.Name);
 
                 if (ft.IsSlice)
                 {
@@ -2575,12 +2476,12 @@ public class TypeChecker
                         var elementType = ft.Clone();
                         elementType.IsSlice = false;
                         elementType.ArraySize = null;
-                        return AddressOfType(elementType);
+                        return TypeHelpers.AddressOfType(elementType);
                     }
 
                     if (reportErrors)
                         _errors.Error(field, $"Slice values expose only '.ptr' and '.len', not '{field.Field}'.");
-                    return new TypeNode { Name = "i32" };
+                    return null;
                 }
 
                 if (_numericTypes.Contains(structName))
@@ -2593,7 +2494,7 @@ public class TypeChecker
                     if (!ft.IsAliasQualifiedReference && !CheckVisibility(structName)) {
                         if (reportErrors)
                             ReportNotVisible(field, "Struct", structName);
-                        return new TypeNode { Name = "i32" };
+                        return null;
                     }
                     var fieldDef = structDef!.FirstOrDefault(f => f.Name == field.Field);
                     if (!string.IsNullOrEmpty(fieldDef.Name))
@@ -2608,7 +2509,7 @@ public class TypeChecker
                     if (!ft.IsAliasQualifiedReference && !CheckVisibility(structName)) {
                         if (reportErrors)
                             ReportNotVisible(field, "Union", structName);
-                        return new TypeNode { Name = "i32" };
+                        return null;
                     }
 
                     if (field.Field == "tag")
@@ -2626,14 +2527,14 @@ public class TypeChecker
                     if (reportErrors)
                         _errors.Error(field, $"Type '{structName}' is not a known struct or union");
                 }
-                return new TypeNode { Name = "i32" };
+                return null;
 
             case UnaryExpr un:
                 if (un.Operator == "&")
                 {
                     var operandType = GetExpressionType(un.Operand, reportErrors);
                     if (operandType != null)
-                        return AddressOfType(operandType);
+                        return TypeHelpers.AddressOfType(operandType);
                 }
                 else if (un.Operator == "!")
                 {
@@ -2643,7 +2544,7 @@ public class TypeChecker
                 {
                     return GetExpressionType(un.Operand, reportErrors);
                 }
-                return new TypeNode { Name = "i32" };
+                return null;
 
             case StructLiteralExpr structLiteral:
                 return structLiteral.TypeName.Clone();
@@ -2662,7 +2563,7 @@ public class TypeChecker
                     "Builtin.IsX86_64" => new TypeNode { Name = "bool" },
                     "Builtin.IsAArch64" => new TypeNode { Name = "bool" },
                     "Builtin.CompileError" => new TypeNode { Name = "void" },
-                    _ => new TypeNode { Name = "i32" }
+                    _ => null
                 };
 
             case ErrorNamespaceExpr:
@@ -2683,30 +2584,6 @@ public class TypeChecker
             default:
                 return null;
         }
-    }
-
-    private bool IsNumericType(Expr expr)
-    {
-        var type = GetExpressionType(expr);
-        return TypePredicates.IsNumericType(type);
-    }
-
-    private bool IsBoolType(Expr expr)
-    {
-        var type = GetExpressionType(expr);
-        return type != null
-            && !type.IsSlice
-            && !type.IsPointer
-            && !type.IsErrorUnion
-            && !type.IsFunction
-            && type.ArraySize == null
-            && type.Name == "bool";
-    }
-
-    private bool IsPointerType(Expr expr)
-    {
-        var type = GetExpressionType(expr);
-        return type?.IsPointer == true;
     }
 
     private static bool IsNumericType(TypeNode? type) => TypePredicates.IsNumericType(type);
@@ -2739,9 +2616,7 @@ public class TypeChecker
             return false;
         }
 
-        var fullName = type.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
         return _symbolTable.LookupEnumNode(fullName) != null;
     }
 
@@ -2750,9 +2625,7 @@ public class TypeChecker
         if (!IsEnumType(type))
             return null;
 
-        var fullName = type!.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var fullName = QualifiedNames.GetFullName(type!.NamespacePath, type.Name);
         return _symbolTable.LookupEnumNode(fullName);
     }
 
@@ -2761,9 +2634,7 @@ public class TypeChecker
         if (!IsUnionType(type))
             return null;
 
-        var fullName = type!.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var fullName = QualifiedNames.GetFullName(type!.NamespacePath, type.Name);
         return _symbolTable.LookupUnionNode(fullName);
     }
 
@@ -2779,17 +2650,13 @@ public class TypeChecker
             return false;
         }
 
-        var fullName = type.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
         return _symbolTable.LookupUnionNode(fullName) != null;
     }
 
     private bool IsValidUnionField(TypeNode unionType, string fieldName)
     {
-        var fullName = unionType.NamespacePath.Any()
-            ? string.Join(".", unionType.NamespacePath) + "." + unionType.Name
-            : unionType.Name;
+        var fullName = QualifiedNames.GetFullName(unionType.NamespacePath, unionType.Name);
         var unionDefinition = _symbolTable.LookupUnionNode(fullName);
         if (unionDefinition == null)
             return false;
@@ -2820,9 +2687,7 @@ public class TypeChecker
 
     private static string FormatNonErrorType(TypeNode type)
     {
-        var baseName = type.NamespacePath.Any()
-            ? string.Join(".", type.NamespacePath) + "." + type.Name
-            : type.Name;
+        var baseName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
 
         if (type.IsPointer)
         {
@@ -2871,33 +2736,7 @@ public class TypeChecker
         var sourceElement = source.Clone();
         sourceElement.ArraySize = null;
 
-        return SameType(targetElement, sourceElement);
-    }
-
-    private static TypeNode AddressOfType(TypeNode operandType)
-    {
-        // `&array` is intentionally element-pointer sugar, not pointer-to-array.
-        if (operandType.ArraySize != null)
-        {
-            return new TypeNode
-            {
-                Name = operandType.Name,
-                NamespacePath = new List<string>(operandType.NamespacePath),
-                IsVolatile = operandType.IsVolatile,
-                IsPointer = true,
-                PointerLevel = 1
-            };
-        }
-
-        int newLevel = operandType.IsPointer ? (operandType.PointerLevel > 0 ? operandType.PointerLevel + 1 : 2) : 1;
-        return new TypeNode
-        {
-            Name = operandType.Name,
-            NamespacePath = new List<string>(operandType.NamespacePath),
-            IsVolatile = operandType.IsVolatile,
-            IsPointer = true,
-            PointerLevel = newLevel
-        };
+        return TypeHelpers.SameType(targetElement, sourceElement);
     }
 
     private bool IsAssignableTo(TypeNode target, Expr? sourceExpr, TypeNode? source)
@@ -2910,19 +2749,19 @@ public class TypeChecker
 
         if (target.IsFunction && source.IsFunction)
         {
-            if (!SameType(target.ReturnType, source.ReturnType))
+            if (!TypeHelpers.SameType(target.ReturnType, source.ReturnType))
                 return false;
             if (target.ParamTypes.Count != source.ParamTypes.Count)
                 return false;
             for (int i = 0; i < target.ParamTypes.Count; i++)
             {
-                if (!SameType(target.ParamTypes[i], source.ParamTypes[i]))
+                if (!TypeHelpers.SameType(target.ParamTypes[i], source.ParamTypes[i]))
                     return false;
             }
             return true;
         }
 
-        if (SameType(target, source))
+        if (TypeHelpers.SameType(target, source))
             return true;
 
         if (CanAddVolatileQualifier(target, source))
@@ -2967,7 +2806,7 @@ public class TypeChecker
 
         var unqualifiedTarget = target.Clone();
         unqualifiedTarget.IsVolatile = false;
-        return SameType(unqualifiedTarget, source);
+        return TypeHelpers.SameType(unqualifiedTarget, source);
     }
 
     private static bool SameNumericType(TypeNode target, TypeNode source)
@@ -3222,39 +3061,4 @@ public class TypeChecker
         return typeName is "i8" or "i16" or "i32" or "i64" or "u8" or "u16" or "u32" or "u64";
     }
 
-    private static bool SameType(TypeNode? left, TypeNode? right)
-    {
-        if (left == null || right == null)
-            return left == right;
-
-        if (left.Name != right.Name ||
-            left.IsVolatile != right.IsVolatile ||
-            left.IsSlice != right.IsSlice ||
-            left.IsPointer != right.IsPointer ||
-            left.PointerLevel != right.PointerLevel ||
-            left.ArraySize != right.ArraySize ||
-            left.IsErrorUnion != right.IsErrorUnion ||
-            left.IsFunction != right.IsFunction ||
-            !left.NamespacePath.SequenceEqual(right.NamespacePath))
-        {
-            return false;
-        }
-
-        if (left.IsErrorUnion && !SameType(left.ErrorInnerType, right.ErrorInnerType))
-            return false;
-
-        if (left.IsFunction)
-        {
-            if (!SameType(left.ReturnType, right.ReturnType) || left.ParamTypes.Count != right.ParamTypes.Count)
-                return false;
-
-            for (int i = 0; i < left.ParamTypes.Count; i++)
-            {
-                if (!SameType(left.ParamTypes[i], right.ParamTypes[i]))
-                    return false;
-            }
-        }
-
-        return true;
-    }
 }

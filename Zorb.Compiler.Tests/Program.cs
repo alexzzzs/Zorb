@@ -2,6 +2,8 @@ using System.Text;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Zorb.Compiler.AST;
+using Zorb.Compiler.AST.Expressions;
+using Zorb.Compiler.AST.Statements;
 using Zorb.Compiler.Codegen;
 using Zorb.Compiler.Lexer;
 using Zorb.Compiler.Parser;
@@ -75,6 +77,39 @@ catch (Exception ex)
     Console.WriteLine("FAIL semantic_output");
 }
 
+try
+{
+    RunGeneratorStateResetTests();
+    Console.WriteLine("PASS generator_state_reset");
+}
+catch (Exception ex)
+{
+    failures.Add($"generator_state_reset: {ex.Message}");
+    Console.WriteLine("FAIL generator_state_reset");
+}
+
+try
+{
+    RunUnknownTypeCascadeTests();
+    Console.WriteLine("PASS unknown_type_cascade");
+}
+catch (Exception ex)
+{
+    failures.Add($"unknown_type_cascade: {ex.Message}");
+    Console.WriteLine("FAIL unknown_type_cascade");
+}
+
+try
+{
+    RunResolvedCallMetadataTests();
+    Console.WriteLine("PASS resolved_call_metadata");
+}
+catch (Exception ex)
+{
+    failures.Add($"resolved_call_metadata: {ex.Message}");
+    Console.WriteLine("FAIL resolved_call_metadata");
+}
+
 var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
     ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
 var examplesRoot = Path.Combine(projectRoot, "examples");
@@ -142,19 +177,11 @@ static void RunCliWorkflowTests(string fixtureRoot)
         ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
     var compilerInvocation = GetCompilerInvocation(projectRoot);
 
-    var tempDir = Path.Combine(Path.GetTempPath(), "zorb-cli-tests", Guid.NewGuid().ToString("N"));
-    Directory.CreateDirectory(tempDir);
-
-    try
+    WithTempDirectory("zorb-cli-tests", tempDir =>
     {
         foreach (var workflowCase in GetCliWorkflowCases())
             RunCliWorkflowFixture(compilerInvocation, projectRoot, fixtureRoot, tempDir, workflowCase);
-    }
-    finally
-    {
-        if (Directory.Exists(tempDir))
-            Directory.Delete(tempDir, recursive: true);
-    }
+    });
 }
 
 static void RunCliArgumentValidationTests(string fixtureRoot)
@@ -164,11 +191,9 @@ static void RunCliArgumentValidationTests(string fixtureRoot)
         ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
     var compilerInvocation = GetCompilerInvocation(projectRoot);
     var sampleInput = Path.Combine(fixtureRoot, "runtime_hello_world", "main.zorb");
-    var tempDir = Path.Combine(Path.GetTempPath(), "zorb-cli-args", Guid.NewGuid().ToString("N"));
-    Directory.CreateDirectory(tempDir);
     var hasWindowsHostToolchain = OperatingSystem.IsWindows() && IsAnyToolAvailable("clang-cl", "cl");
 
-    try
+    WithTempDirectory("zorb-cli-args", tempDir =>
     {
         foreach (var testCase in GetCliArgumentCases(sampleInput, tempDir, hasWindowsHostToolchain))
         {
@@ -198,12 +223,7 @@ static void RunCliArgumentValidationTests(string fixtureRoot)
                     $"CLI arg case '{testCase.Name}' stderr did not contain expected text '{testCase.ExpectedStdErrSubstring}'.{Environment.NewLine}Actual stderr:{Environment.NewLine}{actualStdErr}");
             }
         }
-    }
-    finally
-    {
-        if (Directory.Exists(tempDir))
-            Directory.Delete(tempDir, recursive: true);
-    }
+    });
 }
 
 static void RunSemanticDiagnosticOutputTests(string fixtureRoot)
@@ -242,6 +262,226 @@ static void RunSemanticDiagnosticOutputTests(string fixtureRoot)
     {
         throw new Exception(
             $"Expected exactly one rendered diagnostic per source location, got {firstLocationCount} for 2:18 and {secondLocationCount} for 2:5.{Environment.NewLine}Actual stderr:{Environment.NewLine}{stderr}");
+    }
+}
+
+static void RunGeneratorStateResetTests()
+{
+    WithTempDirectory("zorb-generator-state", tempDir =>
+    {
+        var firstPath = Path.Combine(tempDir, "first.zorb");
+        var secondPath = Path.Combine(tempDir, "second.zorb");
+
+        File.WriteAllText(firstPath, """
+import c "stddef.h"
+
+fn first() -> i32 {
+    return 1
+}
+""");
+
+        File.WriteAllText(secondPath, """
+fn second() -> i32 {
+    return 2
+}
+""");
+
+        var firstCompilation = CompileFixture(firstPath, tempDir);
+        AssertPhase(firstCompilation.Phase, FixturePhase.Success, firstCompilation.FailureMessage);
+        AssertNoErrors(firstCompilation.ParseErrors);
+        AssertNoErrors(firstCompilation.Checker.Errors.Errors);
+
+        var generator = new CGenerator(tempDir, firstCompilation.Checker.SymbolTable);
+        var firstGenerated = generator.Generate(firstCompilation.Ast, ParseFile(firstPath).Files);
+        if (!firstGenerated.Contains("#include <stddef.h>", StringComparison.Ordinal))
+            throw new Exception("First generation did not include the imported C header.");
+
+        var secondCompilation = CompileFixture(secondPath, tempDir);
+        AssertPhase(secondCompilation.Phase, FixturePhase.Success, secondCompilation.FailureMessage);
+        AssertNoErrors(secondCompilation.ParseErrors);
+        AssertNoErrors(secondCompilation.Checker.Errors.Errors);
+
+        var secondGenerated = generator.Generate(secondCompilation.Ast, ParseFile(secondPath).Files);
+        if (secondGenerated.Contains("#include <stddef.h>", StringComparison.Ordinal))
+            throw new Exception("CGenerator leaked imported headers across Generate() calls.");
+    });
+}
+
+static void RunUnknownTypeCascadeTests()
+{
+    WithTempDirectory("zorb-unknown-type-cascade", tempDir =>
+    {
+        var mainPath = Path.Combine(tempDir, "main.zorb");
+        File.WriteAllText(mainPath, """
+fn main() -> i64 {
+    if missing.field {
+        return 1
+    }
+
+    return 0
+}
+""");
+
+        var compilation = CompileFixture(mainPath, tempDir);
+        AssertPhase(compilation.Phase, FixturePhase.Semantic, compilation.FailureMessage);
+
+        var errors = compilation.Checker.Errors.Errors;
+        if (!errors.Any(error => error.Contains("Use of undeclared identifier 'missing'.", StringComparison.Ordinal)))
+            throw new Exception($"Expected undeclared identifier diagnostic.{Environment.NewLine}{string.Join(Environment.NewLine, errors)}");
+
+        if (errors.Any(error => error.Contains("Condition must have type 'bool'", StringComparison.Ordinal)))
+            throw new Exception($"Unexpected bool-condition follow-on diagnostic for unknown field target.{Environment.NewLine}{string.Join(Environment.NewLine, errors)}");
+    });
+}
+
+static void RunResolvedCallMetadataTests()
+{
+    var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
+    var fixtureRoot = Path.Combine(testProjectRoot, "fixtures");
+
+    AssertResolvedCallMetadata(
+        Path.Combine(fixtureRoot, "import_alias_function_value"),
+        expectedQualifiedName: "use",
+        expectedTargetQualifiedName: null,
+        expectedParamCount: 1);
+
+    AssertResolvedCallMetadata(
+        Path.Combine(fixtureRoot, "import_alias_callable_variable_call"),
+        expectedQualifiedName: null,
+        expectedTargetQualifiedName: "cb",
+        expectedParamCount: 1);
+
+    AssertResolvedCallMetadata(
+        Path.Combine(fixtureRoot, "import_alias_qualified_call"),
+        expectedQualifiedName: null,
+        expectedTargetQualifiedName: "module.answer",
+        expectedParamCount: 0);
+}
+
+static void AssertResolvedCallMetadata(string fixtureDir, string? expectedQualifiedName, string? expectedTargetQualifiedName, int expectedParamCount)
+{
+    var mainPath = Path.Combine(fixtureDir, "main.zorb");
+    var compilation = CompileFixture(mainPath, fixtureDir);
+    AssertPhase(compilation.Phase, FixturePhase.Success, compilation.FailureMessage);
+    AssertNoErrors(compilation.ParseErrors);
+    AssertNoErrors(compilation.Checker.Errors.Errors);
+
+    var mainFunction = compilation.Ast.OfType<FunctionDecl>().FirstOrDefault(fn => string.Equals(fn.Name, "main", StringComparison.Ordinal))
+        ?? throw new Exception($"Expected fixture '{fixtureDir}' to define a main function.");
+    var call = FindFirstCallInStatements(mainFunction.Body)
+        ?? throw new Exception($"Expected to find a call expression in main() for fixture '{fixtureDir}'.");
+
+    if (!string.Equals(call.ResolvedQualifiedName, expectedQualifiedName, StringComparison.Ordinal))
+        throw new Exception($"ResolvedQualifiedName mismatch. Expected '{expectedQualifiedName ?? "<null>"}', got '{call.ResolvedQualifiedName ?? "<null>"}'.");
+
+    if (!string.Equals(call.ResolvedTargetQualifiedName, expectedTargetQualifiedName, StringComparison.Ordinal))
+        throw new Exception($"ResolvedTargetQualifiedName mismatch. Expected '{expectedTargetQualifiedName ?? "<null>"}', got '{call.ResolvedTargetQualifiedName ?? "<null>"}'.");
+
+    if (call.ResolvedFunctionType == null || !call.ResolvedFunctionType.IsFunction)
+        throw new Exception("ResolvedFunctionType was not cached as a function type.");
+
+    if (call.ResolvedFunctionType.ParamTypes.Count != expectedParamCount)
+        throw new Exception($"ResolvedFunctionType cached unexpected parameter count. Expected {expectedParamCount}, got {call.ResolvedFunctionType.ParamTypes.Count}.");
+
+    if (call.ResolvedFunctionType.ReturnType?.Name != "i64")
+        throw new Exception("ResolvedFunctionType cached unexpected return type.");
+}
+
+static CallExpr? FindFirstCallInNode(Node node)
+{
+    switch (node)
+    {
+        case FunctionDecl fn:
+            return FindFirstCallInStatements(fn.Body);
+        case VariableDeclarationNode varDecl:
+            return varDecl.Value != null ? FindFirstCallInExpr(varDecl.Value) : null;
+        case ExpressionStatement exprStmt:
+            return FindFirstCallInExpr(exprStmt.Expression);
+        case AssignStmt assign:
+            return FindFirstCallInExpr(assign.Target) ?? FindFirstCallInExpr(assign.Value);
+        case ReturnNode returnNode:
+            return returnNode.Value != null ? FindFirstCallInExpr(returnNode.Value) : null;
+        case IfStmt ifStmt:
+            return FindFirstCallInExpr(ifStmt.Condition) ?? FindFirstCallInStatements(ifStmt.Body) ?? FindFirstCallInStatements(ifStmt.ElseBody);
+        case WhileStmt whileStmt:
+            return FindFirstCallInExpr(whileStmt.Condition) ?? FindFirstCallInStatements(whileStmt.Body);
+        case ForStmt forStmt:
+            return (forStmt.Initializer != null ? FindFirstCallInStatement(forStmt.Initializer) : null)
+                ?? (forStmt.Condition != null ? FindFirstCallInExpr(forStmt.Condition) : null)
+                ?? (forStmt.Update != null ? FindFirstCallInStatement(forStmt.Update) : null)
+                ?? FindFirstCallInStatements(forStmt.Body);
+        default:
+            return null;
+    }
+}
+
+static CallExpr? FindFirstCallInStatement(Statement statement)
+{
+    return FindFirstCallInStatements([statement]);
+}
+
+static CallExpr? FindFirstCallInStatements(IEnumerable<Statement> statements)
+{
+    foreach (var statement in statements)
+    {
+        if (FindFirstCallInNode(statement) is CallExpr call)
+            return call;
+    }
+
+    return null;
+}
+
+static CallExpr? FindFirstCallInExpr(Expr expr)
+{
+    switch (expr)
+    {
+        case CallExpr call:
+            return call;
+        case BinaryExpr binary:
+            return FindFirstCallInExpr(binary.Left) ?? FindFirstCallInExpr(binary.Right);
+        case UnaryExpr unary:
+            return FindFirstCallInExpr(unary.Operand);
+        case CastExpr cast:
+            return FindFirstCallInExpr(cast.Expr);
+        case IndexExpr index:
+            return FindFirstCallInExpr(index.Target) ?? FindFirstCallInExpr(index.Index);
+        case FieldExpr field:
+            return FindFirstCallInExpr(field.Target);
+        case StructLiteralExpr structLiteral:
+            return FindFirstCallInExprs(structLiteral.Fields.Select(field => field.Value));
+        case ArrayLiteralExpr arrayLiteral:
+            return FindFirstCallInExprs(arrayLiteral.Elements);
+        case CatchExpr catchExpr:
+            return FindFirstCallInExpr(catchExpr.Left) ?? FindFirstCallInStatements(catchExpr.CatchBody);
+        default:
+            return null;
+    }
+}
+
+static CallExpr? FindFirstCallInExprs(IEnumerable<Expr> expressions)
+{
+    foreach (var expr in expressions)
+    {
+        if (FindFirstCallInExpr(expr) is CallExpr call)
+            return call;
+    }
+
+    return null;
+}
+
+static void WithTempDirectory(string prefix, Action<string> action)
+{
+    var tempDir = Path.Combine(Path.GetTempPath(), prefix, Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(tempDir);
+
+    try
+    {
+        action(tempDir);
+    }
+    finally
+    {
+        if (Directory.Exists(tempDir))
+            Directory.Delete(tempDir, recursive: true);
     }
 }
 
@@ -736,6 +976,11 @@ static void RunFixture(string fixtureDir, bool updateSnapshots)
 
 static FixtureCompilation CompileFixture(string mainPath, string fixtureDir)
 {
+    return CompileFixtureCore(mainPath, fixtureDir, _ => { });
+}
+
+static FixtureCompilation CompileFixtureCore(string mainPath, string fixtureDir, Action<CGenerator>? configureGenerator)
+{
     var parseResult = ParseFile(mainPath);
     var ast = parseResult.EntryNodes;
     var parseErrors = parseResult.Errors;
@@ -750,6 +995,7 @@ static FixtureCompilation CompileFixture(string mainPath, string fixtureDir)
     try
     {
         var generator = new CGenerator(fixtureDir, checker.SymbolTable);
+        configureGenerator?.Invoke(generator);
         var generated = generator.Generate(ast, parseResult.Files);
         return new FixtureCompilation(ast, parseErrors, checker, generated, FixturePhase.Success, null);
     }
@@ -791,31 +1037,11 @@ static void RunRuntimeExpectationsIfPresent(string fixtureDir, string mainPath)
 
 static FixtureCompilation CompileRuntimeFixture(string mainPath, string fixtureDir, bool preserveStart, bool noStdLib)
 {
-    var parseResult = ParseFile(mainPath);
-    var ast = parseResult.EntryNodes;
-    var parseErrors = parseResult.Errors;
-    if (parseErrors.Count > 0)
-        return new FixtureCompilation(ast, parseErrors, new TypeChecker(), "", FixturePhase.Parse, null);
-
-    var checker = new TypeChecker();
-    checker.Check(ast, fixtureDir, parseResult.Files);
-    if (checker.Errors.Errors.Count > 0)
-        return new FixtureCompilation(ast, parseErrors, checker, "", FixturePhase.Semantic, null);
-
-    try
+    return CompileFixtureCore(mainPath, fixtureDir, generator =>
     {
-        var generator = new CGenerator(fixtureDir, checker.SymbolTable)
-        {
-            PreserveStart = preserveStart,
-            NoStdLib = noStdLib
-        };
-        var generated = generator.Generate(ast, parseResult.Files);
-        return new FixtureCompilation(ast, parseErrors, checker, generated, FixturePhase.Success, null);
-    }
-    catch (Exception ex)
-    {
-        return new FixtureCompilation(ast, parseErrors, checker, "", FixturePhase.Codegen, ex.Message);
-    }
+        generator.PreserveStart = preserveStart;
+        generator.NoStdLib = noStdLib;
+    });
 }
 
 static ParseGraphResult ParseFile(string path)

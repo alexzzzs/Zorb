@@ -9,7 +9,9 @@ public class CallExpr : Expr
     public string Name { get; set; } = null!;
     public List<Expr> Args { get; set; } = new();
     public Expr? TargetExpr { get; set; }
+    public string? ResolvedQualifiedName { get; set; }
     public string? ResolvedTargetQualifiedName { get; set; }
+    public TypeNode? ResolvedFunctionType { get; set; }
 }
 
 public class NumberExpr : Expr

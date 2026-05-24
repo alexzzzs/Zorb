@@ -63,11 +63,10 @@ partial class Program
 
                 case "--check":
                     options.CheckOnly = true;
-                    options.EmitC = false;
                     break;
 
                 case "--emit-c":
-                    options.EmitC = true;
+                    // Retained as an explicit no-op for CLI compatibility. Emit-C is the default mode.
                     break;
 
                 case "--dump-tokens":
@@ -183,7 +182,7 @@ partial class Program
         Console.WriteLine("Options:");
         Console.WriteLine("  --check              Run parse and semantic checks only.");
         Console.WriteLine("  --dump-tokens        Print the token stream before parsing.");
-        Console.WriteLine("  --emit-c             Emit C output (default unless --check is used).");
+        Console.WriteLine("  --emit-c             Explicitly request C emission (default behavior).");
         Console.WriteLine("  -o, --output <path>  Write generated C or built binary to the given path.");
         Console.WriteLine("  --keep-c <path>      Keep the generated C file when using build or run.");
         Console.WriteLine("  --linker-script <p>  Use a custom linker script for build --target bare-metal-x86_64.");

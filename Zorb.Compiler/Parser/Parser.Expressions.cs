@@ -148,71 +148,8 @@ public partial class Parser
                 return false;
 
             offset++;
-            var parenDepth = 0;
-            var bracketDepth = 0;
-            var braceDepth = 0;
-            var sawValueToken = false;
-
-            while (true)
-            {
-                var tokenType = Peek(offset).Type;
-                if (tokenType == TokenType.Eof)
-                    return false;
-
-                if (parenDepth == 0 && bracketDepth == 0 && braceDepth == 0)
-                {
-                    if (tokenType == TokenType.Equals
-                        || tokenType == TokenType.Semicolon
-                        || tokenType == TokenType.Fn
-                        || tokenType == TokenType.If
-                        || tokenType == TokenType.While
-                        || tokenType == TokenType.Return
-                        || tokenType == TokenType.Const
-                        || tokenType == TokenType.Break
-                        || tokenType == TokenType.Continue)
-                    {
-                        return false;
-                    }
-
-                    if (tokenType == TokenType.Comma || tokenType == TokenType.RBrace)
-                    {
-                        if (!sawValueToken)
-                            return false;
-                        break;
-                    }
-                }
-
-                sawValueToken = true;
-                switch (tokenType)
-                {
-                    case TokenType.LParen:
-                        parenDepth++;
-                        break;
-                    case TokenType.RParen:
-                        if (parenDepth == 0)
-                            return false;
-                        parenDepth--;
-                        break;
-                    case TokenType.LBracket:
-                        bracketDepth++;
-                        break;
-                    case TokenType.RBracket:
-                        if (bracketDepth == 0)
-                            return false;
-                        bracketDepth--;
-                        break;
-                    case TokenType.LBrace:
-                        braceDepth++;
-                        break;
-                    case TokenType.RBrace:
-                        if (braceDepth == 0)
-                            return false;
-                        braceDepth--;
-                        break;
-                }
-
-                offset++;
-            }
+            if (!TrySkipStructLiteralFieldValue(ref offset))
+                return false;
 
             if (Peek(offset).Type == TokenType.Comma)
             {
@@ -223,6 +160,63 @@ public partial class Parser
             }
 
             return Peek(offset).Type == TokenType.RBrace;
+        }
+    }
+
+    private bool TrySkipStructLiteralFieldValue(ref int offset)
+    {
+        var parenDepth = 0;
+        var bracketDepth = 0;
+        var braceDepth = 0;
+        var sawValueToken = false;
+
+        while (true)
+        {
+            var tokenType = Peek(offset).Type;
+            if (tokenType == TokenType.Eof)
+                return false;
+
+            if (parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 &&
+                (tokenType == TokenType.Comma || tokenType == TokenType.RBrace))
+            {
+                return sawValueToken;
+            }
+
+            sawValueToken = true;
+            switch (tokenType)
+            {
+                case TokenType.LParen:
+                    parenDepth++;
+                    break;
+                case TokenType.RParen:
+                    if (parenDepth == 0)
+                        return false;
+                    parenDepth--;
+                    break;
+                case TokenType.LBracket:
+                    bracketDepth++;
+                    break;
+                case TokenType.RBracket:
+                    if (bracketDepth == 0)
+                        return false;
+                    bracketDepth--;
+                    break;
+                case TokenType.LBrace:
+                    braceDepth++;
+                    break;
+                case TokenType.RBrace:
+                    if (braceDepth == 0)
+                        return false;
+                    braceDepth--;
+                    break;
+                case TokenType.Semicolon:
+                case TokenType.Equals:
+                    if (parenDepth == 0 && bracketDepth == 0 && braceDepth == 0)
+                        return false;
+                    break;
+            }
+
+            offset++;
         }
     }
 

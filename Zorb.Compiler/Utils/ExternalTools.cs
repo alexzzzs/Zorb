@@ -71,7 +71,7 @@ public static class ExternalTools
             UseShellExecute = false
         };
 
-        using var process = Process.Start(startInfo) ?? throw new Exception($"Failed to start process '{fileName}'.");
+        using var process = Process.Start(startInfo) ?? throw new ZorbCompilerException($"Failed to start process '{fileName}'.");
         var stdOutTask = process.StandardOutput.ReadToEndAsync();
         var stdErrTask = process.StandardError.ReadToEndAsync();
 
