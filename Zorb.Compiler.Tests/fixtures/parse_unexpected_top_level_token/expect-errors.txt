@@ -1,1 +1,1 @@
-Unexpected top-level token number literal '123'. Expected import, error, const, struct, enum, union, fn, extern fn, an attribute list, or a variable declaration.
+Unexpected top-level token number literal '123'. Expected import, error, const, struct, enum, union, fn, extern fn, extern type, an attribute list, or a variable declaration.

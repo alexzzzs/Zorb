@@ -1,0 +1,7 @@
+export fn name(value: i64) -> i64 {
+    if value >= 0x10 && value != 20 {
+        return name + 1
+    }
+    return cast(i64, "hi\n")
+}
+

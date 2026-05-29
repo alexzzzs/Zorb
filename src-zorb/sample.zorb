@@ -1,0 +1,8 @@
+export fn answer(value: i64) -> i64 {
+    if value >= 40 && value <= 44 {
+        return value + 2
+    }
+
+    return 0
+}
+

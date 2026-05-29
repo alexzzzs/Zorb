@@ -76,6 +76,7 @@ SECTIONS
         public string? KeepCPath { get; set; }
         public string? LinkerScriptPath { get; set; }
         public string? EmitLinkerScriptPath { get; set; }
+        public string NativeFlags { get; set; } = "";
         public bool CheckOnly { get; set; }
         public bool DumpTokens { get; set; }
         public bool LegacyNoStdLib { get; set; }
@@ -123,8 +124,8 @@ SECTIONS
             return options.Mode switch
             {
                 CommandMode.EmitC => EmitCOutput(compilation.GeneratedCode, outputPath),
-                CommandMode.Build => BuildExecutable(compilation.InputPath, compilation.GeneratedCode, outputPath, options.KeepCPath, options.LinkerScriptPath, options.EmitLinkerScriptPath, target),
-                CommandMode.Run => RunExecutable(compilation.InputPath, compilation.GeneratedCode, options.KeepCPath, target),
+                CommandMode.Build => BuildExecutable(compilation.InputPath, compilation.GeneratedCode, outputPath, options.KeepCPath, options.LinkerScriptPath, options.EmitLinkerScriptPath, options.NativeFlags, target),
+                CommandMode.Run => RunExecutable(compilation.InputPath, compilation.GeneratedCode, options.KeepCPath, options.NativeFlags, target),
                 _ => 1
             };
         }

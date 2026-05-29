@@ -187,8 +187,10 @@ public partial class Parser
                     nodes.Add(ParseEnum());
                 else if (Current.Type == TokenType.Union)
                     nodes.Add(ParseUnion());
-                else if (Current.Type == TokenType.Fn || Current.Type == TokenType.Extern)
+                else if (Current.Type == TokenType.Fn)
                     nodes.Add(ParseFunction());
+                else if (Current.Type == TokenType.Extern)
+                    nodes.Add(ParseExternDeclaration());
                 else if (Current.Type == TokenType.LBracket)
                 {
                     var tokenAfterAttributes = PeekDeclarationAfterAttributeLists();
@@ -216,7 +218,7 @@ public partial class Parser
                 else
                 {
                     ErrorReporter.Error(
-                        $"Unexpected top-level token {DescribeToken(Current)}. Expected import, error, const, struct, enum, union, fn, extern fn, an attribute list, or a variable declaration.",
+                        $"Unexpected top-level token {DescribeToken(Current)}. Expected import, error, const, struct, enum, union, fn, extern fn, extern type, an attribute list, or a variable declaration.",
                         Current.Line,
                         Current.Column,
                         _fileName);

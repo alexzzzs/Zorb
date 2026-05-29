@@ -1,0 +1,91 @@
+// std/fs.zorb
+import "collections.zorb"
+import "errors.zorb"
+import "io.zorb"
+import "mem.zorb"
+import "str.zorb"
+
+export struct std.fs {}
+
+export fn std.fs.open_read(path: string) !i32 {
+    if Builtin.IsLinux {
+        openat_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            openat_nr = 257
+        }
+        if Builtin.IsAArch64 {
+            openat_nr = 56
+        }
+        if openat_nr == 0 {
+            return error.UnsupportedPlatform
+        }
+
+        fd: i64 = syscall(openat_nr, -100, cast(i64, cast(*u8, path)), 0, 0)
+        if fd < 0 {
+            return error.NotFound
+        }
+        return cast(i32, fd)
+    }
+
+    return error.UnsupportedPlatform
+}
+
+export fn std.fs.close(fd: i32) {
+    if Builtin.IsLinux {
+        close_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            close_nr = 3
+        }
+        if Builtin.IsAArch64 {
+            close_nr = 57
+        }
+        if close_nr != 0 {
+            syscall(close_nr, cast(i64, fd))
+        }
+    }
+}
+
+export fn std.fs.read_all(path: string, allocator: *std.mem.HeapAllocator) ![]u8 {
+    fd: i32 = std.fs.open_read(path) catch |err| {
+        if err == error.NotFound {
+            return error.NotFound
+        }
+        return error.UnsupportedPlatform
+    }
+
+    result: std.collections.ByteList = std.collections.ByteList.init(allocator, 4096) catch |err| {
+        std.fs.close(fd)
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        return error.OutOfMemory
+    }
+
+    scratch_storage: [4096]u8
+    scratch: []u8 = scratch_storage
+
+    while true {
+        n: i64 = std.io.read(fd, scratch)
+        if n < 0 {
+            std.fs.close(fd)
+            return error.IOError
+        }
+
+        if n == 0 {
+            std.fs.close(fd)
+            return std.collections.ByteList.slice(&result)
+        }
+
+        chunk: []u8 = scratch
+        chunk.len = n
+        std.collections.ByteList.append_slice(&result, allocator, chunk) catch |err| {
+            std.fs.close(fd)
+            if err == error.InvalidSize {
+                return error.InvalidSize
+            }
+            return error.OutOfMemory
+        }
+    }
+
+    return error.IOError
+}

@@ -12,6 +12,7 @@ public enum SymbolKind
     Struct,
     Enum,
     Union,
+    ExternType,
     Parameter
 }
 
@@ -127,6 +128,17 @@ public class SymbolTable
         CurrentScope[name] = info;
     }
 
+    public void DefineExternType(string name, ExternTypeDecl externType)
+    {
+        var info = new SymbolInfo
+        {
+            Name = name,
+            Kind = SymbolKind.ExternType,
+            Type = new TypeNode { Name = externType.Name, NamespacePath = new List<string>(externType.NamespacePath) }
+        };
+        CurrentScope[name] = info;
+    }
+
     public SymbolInfo? Lookup(string name)
     {
         foreach (var scope in _scopes)
@@ -197,6 +209,12 @@ public class SymbolTable
         if (info != null && info.Kind == SymbolKind.Union)
             return info.UnionDefinition;
         return null;
+    }
+
+    public bool IsExternType(string name)
+    {
+        var info = Lookup(name);
+        return info != null && info.Kind == SymbolKind.ExternType;
     }
 
     public bool IsLocal(string name)

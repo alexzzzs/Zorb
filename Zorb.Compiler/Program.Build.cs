@@ -39,10 +39,10 @@ partial class Program
         return process.ExitCode;
     }
 
-    private static int BuildExecutable(string inputPath, string cCode, string outputPath, string? keepCPath, string? linkerScriptPath, string? emitLinkerScriptPath, CompilationTarget target)
+    private static int BuildExecutable(string inputPath, string cCode, string outputPath, string? keepCPath, string? linkerScriptPath, string? emitLinkerScriptPath, string nativeFlags, CompilationTarget target)
     {
         if (target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux)
-            return BuildExecutableOnLinux(cCode, outputPath, keepCPath, UsesNoStdLib(target));
+            return BuildExecutableOnLinux(cCode, outputPath, keepCPath, UsesNoStdLib(target), nativeFlags);
 
         if (target == CompilationTarget.BareMetalX86_64)
             return BuildBareMetalImageOnLinux(cCode, outputPath, keepCPath, linkerScriptPath, emitLinkerScriptPath);
@@ -54,7 +54,7 @@ partial class Program
         return 1;
     }
 
-    private static int BuildExecutableOnLinux(string cCode, string outputPath, string? keepCPath, bool noStdLib)
+    private static int BuildExecutableOnLinux(string cCode, string outputPath, string? keepCPath, bool noStdLib, string nativeFlags)
     {
         EnsureToolAvailable("gcc");
 
@@ -69,7 +69,7 @@ partial class Program
 
         var compile = RunProcess(
             "gcc",
-            $"{GetLinuxCompileFlags(noStdLib)} \"{cSourcePath}\" -o \"{fullOutputPath}\"",
+            $"{GetLinuxCompileFlags(noStdLib)} \"{cSourcePath}\" -o \"{fullOutputPath}\" {nativeFlags}",
             Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
 
         if (compile.ExitCode != 0)
@@ -184,10 +184,10 @@ partial class Program
         return 0;
     }
 
-    private static int RunExecutable(string inputPath, string cCode, string? keepCPath, CompilationTarget target)
+    private static int RunExecutable(string inputPath, string cCode, string? keepCPath, string nativeFlags, CompilationTarget target)
     {
         if (target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux)
-            return RunExecutableOnLinux(inputPath, cCode, keepCPath, UsesNoStdLib(target));
+            return RunExecutableOnLinux(inputPath, cCode, keepCPath, UsesNoStdLib(target), nativeFlags);
 
         if (target == CompilationTarget.BareMetalX86_64)
         {
@@ -202,7 +202,7 @@ partial class Program
         return 1;
     }
 
-    private static int RunExecutableOnLinux(string inputPath, string cCode, string? keepCPath, bool noStdLib)
+    private static int RunExecutableOnLinux(string inputPath, string cCode, string? keepCPath, bool noStdLib, string nativeFlags)
     {
         EnsureToolAvailable("gcc");
 
@@ -216,7 +216,7 @@ partial class Program
 
             var compile = RunProcess(
                 "gcc",
-                $"{GetLinuxCompileFlags(noStdLib)} \"{cSourcePath}\" -o \"{binaryPath}\"",
+                $"{GetLinuxCompileFlags(noStdLib)} \"{cSourcePath}\" -o \"{binaryPath}\" {nativeFlags}",
                 Path.GetDirectoryName(cSourcePath) ?? tempDir);
 
             if (compile.ExitCode != 0)

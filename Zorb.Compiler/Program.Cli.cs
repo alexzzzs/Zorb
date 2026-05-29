@@ -103,6 +103,16 @@ partial class Program
                     options.EmitLinkerScriptPath = args[++i];
                     break;
 
+                case "--native-flags":
+                    if (i + 1 >= args.Length)
+                    {
+                        Console.Error.WriteLine("Missing value for --native-flags.");
+                        PrintUsage();
+                        return null;
+                    }
+                    options.NativeFlags = args[++i];
+                    break;
+
                 case "-o":
                 case "--output":
                     if (i + 1 >= args.Length)
@@ -185,6 +195,7 @@ partial class Program
         Console.WriteLine("  --emit-c             Explicitly request C emission (default behavior).");
         Console.WriteLine("  -o, --output <path>  Write generated C or built binary to the given path.");
         Console.WriteLine("  --keep-c <path>      Keep the generated C file when using build or run.");
+        Console.WriteLine("  --native-flags <s>   Append raw native compiler/linker flags for hosted build/run.");
         Console.WriteLine("  --linker-script <p>  Use a custom linker script for build --target bare-metal-x86_64.");
         Console.WriteLine("  --emit-linker-script <p>");
         Console.WriteLine("                      Write the linker script used by build --target bare-metal-x86_64 to the given path.");

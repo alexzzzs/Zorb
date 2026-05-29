@@ -1,0 +1,9 @@
+import c "string.h"
+
+extern type size_t
+
+[c_header] extern fn strlen(s: string) -> size_t
+
+fn main() -> i64 {
+    return cast(i64, strlen("abc"))
+}

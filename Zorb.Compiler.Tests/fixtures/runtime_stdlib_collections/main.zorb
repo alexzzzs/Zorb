@@ -1,0 +1,90 @@
+import "../../../std/collections.zorb"
+import "../../../std/io.zorb"
+import "../../../std/mem.zorb"
+import "../../../std/os.zorb"
+import "../../../std/str.zorb"
+
+fn expect(condition: bool, code: i32) {
+    if !condition {
+        std.os.exit(code)
+    }
+}
+
+fn main() -> i64 {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(65536) catch |err| {
+        return err
+    }
+
+    list: std.collections.ByteList = std.collections.ByteList.init(&heap, 2) catch |err| {
+        return err
+    }
+
+    std.collections.ByteList.append_string(&list, &heap, "ab") catch |err| {
+        return err
+    }
+    std.collections.ByteList.append_byte(&list, &heap, cast(u8, 99)) catch |err| {
+        return err
+    }
+    std.collections.ByteList.append_string(&list, &heap, "def") catch |err| {
+        return err
+    }
+
+    list_view: []u8 = std.collections.ByteList.slice(&list)
+    expected_list: []u8
+    expected_list.ptr = cast(*u8, "abcdef")
+    expected_list.len = 6
+    expect(std.str.slice_eql(list_view, expected_list), 10)
+
+    builder: std.collections.StringBuilder = std.collections.StringBuilder.init(&heap, 0) catch |err| {
+        return err
+    }
+    std.collections.StringBuilder.append(&builder, &heap, "line ") catch |err| {
+        return err
+    }
+    std.collections.StringBuilder.append_i64(&builder, &heap, 42) catch |err| {
+        return err
+    }
+    std.collections.StringBuilder.append(&builder, &heap, ": ok") catch |err| {
+        return err
+    }
+
+    built: []u8 = std.collections.StringBuilder.slice(&builder)
+    expected_built: []u8
+    expected_built.ptr = cast(*u8, "line 42: ok")
+    expected_built.len = 11
+    expect(std.str.slice_eql(built, expected_built), 11)
+
+    c_text: *u8 = std.collections.StringBuilder.c_string(&builder, &heap) catch |err| {
+        return err
+    }
+    expect(c_text[11] == cast(u8, 0), 15)
+    expect(std.collections.StringBuilder.slice(&builder).len == 11, 16)
+
+    interner: std.collections.StringInterner = std.collections.StringInterner.init(&heap, 2) catch |err| {
+        return err
+    }
+
+    alpha_source: []u8
+    alpha_source.ptr = cast(*u8, "alpha")
+    alpha_source.len = 5
+    beta_source: []u8
+    beta_source.ptr = cast(*u8, "beta")
+    beta_source.len = 4
+
+    alpha_one: []u8 = std.collections.StringInterner.intern(&interner, &heap, alpha_source) catch |err| {
+        return err
+    }
+    beta: []u8 = std.collections.StringInterner.intern(&interner, &heap, beta_source) catch |err| {
+        return err
+    }
+    alpha_two: []u8 = std.collections.StringInterner.intern(&interner, &heap, alpha_source) catch |err| {
+        return err
+    }
+
+    expect(alpha_one.ptr == alpha_two.ptr, 12)
+    expect(alpha_one.ptr != beta.ptr, 13)
+    expect(interner.len == 2, 14)
+
+    std.io.println("collections ok")
+    return 0
+}

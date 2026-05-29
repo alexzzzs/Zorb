@@ -1285,6 +1285,7 @@ static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeEx
     {
         var sourcePath = Path.Combine(tempDir, "out.c");
         File.WriteAllText(sourcePath, generated, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        CopyRuntimeDataFiles(fixtureDir, tempDir);
 
         ProcessResult compile;
         ProcessResult execution;
@@ -1381,6 +1382,21 @@ static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeEx
     {
         if (Directory.Exists(tempDir))
             Directory.Delete(tempDir, recursive: true);
+    }
+}
+
+static void CopyRuntimeDataFiles(string fixtureDir, string tempDir)
+{
+    foreach (var path in Directory.EnumerateFiles(fixtureDir))
+    {
+        var fileName = Path.GetFileName(path);
+        if (string.Equals(fileName, "main.zorb", StringComparison.Ordinal) ||
+            fileName.StartsWith("expect-", StringComparison.Ordinal))
+        {
+            continue;
+        }
+
+        File.Copy(path, Path.Combine(tempDir, fileName), overwrite: true);
     }
 }
 

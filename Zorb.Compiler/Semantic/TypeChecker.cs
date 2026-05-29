@@ -527,6 +527,14 @@ public class TypeChecker
                     _symbolTable.DefineUnion(fullName, unionNode);
                 RegisterUnionTagEnum(unionNode);
             }
+            else if (node is ExternTypeDecl externType) {
+                var fullName = QualifiedNames.GetFullName(externType.NamespacePath, externType.Name);
+                if (!declaredInThisFile.TryAdd(fullName, externType))
+                    _errors.Error(externType, $"Duplicate top-level declaration '{fullName}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[fullName])}");
+                MakeVisible(fullName);
+                if (!_symbolTable.IsDefined(fullName))
+                    _symbolTable.DefineExternType(fullName, externType);
+            }
             else if (node is VariableDeclarationNode vd) {
                 NormalizeTypeReferenceInPlace(vd.TypeName);
                 ValidateVariableAttributes(vd, isGlobal: true);
@@ -2058,7 +2066,7 @@ public class TypeChecker
             return;
         }
 
-        if (type.Name == "void" || type.Name == "string" || type.Name == "bool" || _numericTypes.Contains(type.Name))
+        if (type.Name == "void" || type.Name == "string" || type.Name == "bool" || type.Name == "char" || _numericTypes.Contains(type.Name))
             return;
 
         var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
@@ -2074,6 +2082,13 @@ public class TypeChecker
         {
             if (!type.IsAliasQualifiedReference && !CheckVisibility(fullName))
                 ReportNotVisible(context, "Union", fullName);
+            return;
+        }
+
+        if (_symbolTable.IsExternType(fullName))
+        {
+            if (!type.IsAliasQualifiedReference && !CheckVisibility(fullName))
+                ReportNotVisible(context, "Extern type", fullName);
             return;
         }
 

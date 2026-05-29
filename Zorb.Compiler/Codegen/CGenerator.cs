@@ -26,7 +26,8 @@ public class CGenerator
     private readonly Stack<string?> _continueTargets = new();
     private readonly HashSet<string> _generatedResultTypes = new();
     private readonly HashSet<string> _generatedSliceTypes = new();
-    private readonly StringBuilder _dynamicStructs = new();
+    private readonly StringBuilder _dynamicResultStructs = new();
+    private readonly StringBuilder _dynamicSliceStructs = new();
     private List<Node> _allNodes = new();
     private IReadOnlyDictionary<string, IReadOnlyList<Node>>? _parsedFilesByPath;
     private int _tempCounter;
@@ -203,6 +204,11 @@ static void __zorb_slice_oob(void) {
             sb.AppendLine(LinuxSyscallWrapper);
         sb.AppendLine(RuntimeFailureHelpers);
 
+        PreGenerateSliceTypes(allNodes);
+
+        // Slice structs may appear as fields inside user structs, so they must be emitted first.
+        sb.Append(_dynamicSliceStructs.ToString());
+
         // Emit AST structs first (must be before prototypes)
         var emittedStructs = new HashSet<string>();
         var structs = allNodes.OfType<StructNode>().ToList();
@@ -237,8 +243,8 @@ static void __zorb_slice_oob(void) {
             sb.Append(GenerateUnion(unionNode));
         }
 
-        // EMIT DYNAMIC STRUCTS (Result unions)
-        sb.Append(_dynamicStructs.ToString());
+        // Emit result structs after user structs because result values can contain user struct values.
+        sb.Append(_dynamicResultStructs.ToString());
 
         // Generate function prototypes (structs are already defined)
         var prototypesSb = new StringBuilder();
@@ -261,6 +267,9 @@ static void __zorb_slice_oob(void) {
         // Emit constants/variables
         sb.Append(varsSb.ToString());
 
+        // Emit freestanding entry shim before user functions so linker entry is stable.
+        sb.Append(GenerateFreestandingMainShim());
+
         // Emit functions
         sb.Append(funcsSb.ToString());
 
@@ -275,7 +284,8 @@ static void __zorb_slice_oob(void) {
         _includes.Add("stdint.h");
         _cHeaders.Clear();
         _localVars.Clear();
-        _dynamicStructs.Clear();
+        _dynamicResultStructs.Clear();
+        _dynamicSliceStructs.Clear();
         _generatedResultTypes.Clear();
         _generatedSliceTypes.Clear();
         _allNodes = allNodes;
@@ -428,6 +438,8 @@ static void __zorb_slice_oob(void) {
 
         if (fn.IsExtern)
         {
+            if (fn.Attributes.Contains("c_header"))
+                return "";
             sb.AppendLine($"{attrStr}extern {cReturnType} {cName}({parameters});");
             return sb.ToString();
         }
@@ -532,6 +544,10 @@ static void __zorb_slice_oob(void) {
         {
             baseType = MapType(enumDefinition.UnderlyingType);
         }
+        else if (_symbolTable.IsExternType(fullName))
+        {
+            baseType = FlattenName(type.NamespacePath, type.Name);
+        }
         else
         {
             baseType = type.Name switch
@@ -621,7 +637,9 @@ static void __zorb_slice_oob(void) {
                 "string" => "char*",
                 "void" => "int8_t",
                 "char" => "char",
-                _ => "struct " + FlattenName(innerType.NamespacePath, innerType.Name)
+                _ => _symbolTable.IsExternType(QualifiedNames.GetFullName(innerType.NamespacePath, innerType.Name))
+                    ? FlattenName(innerType.NamespacePath, innerType.Name)
+                    : "struct " + FlattenName(innerType.NamespacePath, innerType.Name)
             };
 
         if (!innerType.IsSlice && innerType.IsPointer && innerType.Name != "string")
@@ -633,7 +651,7 @@ static void __zorb_slice_oob(void) {
         _includes.Add("stdint.h");
         var structCode = $"struct {resultName} {{\n    {cInnerType} value;\n    int32_t error;\n}};\n";
         
-        _dynamicStructs.AppendLine(structCode);
+        _dynamicResultStructs.AppendLine(structCode);
         
         _structs.Insert(0, new StructNode
         {
@@ -656,7 +674,49 @@ static void __zorb_slice_oob(void) {
         var pointerType = TypeHelpers.AddressOfType(elementType);
         var structCode = $"struct {sliceName} {{\n    {MapType(pointerType, "ptr")};\n    int64_t len;\n}};\n";
 
-        _dynamicStructs.AppendLine(structCode);
+        _dynamicSliceStructs.AppendLine(structCode);
+    }
+
+    private void PreGenerateSliceTypes(List<Node> nodes)
+    {
+        foreach (var structNode in nodes.OfType<StructNode>())
+        {
+            foreach (var field in structNode.Fields)
+                PreGenerateSliceType(field.TypeName);
+        }
+
+        foreach (var unionNode in nodes.OfType<UnionNode>())
+        {
+            foreach (var variant in unionNode.Variants)
+                PreGenerateSliceType(variant.TypeName);
+        }
+
+        foreach (var function in nodes.OfType<FunctionDecl>())
+        {
+            PreGenerateSliceType(function.ReturnType);
+            foreach (var parameter in function.Parameters)
+                PreGenerateSliceType(parameter.TypeName);
+        }
+
+        foreach (var variable in nodes.OfType<VariableDeclarationNode>())
+            PreGenerateSliceType(variable.TypeName);
+    }
+
+    private void PreGenerateSliceType(TypeNode type)
+    {
+        if (type.IsSlice)
+            GenerateSliceStruct(type, GetSliceStructName(type));
+
+        if (type.IsErrorUnion && type.ErrorInnerType != null)
+            PreGenerateSliceType(type.ErrorInnerType);
+
+        if (type.IsFunction)
+        {
+            if (type.ReturnType != null)
+                PreGenerateSliceType(type.ReturnType);
+            foreach (var parameterType in type.ParamTypes)
+                PreGenerateSliceType(parameterType);
+        }
     }
 
     private string GetSliceStructName(TypeNode sliceType)
@@ -680,6 +740,26 @@ static void __zorb_slice_oob(void) {
             return false;
 
         return _allNodes.OfType<FunctionDecl>().Any(fn => fn.NamespacePath.Count == 0 && fn.Name == "_start");
+    }
+
+    private bool HasFreestandingMainShim()
+    {
+        if (!PreserveStart || !NoStdLib)
+            return false;
+
+        var hasUserStart = _allNodes.OfType<FunctionDecl>().Any(fn => fn.NamespacePath.Count == 0 && fn.Name == "_start");
+        if (hasUserStart)
+            return false;
+
+        return _allNodes.OfType<FunctionDecl>().Any(fn => fn.NamespacePath.Count == 0 && fn.Name == "main");
+    }
+
+    private FunctionDecl? GetFreestandingMainFunction()
+    {
+        if (!HasFreestandingMainShim())
+            return null;
+
+        return _allNodes.OfType<FunctionDecl>().FirstOrDefault(fn => fn.NamespacePath.Count == 0 && fn.Name == "main");
     }
 
     private FunctionDecl? GetHostedStartFunction()
@@ -712,6 +792,44 @@ static void __zorb_slice_oob(void) {
         sb.AppendLine($"    {startName}();");
         sb.AppendLine("    return 0;");
         sb.AppendLine("}");
+        return sb.ToString();
+    }
+
+    private string GenerateFreestandingMainShim()
+    {
+        var mainFunction = GetFreestandingMainFunction();
+        if (mainFunction == null)
+            return "";
+
+        var mainName = GetFunctionCName(mainFunction.NamespacePath, mainFunction.Name, null);
+        var returnsVoid = mainFunction.ReturnType.Name == "void" &&
+            mainFunction.ReturnType.NamespacePath.Count == 0 &&
+            !mainFunction.ReturnType.IsPointer &&
+            mainFunction.ReturnType.ArraySize == null &&
+            !mainFunction.ReturnType.IsSlice &&
+            !mainFunction.ReturnType.IsErrorUnion;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("__attribute__((force_align_arg_pointer, noreturn)) void _start(void) {");
+        if (returnsVoid)
+        {
+            sb.AppendLine($"    {mainName}();");
+            sb.AppendLine("    int64_t code = 0;");
+        }
+        else
+        {
+            sb.AppendLine($"    int64_t code = (int64_t){mainName}();");
+        }
+        sb.AppendLine("#if defined(__x86_64__)");
+        sb.AppendLine("    syscall(60, code);");
+        sb.AppendLine("#elif defined(__aarch64__)");
+        sb.AppendLine("    syscall(93, code);");
+        sb.AppendLine("#else");
+        sb.AppendLine("    __builtin_trap();");
+        sb.AppendLine("#endif");
+        sb.AppendLine("    while (1) { }");
+        sb.AppendLine("}");
+        sb.AppendLine();
         return sb.ToString();
     }
 

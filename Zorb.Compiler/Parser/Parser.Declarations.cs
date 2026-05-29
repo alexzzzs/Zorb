@@ -53,10 +53,20 @@ public partial class Parser
             return decl;
         }
 
-        if (Current.Type == TokenType.Fn || Current.Type == TokenType.Extern)
+        if (Current.Type == TokenType.Fn)
         {
             var decl = ParseFunction();
             decl.IsExported = true;
+            return decl;
+        }
+
+        if (Current.Type == TokenType.Extern)
+        {
+            var decl = ParseExternDeclaration();
+            if (decl is FunctionDecl functionDecl)
+                functionDecl.IsExported = true;
+            else if (decl is ExternTypeDecl externTypeDecl)
+                externTypeDecl.IsExported = true;
             return decl;
         }
 
@@ -497,6 +507,34 @@ public partial class Parser
         return function;
     }
 
+    private Node ParseExternDeclaration()
+    {
+        if (Peek(1).Type == TokenType.Identifier && Peek(1).Value == "type")
+            return ParseExternType();
+
+        return ParseFunction();
+    }
+
+    private ExternTypeDecl ParseExternType()
+    {
+        var startToken = Expect(TokenType.Extern);
+        var typeToken = Expect(TokenType.Identifier, "Expected 'type' after 'extern'.");
+        if (typeToken.Value != "type")
+            ErrorReporter.Error($"Expected 'type' after 'extern', got {DescribeToken(typeToken)}.", typeToken.Line, typeToken.Column, _fileName);
+
+        var path = new List<string>();
+        path.Add(Expect(TokenType.Identifier, "Expected C type name after 'extern type'.").Value);
+        while (Match(TokenType.Dot))
+            path.Add(Expect(TokenType.Identifier, "Expected identifier after '.' in extern type name.").Value);
+
+        var name = path.Last();
+        path.RemoveAt(path.Count - 1);
+
+        var decl = new ExternTypeDecl { NamespacePath = path, Name = name };
+        StampNode(decl, startToken);
+        return decl;
+    }
+
     private List<Parameter> ParseParameters()
     {
         var parameters = new List<Parameter>();
@@ -606,6 +644,12 @@ public partial class Parser
                 if (MatchContextualKeyword("noclone"))
                 {
                     attributes.Add("noclone");
+                    return true;
+                }
+                if (Current.Type == TokenType.Identifier && Current.Value == "c_header")
+                {
+                    Advance();
+                    attributes.Add("c_header");
                     return true;
                 }
                 return false;

@@ -83,6 +83,13 @@ public class FunctionDecl : Node
     public Expr? AlignExpr { get; set; }
 }
 
+public class ExternTypeDecl : Node
+{
+    public bool IsExported { get; set; }
+    public List<string> NamespacePath { get; set; } = new();
+    public string Name { get; set; } = null!;
+}
+
 public class BlockNode : Node
 {
     public List<Node> Statements { get; set; } = new();

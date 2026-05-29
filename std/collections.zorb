@@ -1,0 +1,352 @@
+// std/collections.zorb
+import "errors.zorb"
+import "mem.zorb"
+import "str.zorb"
+
+export struct std.collections {}
+
+export struct std.collections.ByteList {
+    ptr: *u8,
+    len: i64,
+    capacity: i64
+}
+
+export struct std.collections.StringBuilder {
+    bytes: std.collections.ByteList
+}
+
+export struct std.collections.StringEntry {
+    hash: u64,
+    ptr: *u8,
+    len: i64
+}
+
+export struct std.collections.StringInterner {
+    entries: *std.collections.StringEntry,
+    len: i64,
+    capacity: i64
+}
+
+fn std.collections.next_capacity(current: i64, needed: i64) -> i64 {
+    cap: i64 = current
+    if cap < 8 {
+        cap = 8
+    }
+
+    while cap < needed {
+        cap = cap * 2
+    }
+
+    return cap
+}
+
+export fn std.collections.ByteList.init(allocator: *std.mem.HeapAllocator, initial_capacity: i64) !std.collections.ByteList {
+    list: std.collections.ByteList
+    list.len = 0
+    list.capacity = 0
+    list.ptr = cast(*u8, 0)
+
+    if initial_capacity < 0 {
+        return error.InvalidSize
+    }
+
+    if initial_capacity > 0 {
+        list.ptr = std.mem.HeapAllocator.alloc(allocator, initial_capacity) catch |err| {
+            return error.OutOfMemory
+        }
+        list.capacity = initial_capacity
+    }
+
+    return list
+}
+
+export fn std.collections.ByteList.reserve(self: *std.collections.ByteList, allocator: *std.mem.HeapAllocator, needed: i64) !i32 {
+    if needed < 0 {
+        return error.InvalidSize
+    }
+
+    if needed <= self.capacity {
+        return 0
+    }
+
+    new_capacity: i64 = std.collections.next_capacity(self.capacity, needed)
+    new_ptr: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity) catch |err| {
+        return error.OutOfMemory
+    }
+
+    old_view: []u8
+    old_view.ptr = self.ptr
+    old_view.len = self.len
+
+    new_view: []u8
+    new_view.ptr = new_ptr
+    new_view.len = new_capacity
+
+    std.mem.copy(new_view, old_view)
+    self.ptr = new_ptr
+    self.capacity = new_capacity
+    return 0
+}
+
+export fn std.collections.ByteList.append_byte(self: *std.collections.ByteList, allocator: *std.mem.HeapAllocator, value: u8) !i32 {
+    std.collections.ByteList.reserve(self, allocator, self.len + 1) catch |err| {
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        return error.OutOfMemory
+    }
+
+    self.ptr[self.len] = value
+    self.len = self.len + 1
+    return 0
+}
+
+export fn std.collections.ByteList.append_slice(self: *std.collections.ByteList, allocator: *std.mem.HeapAllocator, values: []u8) !i32 {
+    if values.len < 0 {
+        return error.InvalidSize
+    }
+
+    std.collections.ByteList.reserve(self, allocator, self.len + values.len) catch |err| {
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        return error.OutOfMemory
+    }
+
+    dst: []u8
+    dst.ptr = self.ptr + self.len
+    dst.len = values.len
+    std.mem.copy(dst, values)
+    self.len = self.len + values.len
+    return 0
+}
+
+export fn std.collections.ByteList.append_string(self: *std.collections.ByteList, allocator: *std.mem.HeapAllocator, value: string) !i32 {
+    bytes: []u8
+    bytes.ptr = cast(*u8, value)
+    bytes.len = std.str.len(value)
+    std.collections.ByteList.append_slice(self, allocator, bytes) catch |err| {
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        return error.OutOfMemory
+    }
+    return 0
+}
+
+export fn std.collections.ByteList.slice(self: *std.collections.ByteList) -> []u8 {
+    view: []u8
+    view.ptr = self.ptr
+    view.len = self.len
+    return view
+}
+
+export fn std.collections.StringBuilder.init(allocator: *std.mem.HeapAllocator, initial_capacity: i64) !std.collections.StringBuilder {
+    builder: std.collections.StringBuilder
+    builder.bytes = std.collections.ByteList.init(allocator, initial_capacity) catch |err| {
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        return error.OutOfMemory
+    }
+    return builder
+}
+
+export fn std.collections.StringBuilder.append(self: *std.collections.StringBuilder, allocator: *std.mem.HeapAllocator, value: string) !i32 {
+    std.collections.ByteList.append_string(&self.bytes, allocator, value) catch |err| {
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        return error.OutOfMemory
+    }
+    return 0
+}
+
+export fn std.collections.StringBuilder.append_slice(self: *std.collections.StringBuilder, allocator: *std.mem.HeapAllocator, value: []u8) !i32 {
+    std.collections.ByteList.append_slice(&self.bytes, allocator, value) catch |err| {
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        return error.OutOfMemory
+    }
+    return 0
+}
+
+export fn std.collections.StringBuilder.append_i64(self: *std.collections.StringBuilder, allocator: *std.mem.HeapAllocator, value: i64) !i32 {
+    scratch: [32]u8
+    digits: []u8 = scratch
+    digit_count: i64 = std.str.from_i64(value, digits)
+    if digit_count < 0 {
+        return error.BufferTooSmall
+    }
+    digits.len = digit_count
+    std.collections.ByteList.append_slice(&self.bytes, allocator, digits) catch |err| {
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        return error.OutOfMemory
+    }
+    return 0
+}
+
+export fn std.collections.StringBuilder.slice(self: *std.collections.StringBuilder) -> []u8 {
+    return std.collections.ByteList.slice(&self.bytes)
+}
+
+export fn std.collections.StringBuilder.c_string(self: *std.collections.StringBuilder, allocator: *std.mem.HeapAllocator) !*u8 {
+    std.collections.ByteList.reserve(&self.bytes, allocator, self.bytes.len + 1) catch |err| {
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        return error.OutOfMemory
+    }
+    self.bytes.ptr[self.bytes.len] = cast(u8, 0)
+    return self.bytes.ptr
+}
+
+export fn std.collections.hash_bytes(bytes: []u8) -> u64 {
+    hash: u64 = cast(u64, 1469598103934665603)
+    i: i64 = 0
+    while i < bytes.len {
+        hash = hash ^ cast(u64, bytes[i])
+        hash = hash * cast(u64, 1099511628211)
+        i = i + 1
+    }
+    if hash == cast(u64, 0) {
+        return cast(u64, 1)
+    }
+    return hash
+}
+
+fn std.collections.StringInterner.clear_entries(entries: *std.collections.StringEntry, capacity: i64) {
+    i: i64 = 0
+    while i < capacity {
+        entries[i].hash = cast(u64, 0)
+        entries[i].ptr = cast(*u8, 0)
+        entries[i].len = 0
+        i = i + 1
+    }
+}
+
+fn std.collections.StringInterner.allocate_entries(allocator: *std.mem.HeapAllocator, capacity: i64) !*std.collections.StringEntry {
+    if capacity <= 0 {
+        return error.InvalidSize
+    }
+
+    byte_count: i64 = capacity * Builtin.sizeof(std.collections.StringEntry)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, byte_count) catch |err| {
+        return error.OutOfMemory
+    }
+    entries: *std.collections.StringEntry = cast(*std.collections.StringEntry, raw)
+    std.collections.StringInterner.clear_entries(entries, capacity)
+    return entries
+}
+
+export fn std.collections.StringInterner.init(allocator: *std.mem.HeapAllocator, initial_capacity: i64) !std.collections.StringInterner {
+    interner: std.collections.StringInterner
+    interner.len = 0
+    interner.capacity = std.collections.next_capacity(0, initial_capacity)
+    interner.entries = std.collections.StringInterner.allocate_entries(allocator, interner.capacity) catch |err| {
+        return error.OutOfMemory
+    }
+    return interner
+}
+
+fn std.collections.StringInterner.insert_existing(self: *std.collections.StringInterner, hash: u64, text: []u8) !i32 {
+    index: i64 = cast(i64, hash % cast(u64, self.capacity))
+    probes: i64 = 0
+
+    while probes < self.capacity {
+        if self.entries[index].hash == cast(u64, 0) {
+            self.entries[index].hash = hash
+            self.entries[index].ptr = text.ptr
+            self.entries[index].len = text.len
+            self.len = self.len + 1
+            return 0
+        }
+
+        index = index + 1
+        if index >= self.capacity {
+            index = 0
+        }
+        probes = probes + 1
+    }
+
+    return error.OutOfMemory
+}
+
+fn std.collections.StringInterner.grow(self: *std.collections.StringInterner, allocator: *std.mem.HeapAllocator) !i32 {
+    old_entries: *std.collections.StringEntry = self.entries
+    old_capacity: i64 = self.capacity
+    new_capacity: i64 = old_capacity * 2
+    self.entries = std.collections.StringInterner.allocate_entries(allocator, new_capacity) catch |err| {
+        self.entries = old_entries
+        return error.OutOfMemory
+    }
+    self.capacity = new_capacity
+    self.len = 0
+
+    i: i64 = 0
+    while i < old_capacity {
+        if old_entries[i].hash != cast(u64, 0) {
+            old_text: []u8
+            old_text.ptr = old_entries[i].ptr
+            old_text.len = old_entries[i].len
+            std.collections.StringInterner.insert_existing(self, old_entries[i].hash, old_text) catch |err| {
+                return error.OutOfMemory
+            }
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+export fn std.collections.StringInterner.intern(self: *std.collections.StringInterner, allocator: *std.mem.HeapAllocator, text: []u8) ![]u8 {
+    if text.len < 0 {
+        return error.InvalidSize
+    }
+
+    hash: u64 = std.collections.hash_bytes(text)
+
+    while (self.len + 1) * 4 >= self.capacity * 3 {
+        std.collections.StringInterner.grow(self, allocator) catch |err| {
+            return error.OutOfMemory
+        }
+    }
+
+    index: i64 = cast(i64, hash % cast(u64, self.capacity))
+    probes: i64 = 0
+
+    while probes < self.capacity {
+        if self.entries[index].hash == cast(u64, 0) {
+            owned_ptr: *u8 = std.mem.HeapAllocator.alloc(allocator, text.len) catch |err| {
+                return error.OutOfMemory
+            }
+            owned: []u8
+            owned.ptr = owned_ptr
+            owned.len = text.len
+            std.mem.copy(owned, text)
+
+            self.entries[index].hash = hash
+            self.entries[index].ptr = owned.ptr
+            self.entries[index].len = owned.len
+            self.len = self.len + 1
+            return owned
+        }
+
+        candidate: []u8
+        candidate.ptr = self.entries[index].ptr
+        candidate.len = self.entries[index].len
+        if self.entries[index].hash == hash && std.str.slice_eql(candidate, text) {
+            return candidate
+        }
+
+        index = index + 1
+        if index >= self.capacity {
+            index = 0
+        }
+        probes = probes + 1
+    }
+
+    return error.OutOfMemory
+}

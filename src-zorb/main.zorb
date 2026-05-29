@@ -1,0 +1,40 @@
+import "../std/collections.zorb"
+import "../std/fs.zorb"
+import "../std/io.zorb"
+import "../std/mem.zorb"
+import "../std/os.zorb"
+import "lexer.zorb"
+import "token.zorb"
+
+fn main() -> i64 {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(1048576) catch |err| {
+        return err
+    }
+
+    source: []u8 = std.fs.read_all("src-zorb/sample.zorb", &heap) catch |err| {
+        std.io.eprint("read failed ")
+        std.io.eprint_i64(err)
+        std.io.eprint("\n")
+        return err
+    }
+
+    tokens: ZTokenList = ZTokenList.init(&heap, 128) catch |err| {
+        return err
+    }
+
+    interner: std.collections.StringInterner = std.collections.StringInterner.init(&heap, 128) catch |err| {
+        return err
+    }
+
+    lexer: ZLexer = ZLexer.init(source)
+    ZLexer.tokenize(&lexer, &heap, &tokens, &interner) catch |err| {
+        std.io.eprint("lex failed ")
+        std.io.eprint_i64(err)
+        std.io.eprint("\n")
+        return err
+    }
+
+    ZTokenListPrint(&tokens)
+    return 0
+}
+
