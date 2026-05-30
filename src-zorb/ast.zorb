@@ -1,0 +1,190 @@
+import "../std/errors.zorb"
+import "../std/mem.zorb"
+import "token.zorb"
+
+export const ZAstDeclImport: i64 = 1
+export const ZAstDeclExternFunction: i64 = 2
+export const ZAstDeclError: i64 = 3
+export const ZAstDeclConst: i64 = 4
+export const ZAstDeclGlobal: i64 = 5
+export const ZAstDeclStruct: i64 = 6
+export const ZAstDeclEnum: i64 = 7
+export const ZAstDeclUnion: i64 = 8
+export const ZAstDeclFunction: i64 = 9
+
+export struct ZAstText {
+    ptr: *u8,
+    len: i64
+}
+
+export struct ZAstDecl {
+    kind: i64,
+    exported: bool,
+    name: ZAstText,
+    path: ZAstText,
+    alias: ZAstText,
+    is_c_import: bool,
+    param_count: i64,
+    member_count: i64,
+    local_count: i64,
+    return_count: i64,
+    call_count: i64,
+    binary_count: i64
+}
+
+export struct ZAstModule {
+    decls: *ZAstDecl,
+    len: i64,
+    capacity: i64,
+    import_count: i64,
+    extern_count: i64,
+    error_count: i64,
+    const_count: i64,
+    global_count: i64,
+    struct_count: i64,
+    enum_count: i64,
+    union_count: i64,
+    function_count: i64
+}
+
+export fn ZAstText.from_token(token: ZToken) -> ZAstText {
+    text: ZAstText
+    text.ptr = token.ptr
+    text.len = token.len
+    return text
+}
+
+export fn ZAstText.empty() -> ZAstText {
+    text: ZAstText
+    text.ptr = cast(*u8, 0)
+    text.len = 0
+    return text
+}
+
+export fn ZAstDecl.init(kind: i64, exported: bool) -> ZAstDecl {
+    decl: ZAstDecl
+    decl.kind = kind
+    decl.exported = exported
+    decl.name = ZAstText.empty()
+    decl.path = ZAstText.empty()
+    decl.alias = ZAstText.empty()
+    decl.is_c_import = false
+    decl.param_count = 0
+    decl.member_count = 0
+    decl.local_count = 0
+    decl.return_count = 0
+    decl.call_count = 0
+    decl.binary_count = 0
+    return decl
+}
+
+export fn ZAstModule.init(allocator: *std.mem.HeapAllocator, initial_capacity: i64) !ZAstModule {
+    module: ZAstModule
+    module.decls = cast(*ZAstDecl, 0)
+    module.len = 0
+    module.capacity = 0
+    module.import_count = 0
+    module.extern_count = 0
+    module.error_count = 0
+    module.const_count = 0
+    module.global_count = 0
+    module.struct_count = 0
+    module.enum_count = 0
+    module.union_count = 0
+    module.function_count = 0
+
+    if initial_capacity < 0 {
+        return error.InvalidSize
+    }
+
+    if initial_capacity > 0 {
+        raw: *u8 = std.mem.HeapAllocator.alloc(allocator, initial_capacity * Builtin.sizeof(ZAstDecl)) catch |err| {
+            return error.OutOfMemory
+        }
+        module.decls = cast(*ZAstDecl, raw)
+        module.capacity = initial_capacity
+    }
+
+    return module
+}
+
+fn zast_next_capacity(current: i64, needed: i64) -> i64 {
+    capacity: i64 = current
+    if capacity < 16 {
+        capacity = 16
+    }
+
+    while capacity < needed {
+        capacity = capacity * 2
+    }
+
+    return capacity
+}
+
+export fn ZAstModule.reserve(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed < 0 {
+        return error.InvalidSize
+    }
+
+    if needed <= self.capacity {
+        return 0
+    }
+
+    new_capacity: i64 = zast_next_capacity(self.capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstDecl)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_decls: *ZAstDecl = cast(*ZAstDecl, raw)
+
+    i: i64 = 0
+    while i < self.len {
+        new_decls[i] = self.decls[i]
+        i = i + 1
+    }
+
+    self.decls = new_decls
+    self.capacity = new_capacity
+    return 0
+}
+
+export fn ZAstModule.append(self: *ZAstModule, allocator: *std.mem.HeapAllocator, decl: ZAstDecl) !i64 {
+    ZAstModule.reserve(self, allocator, self.len + 1) catch |err| {
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        return error.OutOfMemory
+    }
+
+    self.decls[self.len] = decl
+    self.len = self.len + 1
+
+    if decl.kind == ZAstDeclImport {
+        self.import_count = self.import_count + 1
+    }
+    if decl.kind == ZAstDeclExternFunction {
+        self.extern_count = self.extern_count + 1
+    }
+    if decl.kind == ZAstDeclError {
+        self.error_count = self.error_count + 1
+    }
+    if decl.kind == ZAstDeclConst {
+        self.const_count = self.const_count + 1
+    }
+    if decl.kind == ZAstDeclGlobal {
+        self.global_count = self.global_count + 1
+    }
+    if decl.kind == ZAstDeclStruct {
+        self.struct_count = self.struct_count + 1
+    }
+    if decl.kind == ZAstDeclEnum {
+        self.enum_count = self.enum_count + 1
+    }
+    if decl.kind == ZAstDeclUnion {
+        self.union_count = self.union_count + 1
+    }
+    if decl.kind == ZAstDeclFunction {
+        self.function_count = self.function_count + 1
+    }
+
+    return 0
+}

@@ -2,6 +2,7 @@ import "../std/collections.zorb"
 import "../std/io.zorb"
 import "../std/mem.zorb"
 import "../std/str.zorb"
+import "ast.zorb"
 import "lexer.zorb"
 import "parser.zorb"
 import "token.zorb"
@@ -37,7 +38,10 @@ fn main() -> i64 {
     }
 
     parser: ZParser = ZParser.init(&tokens)
-    ZParser.parse_program(&parser) catch |err| {
+    module: ZAstModule = ZAstModule.init(&heap, 16) catch |err| {
+        return err
+    }
+    ZParser.parse_program(&parser, &heap, &module) catch |err| {
         std.io.eprint("parse failed ")
         std.io.eprint_i64(err)
         std.io.eprint("\n")
