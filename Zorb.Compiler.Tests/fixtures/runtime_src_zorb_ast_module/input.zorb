@@ -1,0 +1,36 @@
+import c "stdio.h"
+import "pkg/math.zorb" as math
+
+export error Bad = 1;
+export const answer: i64 = 42;
+counter: i64 = 0;
+
+export struct Pair {
+    lhs: i64,
+    rhs: i64
+}
+
+enum Mode: i64 {
+    Run = 1,
+    Stop
+}
+
+union Value {
+    Number: i64,
+    Flag: bool
+}
+
+extern fn puts(text: string) -> i32;
+
+fn helper(value: i64) -> i64 {
+    return value
+}
+
+export fn add(lhs: i64, rhs: i64) -> i64 {
+    total: i64 = lhs + rhs
+    more: i64 = helper(total)
+    if more > 0 {
+        return more
+    }
+    return helper(lhs + rhs)
+}

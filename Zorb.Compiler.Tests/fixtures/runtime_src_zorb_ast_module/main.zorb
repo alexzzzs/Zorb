@@ -1,0 +1,120 @@
+import "../../../std/collections.zorb"
+import "../../../std/errors.zorb"
+import "../../../std/fs.zorb"
+import "../../../std/mem.zorb"
+import "../../../std/str.zorb"
+import "../../../src-zorb/ast.zorb"
+import "../../../src-zorb/lexer.zorb"
+import "../../../src-zorb/parser.zorb"
+import "../../../src-zorb/token.zorb"
+
+fn ast_text_eql(text: ZAstText, value: string) -> bool {
+    view: []u8
+    view.ptr = text.ptr
+    view.len = text.len
+
+    expected: []u8
+    expected.ptr = cast(*u8, value)
+    expected.len = std.str.len(value)
+    return std.str.slice_eql(view, expected)
+}
+
+fn expect(value: bool, code: i64) !i64 {
+    if !value {
+        if code > 0 {
+            return error.InvalidArgument
+        }
+        return error.InvalidArgument
+    }
+    return 0
+}
+
+fn main() -> i64 {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(1048576) catch |err| {
+        return err
+    }
+
+    source: []u8 = std.fs.read_all("input.zorb", &heap) catch |err| {
+        return err
+    }
+
+    tokens: ZTokenList = ZTokenList.init(&heap, 8) catch |err| {
+        return err
+    }
+
+    interner: std.collections.StringInterner = std.collections.StringInterner.init(&heap, 8) catch |err| {
+        return err
+    }
+
+    lexer: ZLexer = ZLexer.init(source)
+    ZLexer.tokenize(&lexer, &heap, &tokens, &interner) catch |err| {
+        return err
+    }
+
+    module: ZAstModule = ZAstModule.init(&heap, 4) catch |err| {
+        return err
+    }
+
+    parser: ZParser = ZParser.init(&tokens)
+    ZParser.parse_program(&parser, &heap, &module) catch |err| {
+        return err
+    }
+
+    expect(module.len == 11, 10) catch |err| { return err }
+    expect(module.import_count == 2, 11) catch |err| { return err }
+    expect(module.extern_count == 1, 12) catch |err| { return err }
+    expect(module.error_count == 1, 13) catch |err| { return err }
+    expect(module.const_count == 1, 14) catch |err| { return err }
+    expect(module.global_count == 1, 15) catch |err| { return err }
+    expect(module.struct_count == 1, 16) catch |err| { return err }
+    expect(module.enum_count == 1, 17) catch |err| { return err }
+    expect(module.union_count == 1, 18) catch |err| { return err }
+    expect(module.function_count == 2, 19) catch |err| { return err }
+
+    expect(module.decls[0].kind == ZAstDeclImport, 20) catch |err| { return err }
+    expect(module.decls[0].is_c_import, 21) catch |err| { return err }
+    expect(ast_text_eql(module.decls[0].path, "stdio.h"), 22) catch |err| { return err }
+
+    expect(module.decls[1].kind == ZAstDeclImport, 23) catch |err| { return err }
+    expect(ast_text_eql(module.decls[1].path, "pkg/math.zorb"), 24) catch |err| { return err }
+    expect(ast_text_eql(module.decls[1].alias, "math"), 25) catch |err| { return err }
+
+    expect(module.decls[2].kind == ZAstDeclError, 26) catch |err| { return err }
+    expect(module.decls[2].exported, 27) catch |err| { return err }
+    expect(ast_text_eql(module.decls[2].name, "Bad"), 28) catch |err| { return err }
+
+    expect(module.decls[3].kind == ZAstDeclConst, 29) catch |err| { return err }
+    expect(module.decls[3].exported, 30) catch |err| { return err }
+    expect(ast_text_eql(module.decls[3].name, "answer"), 31) catch |err| { return err }
+
+    expect(module.decls[4].kind == ZAstDeclGlobal, 32) catch |err| { return err }
+    expect(ast_text_eql(module.decls[4].name, "counter"), 33) catch |err| { return err }
+
+    expect(module.decls[5].kind == ZAstDeclStruct, 34) catch |err| { return err }
+    expect(module.decls[5].member_count == 2, 35) catch |err| { return err }
+
+    expect(module.decls[6].kind == ZAstDeclEnum, 36) catch |err| { return err }
+    expect(module.decls[6].member_count == 2, 37) catch |err| { return err }
+
+    expect(module.decls[7].kind == ZAstDeclUnion, 38) catch |err| { return err }
+    expect(module.decls[7].member_count == 2, 39) catch |err| { return err }
+
+    expect(module.decls[8].kind == ZAstDeclExternFunction, 40) catch |err| { return err }
+    expect(module.decls[8].param_count == 1, 41) catch |err| { return err }
+
+    expect(module.decls[9].kind == ZAstDeclFunction, 42) catch |err| { return err }
+    expect(ast_text_eql(module.decls[9].name, "helper"), 43) catch |err| { return err }
+    expect(module.decls[9].param_count == 1, 44) catch |err| { return err }
+    expect(module.decls[9].return_count == 1, 45) catch |err| { return err }
+
+    expect(module.decls[10].kind == ZAstDeclFunction, 46) catch |err| { return err }
+    expect(module.decls[10].exported, 47) catch |err| { return err }
+    expect(ast_text_eql(module.decls[10].name, "add"), 48) catch |err| { return err }
+    expect(module.decls[10].param_count == 2, 49) catch |err| { return err }
+    expect(module.decls[10].local_count == 2, 50) catch |err| { return err }
+    expect(module.decls[10].return_count == 2, 51) catch |err| { return err }
+    expect(module.decls[10].call_count == 2, 52) catch |err| { return err }
+    expect(module.decls[10].binary_count == 3, 53) catch |err| { return err }
+
+    return 0
+}
