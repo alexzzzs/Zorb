@@ -48,5 +48,8 @@ fn main() -> i64 {
         return err
     }
 
+    std.io.print("\nstructured summary\n")
+    ZParser.print_structured_summary(&parser)
+
     return 0
 }

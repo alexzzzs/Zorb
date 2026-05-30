@@ -1,0 +1,78 @@
+import "../../../std/collections.zorb"
+import "../../../std/errors.zorb"
+import "../../../std/mem.zorb"
+import "../../../std/str.zorb"
+import "../../../src-zorb/ast.zorb"
+import "../../../src-zorb/lexer.zorb"
+import "../../../src-zorb/parser.zorb"
+import "../../../src-zorb/token.zorb"
+
+fn source_slice(value: string) -> []u8 {
+    source: []u8
+    source.ptr = cast(*u8, value)
+    source.len = std.str.len(value)
+    return source
+}
+
+fn parse_and_check(source_text: string) !i64 {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(1048576) catch |err| {
+        return error.InvalidArgument
+    }
+
+    source: []u8 = source_slice(source_text)
+    tokens: ZTokenList = ZTokenList.init(&heap, 8) catch |err| {
+        return error.InvalidArgument
+    }
+    interner: std.collections.StringInterner = std.collections.StringInterner.init(&heap, 8) catch |err| {
+        return error.InvalidArgument
+    }
+
+    lexer: ZLexer = ZLexer.init(source)
+    ZLexer.tokenize(&lexer, &heap, &tokens, &interner) catch |err| {
+        return error.InvalidArgument
+    }
+
+    module: ZAstModule = ZAstModule.init(&heap, 8) catch |err| {
+        return error.InvalidArgument
+    }
+    parser: ZParser = ZParser.init(&tokens)
+    ZParser.parse_program(&parser, &heap, &module) catch |err| {
+        return error.InvalidArgument
+    }
+
+    ZAstModule.check_semantics(&module) catch |err| {
+        return error.NotFound
+    }
+    return 0
+}
+
+fn expect_error(source_text: string) !i64 {
+    parse_and_check(source_text) catch |err| {
+        return 0
+    }
+    return error.InvalidArgument
+}
+
+fn main() -> i64 {
+    parse_and_check("fn id(value: i64) -> i64 { return value }\nfn main() -> i64 { local: i64 = id(1) return local }\n") catch |err| {
+        return err
+    }
+
+    expect_error("fn dup() -> i64 { return 1 }\nfn dup() -> i64 { return 2 }\n") catch |err| {
+        return err
+    }
+
+    expect_error("fn main() -> i64 { return missing }\n") catch |err| {
+        return err
+    }
+
+    expect_error("fn one(value: i64) -> i64 { return value }\nfn main() -> i64 { return one(1, 2) }\n") catch |err| {
+        return err
+    }
+
+    expect_error("fn main() -> bool { return \"no\" }\n") catch |err| {
+        return err
+    }
+
+    return 0
+}

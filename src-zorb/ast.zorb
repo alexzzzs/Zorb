@@ -1,5 +1,6 @@
 import "../std/errors.zorb"
 import "../std/mem.zorb"
+import "../std/str.zorb"
 import "token.zorb"
 
 export const ZAstDeclImport: i64 = 1
@@ -12,9 +13,60 @@ export const ZAstDeclEnum: i64 = 7
 export const ZAstDeclUnion: i64 = 8
 export const ZAstDeclFunction: i64 = 9
 
+export const ZAstExprMissing: i64 = 0
+export const ZAstExprIdentifier: i64 = 1
+export const ZAstExprInteger: i64 = 2
+export const ZAstExprString: i64 = 3
+export const ZAstExprBool: i64 = 4
+export const ZAstExprBinary: i64 = 5
+export const ZAstExprCall: i64 = 6
+export const ZAstExprUnary: i64 = 7
+
+export const ZAstStmtVar: i64 = 1
+export const ZAstStmtReturn: i64 = 2
+export const ZAstStmtExpr: i64 = 3
+export const ZAstStmtBlock: i64 = 4
+
+export const ZAstNoIndex: i64 = -1
+
 export struct ZAstText {
     ptr: *u8,
     len: i64
+}
+
+export struct ZAstType {
+    text: ZAstText
+}
+
+export struct ZAstParam {
+    name: ZAstText,
+    type_index: i64
+}
+
+export struct ZAstMember {
+    name: ZAstText,
+    type_index: i64,
+    value_expr: i64
+}
+
+export struct ZAstExpr {
+    kind: i64,
+    name: ZAstText,
+    literal: ZAstText,
+    op: i64,
+    left: i64,
+    right: i64,
+    arg_start: i64,
+    arg_count: i64
+}
+
+export struct ZAstStmt {
+    kind: i64,
+    name: ZAstText,
+    type_index: i64,
+    expr_index: i64,
+    child_start: i64,
+    child_count: i64
 }
 
 export struct ZAstDecl {
@@ -24,8 +76,15 @@ export struct ZAstDecl {
     path: ZAstText,
     alias: ZAstText,
     is_c_import: bool,
+    type_index: i64,
+    return_type_index: i64,
+    init_expr: i64,
+    param_start: i64,
     param_count: i64,
+    member_start: i64,
     member_count: i64,
+    stmt_start: i64,
+    stmt_count: i64,
     local_count: i64,
     return_count: i64,
     call_count: i64,
@@ -36,6 +95,24 @@ export struct ZAstModule {
     decls: *ZAstDecl,
     len: i64,
     capacity: i64,
+    types: *ZAstType,
+    type_count: i64,
+    type_capacity: i64,
+    params: *ZAstParam,
+    param_count_total: i64,
+    param_capacity: i64,
+    members: *ZAstMember,
+    member_count_total: i64,
+    member_capacity: i64,
+    stmts: *ZAstStmt,
+    stmt_count_total: i64,
+    stmt_capacity: i64,
+    exprs: *ZAstExpr,
+    expr_count: i64,
+    expr_capacity: i64,
+    expr_args: *i64,
+    expr_arg_count: i64,
+    expr_arg_capacity: i64,
     import_count: i64,
     extern_count: i64,
     error_count: i64,
@@ -54,11 +131,58 @@ export fn ZAstText.from_token(token: ZToken) -> ZAstText {
     return text
 }
 
+export fn ZAstText.from_range(start: ZToken, end: ZToken) -> ZAstText {
+    text: ZAstText
+    text.ptr = start.ptr
+    text.len = 0
+    cursor: *u8 = start.ptr
+    while cursor != end.ptr {
+        text.len = text.len + 1
+        cursor = cursor + 1
+    }
+    text.len = text.len + end.len
+    return text
+}
+
 export fn ZAstText.empty() -> ZAstText {
     text: ZAstText
     text.ptr = cast(*u8, 0)
     text.len = 0
     return text
+}
+
+export fn ZAstText.eql(self: ZAstText, other: ZAstText) -> bool {
+    a: []u8
+    a.ptr = self.ptr
+    a.len = self.len
+    b: []u8
+    b.ptr = other.ptr
+    b.len = other.len
+    return std.str.slice_eql(a, b)
+}
+
+fn zast_text_same(a: ZAstText, b: ZAstText) -> bool {
+    if a.len != b.len {
+        return false
+    }
+    i: i64 = 0
+    while i < a.len {
+        if a.ptr[i] != b.ptr[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+export fn ZAstText.eql_string(self: ZAstText, value: string) -> bool {
+    a: []u8
+    a.ptr = self.ptr
+    a.len = self.len
+    b: []u8
+    b.ptr = cast(*u8, value)
+    b.len = std.str.len(value)
+    return std.str.slice_eql(a, b)
 }
 
 export fn ZAstDecl.init(kind: i64, exported: bool) -> ZAstDecl {
@@ -69,8 +193,15 @@ export fn ZAstDecl.init(kind: i64, exported: bool) -> ZAstDecl {
     decl.path = ZAstText.empty()
     decl.alias = ZAstText.empty()
     decl.is_c_import = false
+    decl.type_index = ZAstNoIndex
+    decl.return_type_index = ZAstNoIndex
+    decl.init_expr = ZAstNoIndex
+    decl.param_start = 0
     decl.param_count = 0
+    decl.member_start = 0
     decl.member_count = 0
+    decl.stmt_start = 0
+    decl.stmt_count = 0
     decl.local_count = 0
     decl.return_count = 0
     decl.call_count = 0
@@ -78,11 +209,66 @@ export fn ZAstDecl.init(kind: i64, exported: bool) -> ZAstDecl {
     return decl
 }
 
+export fn ZAstExpr.init(kind: i64) -> ZAstExpr {
+    expr: ZAstExpr
+    expr.kind = kind
+    expr.name = ZAstText.empty()
+    expr.literal = ZAstText.empty()
+    expr.op = ZAstNoIndex
+    expr.left = ZAstNoIndex
+    expr.right = ZAstNoIndex
+    expr.arg_start = 0
+    expr.arg_count = 0
+    return expr
+}
+
+export fn ZAstStmt.init(kind: i64) -> ZAstStmt {
+    stmt: ZAstStmt
+    stmt.kind = kind
+    stmt.name = ZAstText.empty()
+    stmt.type_index = ZAstNoIndex
+    stmt.expr_index = ZAstNoIndex
+    stmt.child_start = 0
+    stmt.child_count = 0
+    return stmt
+}
+
+fn zast_next_capacity(current: i64, needed: i64) -> i64 {
+    capacity: i64 = current
+    if capacity < 16 {
+        capacity = 16
+    }
+
+    while capacity < needed {
+        capacity = capacity * 2
+    }
+
+    return capacity
+}
+
 export fn ZAstModule.init(allocator: *std.mem.HeapAllocator, initial_capacity: i64) !ZAstModule {
     module: ZAstModule
     module.decls = cast(*ZAstDecl, 0)
     module.len = 0
     module.capacity = 0
+    module.types = cast(*ZAstType, 0)
+    module.type_count = 0
+    module.type_capacity = 0
+    module.params = cast(*ZAstParam, 0)
+    module.param_count_total = 0
+    module.param_capacity = 0
+    module.members = cast(*ZAstMember, 0)
+    module.member_count_total = 0
+    module.member_capacity = 0
+    module.stmts = cast(*ZAstStmt, 0)
+    module.stmt_count_total = 0
+    module.stmt_capacity = 0
+    module.exprs = cast(*ZAstExpr, 0)
+    module.expr_count = 0
+    module.expr_capacity = 0
+    module.expr_args = cast(*i64, 0)
+    module.expr_arg_count = 0
+    module.expr_arg_capacity = 0
     module.import_count = 0
     module.extern_count = 0
     module.error_count = 0
@@ -98,27 +284,15 @@ export fn ZAstModule.init(allocator: *std.mem.HeapAllocator, initial_capacity: i
     }
 
     if initial_capacity > 0 {
-        raw: *u8 = std.mem.HeapAllocator.alloc(allocator, initial_capacity * Builtin.sizeof(ZAstDecl)) catch |err| {
+        ZAstModule.reserve(&module, allocator, initial_capacity) catch |err| {
+            if err == error.InvalidSize {
+                return error.InvalidSize
+            }
             return error.OutOfMemory
         }
-        module.decls = cast(*ZAstDecl, raw)
-        module.capacity = initial_capacity
     }
 
     return module
-}
-
-fn zast_next_capacity(current: i64, needed: i64) -> i64 {
-    capacity: i64 = current
-    if capacity < 16 {
-        capacity = 16
-    }
-
-    while capacity < needed {
-        capacity = capacity * 2
-    }
-
-    return capacity
 }
 
 export fn ZAstModule.reserve(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
@@ -145,6 +319,180 @@ export fn ZAstModule.reserve(self: *ZAstModule, allocator: *std.mem.HeapAllocato
     self.decls = new_decls
     self.capacity = new_capacity
     return 0
+}
+
+fn zast_reserve_types(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.type_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.type_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstType)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstType = cast(*ZAstType, raw)
+    i: i64 = 0
+    while i < self.type_count {
+        new_items[i] = self.types[i]
+        i = i + 1
+    }
+    self.types = new_items
+    self.type_capacity = new_capacity
+    return 0
+}
+
+fn zast_reserve_params(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.param_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.param_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstParam)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstParam = cast(*ZAstParam, raw)
+    i: i64 = 0
+    while i < self.param_count_total {
+        new_items[i] = self.params[i]
+        i = i + 1
+    }
+    self.params = new_items
+    self.param_capacity = new_capacity
+    return 0
+}
+
+fn zast_reserve_members(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.member_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.member_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstMember)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstMember = cast(*ZAstMember, raw)
+    i: i64 = 0
+    while i < self.member_count_total {
+        new_items[i] = self.members[i]
+        i = i + 1
+    }
+    self.members = new_items
+    self.member_capacity = new_capacity
+    return 0
+}
+
+fn zast_reserve_stmts(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.stmt_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.stmt_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstStmt)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstStmt = cast(*ZAstStmt, raw)
+    i: i64 = 0
+    while i < self.stmt_count_total {
+        new_items[i] = self.stmts[i]
+        i = i + 1
+    }
+    self.stmts = new_items
+    self.stmt_capacity = new_capacity
+    return 0
+}
+
+fn zast_reserve_exprs(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.expr_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.expr_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstExpr)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstExpr = cast(*ZAstExpr, raw)
+    i: i64 = 0
+    while i < self.expr_count {
+        new_items[i] = self.exprs[i]
+        i = i + 1
+    }
+    self.exprs = new_items
+    self.expr_capacity = new_capacity
+    return 0
+}
+
+fn zast_reserve_expr_args(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.expr_arg_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.expr_arg_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(i64)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *i64 = cast(*i64, raw)
+    i: i64 = 0
+    while i < self.expr_arg_count {
+        new_items[i] = self.expr_args[i]
+        i = i + 1
+    }
+    self.expr_args = new_items
+    self.expr_arg_capacity = new_capacity
+    return 0
+}
+
+export fn ZAstModule.append_type(self: *ZAstModule, allocator: *std.mem.HeapAllocator, text: ZAstText) !i64 {
+    zast_reserve_types(self, allocator, self.type_count + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.type_count
+    self.types[index].text = text
+    self.type_count = self.type_count + 1
+    return index
+}
+
+export fn ZAstModule.append_param(self: *ZAstModule, allocator: *std.mem.HeapAllocator, param: ZAstParam) !i64 {
+    zast_reserve_params(self, allocator, self.param_count_total + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.param_count_total
+    self.params[index] = param
+    self.param_count_total = self.param_count_total + 1
+    return index
+}
+
+export fn ZAstModule.append_member(self: *ZAstModule, allocator: *std.mem.HeapAllocator, member: ZAstMember) !i64 {
+    zast_reserve_members(self, allocator, self.member_count_total + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.member_count_total
+    self.members[index] = member
+    self.member_count_total = self.member_count_total + 1
+    return index
+}
+
+export fn ZAstModule.append_stmt(self: *ZAstModule, allocator: *std.mem.HeapAllocator, stmt: ZAstStmt) !i64 {
+    zast_reserve_stmts(self, allocator, self.stmt_count_total + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.stmt_count_total
+    self.stmts[index] = stmt
+    self.stmt_count_total = self.stmt_count_total + 1
+    return index
+}
+
+export fn ZAstModule.append_expr(self: *ZAstModule, allocator: *std.mem.HeapAllocator, expr: ZAstExpr) !i64 {
+    zast_reserve_exprs(self, allocator, self.expr_count + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.expr_count
+    self.exprs[index] = expr
+    self.expr_count = self.expr_count + 1
+    return index
+}
+
+export fn ZAstModule.append_expr_arg(self: *ZAstModule, allocator: *std.mem.HeapAllocator, expr_index: i64) !i64 {
+    zast_reserve_expr_args(self, allocator, self.expr_arg_count + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.expr_arg_count
+    self.expr_args[index] = expr_index
+    self.expr_arg_count = self.expr_arg_count + 1
+    return index
 }
 
 export fn ZAstModule.append(self: *ZAstModule, allocator: *std.mem.HeapAllocator, decl: ZAstDecl) !i64 {
@@ -184,6 +532,208 @@ export fn ZAstModule.append(self: *ZAstModule, allocator: *std.mem.HeapAllocator
     }
     if decl.kind == ZAstDeclFunction {
         self.function_count = self.function_count + 1
+    }
+
+    return self.len - 1
+}
+
+export fn ZAstModule.find_decl(self: *ZAstModule, name: ZAstText) -> i64 {
+    i: i64 = 0
+    while i < self.len {
+        if zast_text_same(self.decls[i].name, name) {
+            return i
+        }
+        i = i + 1
+    }
+    return ZAstNoIndex
+}
+
+fn zast_is_builtin_type(name: ZAstText) -> bool {
+    if ZAstText.eql_string(name, "i8") { return true }
+    if ZAstText.eql_string(name, "i16") { return true }
+    if ZAstText.eql_string(name, "i32") { return true }
+    if ZAstText.eql_string(name, "i64") { return true }
+    if ZAstText.eql_string(name, "u8") { return true }
+    if ZAstText.eql_string(name, "u16") { return true }
+    if ZAstText.eql_string(name, "u32") { return true }
+    if ZAstText.eql_string(name, "u64") { return true }
+    if ZAstText.eql_string(name, "bool") { return true }
+    if ZAstText.eql_string(name, "string") { return true }
+    return false
+}
+
+fn zast_type_known(self: *ZAstModule, type_index: i64) -> bool {
+    if type_index == ZAstNoIndex {
+        return true
+    }
+    text: ZAstText = self.types[type_index].text
+    if text.len == 0 {
+        return true
+    }
+    if text.ptr[0] == 42 || text.ptr[0] == 91 {
+        return true
+    }
+    if zast_is_builtin_type(text) {
+        return true
+    }
+    decl_index: i64 = ZAstModule.find_decl(self, text)
+    if decl_index == ZAstNoIndex {
+        return false
+    }
+    kind: i64 = self.decls[decl_index].kind
+    return kind == ZAstDeclStruct || kind == ZAstDeclEnum || kind == ZAstDeclUnion
+}
+
+fn zast_function_accepts_return(self: *ZAstModule, decl: ZAstDecl, expr_index: i64) -> bool {
+    if decl.return_type_index == ZAstNoIndex {
+        return expr_index == ZAstNoIndex
+    }
+
+    if expr_index == ZAstNoIndex {
+        return false
+    }
+
+    ret: ZAstText = self.types[decl.return_type_index].text
+    expr: ZAstExpr = self.exprs[expr_index]
+    if ZAstText.eql_string(ret, "bool") {
+        return expr.kind == ZAstExprBool || expr.kind == ZAstExprIdentifier || expr.kind == ZAstExprCall || expr.kind == ZAstExprBinary || expr.kind == ZAstExprUnary
+    }
+    if ZAstText.eql_string(ret, "string") {
+        return expr.kind == ZAstExprString || expr.kind == ZAstExprIdentifier || expr.kind == ZAstExprCall
+    }
+    return expr.kind == ZAstExprInteger || expr.kind == ZAstExprIdentifier || expr.kind == ZAstExprCall || expr.kind == ZAstExprBinary || expr.kind == ZAstExprUnary
+}
+
+fn zast_function_name_known(self: *ZAstModule, name: ZAstText) -> i64 {
+    i: i64 = 0
+    while i < self.len {
+        if zast_text_same(self.decls[i].name, name) {
+            if self.decls[i].kind == ZAstDeclFunction || self.decls[i].kind == ZAstDeclExternFunction {
+                return i
+            }
+        }
+        i = i + 1
+    }
+    return ZAstNoIndex
+}
+
+fn zast_local_known(self: *ZAstModule, decl: ZAstDecl, name: ZAstText, through_stmt: i64) -> bool {
+    p: i64 = 0
+    while p < decl.param_count {
+        if zast_text_same(self.params[decl.param_start + p].name, name) {
+            return true
+        }
+        p = p + 1
+    }
+
+    s: i64 = 0
+    while s < through_stmt {
+        stmt: ZAstStmt = self.stmts[decl.stmt_start + s]
+        if stmt.kind == ZAstStmtVar && zast_text_same(stmt.name, name) {
+            return true
+        }
+        s = s + 1
+    }
+
+    return ZAstModule.find_decl(self, name) != ZAstNoIndex
+}
+
+fn zast_expr_names_known(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, through_stmt: i64) -> bool {
+    if expr_index == ZAstNoIndex {
+        return true
+    }
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind == ZAstExprIdentifier {
+        return zast_local_known(self, decl, expr.name, through_stmt)
+    }
+    if expr.kind == ZAstExprCall {
+        fn_index: i64 = zast_function_name_known(self, expr.name)
+        if fn_index == ZAstNoIndex {
+            return false
+        }
+        if self.decls[fn_index].param_count != expr.arg_count {
+            return false
+        }
+        i: i64 = 0
+        while i < expr.arg_count {
+            if !zast_expr_names_known(self, decl, self.expr_args[expr.arg_start + i], through_stmt) {
+                return false
+            }
+            i = i + 1
+        }
+    }
+    if expr.kind == ZAstExprBinary {
+        return zast_expr_names_known(self, decl, expr.left, through_stmt) && zast_expr_names_known(self, decl, expr.right, through_stmt)
+    }
+    if expr.kind == ZAstExprUnary {
+        return zast_expr_names_known(self, decl, expr.left, through_stmt)
+    }
+    return true
+}
+
+export fn ZAstModule.has_duplicate_declarations(self: *ZAstModule) -> bool {
+    i: i64 = 0
+    while i < self.len {
+        j: i64 = i + 1
+        while j < self.len {
+            if self.decls[i].name.len > 0 && zast_text_same(self.decls[i].name, self.decls[j].name) {
+                return true
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return false
+}
+
+export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
+    if ZAstModule.has_duplicate_declarations(self) {
+        return error.AlreadyExists
+    }
+
+    i: i64 = 0
+    while i < self.len {
+        if !zast_type_known(self, self.decls[i].type_index) {
+            return error.NotFound
+        }
+        if !zast_type_known(self, self.decls[i].return_type_index) {
+            return error.NotFound
+        }
+
+        p: i64 = 0
+        while p < self.decls[i].param_count {
+            if !zast_type_known(self, self.params[self.decls[i].param_start + p].type_index) {
+                return error.NotFound
+            }
+            p = p + 1
+        }
+
+        m: i64 = 0
+        while m < self.decls[i].member_count {
+            if !zast_type_known(self, self.members[self.decls[i].member_start + m].type_index) {
+                return error.NotFound
+            }
+            m = m + 1
+        }
+
+        if self.decls[i].kind == ZAstDeclFunction {
+            s: i64 = 0
+            while s < self.decls[i].stmt_count {
+                stmt: ZAstStmt = self.stmts[self.decls[i].stmt_start + s]
+                if stmt.kind == ZAstStmtVar && !zast_type_known(self, stmt.type_index) {
+                    return error.NotFound
+                }
+                if !zast_expr_names_known(self, self.decls[i], stmt.expr_index, s) {
+                    return error.NotFound
+                }
+                if stmt.kind == ZAstStmtReturn && !zast_function_accepts_return(self, self.decls[i], stmt.expr_index) {
+                    return error.InvalidArgument
+                }
+                s = s + 1
+            }
+        }
+
+        i = i + 1
     }
 
     return 0
