@@ -189,7 +189,14 @@ fn zparser_parse_params(self: *ZParser) !i64 {
     return error.EndOfFile
 }
 
-fn zparser_is_binary_operator(kind: i64) -> bool {
+fn zparser_can_end_expression(kind: i64) -> bool {
+    return kind == ZTokenIdentifier || kind == ZTokenNumber || kind == ZTokenString || kind == ZTokenTrue || kind == ZTokenFalse || kind == ZTokenRParen || kind == ZTokenRBracket || kind == ZTokenRBrace
+}
+
+fn zparser_is_binary_operator(kind: i64, previous_kind: i64) -> bool {
+    if !zparser_can_end_expression(previous_kind) {
+        return false
+    }
     return kind == ZTokenPlus || kind == ZTokenMinus || kind == ZTokenStar || kind == ZTokenSlash || kind == ZTokenPercent || kind == ZTokenAmp || kind == ZTokenPipe || kind == ZTokenCaret || kind == ZTokenLShift || kind == ZTokenRShift || kind == ZTokenGreater || kind == ZTokenLess || kind == ZTokenGreaterEqual || kind == ZTokenLessEqual || kind == ZTokenEqualEqual || kind == ZTokenBangEqual || kind == ZTokenAndAnd || kind == ZTokenOrOr
 }
 
@@ -199,6 +206,7 @@ fn zparser_parse_body(self: *ZParser, decl: *ZAstDecl) !i64 {
     calls: i64 = 0
     binaries: i64 = 0
     depth: i64 = 0
+    previous_kind: i64 = ZTokenEof
     self.last_function_locals = 0
     zparser_expect(self, ZTokenLBrace) catch |err| {
         return error.InvalidArgument
@@ -216,7 +224,7 @@ fn zparser_parse_body(self: *ZParser, decl: *ZAstDecl) !i64 {
         if kind == ZTokenIdentifier && zparser_peek_kind(self, 1) == ZTokenLParen {
             calls = calls + 1
         }
-        if zparser_is_binary_operator(kind) {
+        if zparser_is_binary_operator(kind, previous_kind) {
             binaries = binaries + 1
         }
         if kind == ZTokenLBrace {
@@ -233,8 +241,10 @@ fn zparser_parse_body(self: *ZParser, decl: *ZAstDecl) !i64 {
                 decl.binary_count = binaries
                 return returns
             }
+            previous_kind = kind
             continue
         }
+        previous_kind = kind
         zparser_advance(self)
     }
 
@@ -524,7 +534,10 @@ fn zparser_parse_extern_function(self: *ZParser, allocator: *std.mem.HeapAllocat
 fn zparser_skip_top_level(self: *ZParser) {
     while !zparser_at(self, ZTokenEof) {
         kind: i64 = zparser_current(self).kind
-        if kind == ZTokenImport || kind == ZTokenFn || kind == ZTokenExport {
+        if kind == ZTokenImport || kind == ZTokenFn || kind == ZTokenExport || kind == ZTokenExtern || kind == ZTokenError || kind == ZTokenConst || kind == ZTokenStruct || kind == ZTokenEnum || kind == ZTokenUnion {
+            return
+        }
+        if kind == ZTokenIdentifier && zparser_peek_kind(self, 1) == ZTokenColon {
             return
         }
         zparser_advance(self)

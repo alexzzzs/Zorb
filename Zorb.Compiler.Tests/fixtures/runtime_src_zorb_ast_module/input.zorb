@@ -28,6 +28,8 @@ fn helper(value: i64) -> i64 {
 
 export fn add(lhs: i64, rhs: i64) -> i64 {
     total: i64 = lhs + rhs
+    ptr: *i64 = &lhs
+    neg: i64 = -lhs
     more: i64 = helper(total)
     if more > 0 {
         return more
