@@ -98,11 +98,19 @@ fn main() -> i64 {
 
     expect(module.decls[8].kind == ZAstDeclExternFunction) catch |err| { return err }
     expect(module.decls[8].param_count == 1) catch |err| { return err }
+    expect(ast_text_eql(module.params[module.decls[8].param_start].name, "text")) catch |err| { return err }
+    expect(ast_text_eql(module.types[module.params[module.decls[8].param_start].type_index].text, "string")) catch |err| { return err }
+    expect(ast_text_eql(module.types[module.decls[8].return_type_index].text, "i32")) catch |err| { return err }
 
     expect(module.decls[9].kind == ZAstDeclFunction) catch |err| { return err }
     expect(ast_text_eql(module.decls[9].name, "helper")) catch |err| { return err }
     expect(module.decls[9].param_count == 1) catch |err| { return err }
     expect(module.decls[9].return_count == 1) catch |err| { return err }
+    expect(module.decls[9].stmt_count == 1) catch |err| { return err }
+    expect(ast_text_eql(module.params[module.decls[9].param_start].name, "value")) catch |err| { return err }
+    expect(ast_text_eql(module.types[module.decls[9].return_type_index].text, "i64")) catch |err| { return err }
+    expect(module.stmts[module.decls[9].stmt_start].kind == ZAstStmtReturn) catch |err| { return err }
+    expect(module.exprs[module.stmts[module.decls[9].stmt_start].expr_index].kind == ZAstExprIdentifier) catch |err| { return err }
 
     expect(module.decls[10].kind == ZAstDeclFunction) catch |err| { return err }
     expect(module.decls[10].exported) catch |err| { return err }
@@ -112,6 +120,27 @@ fn main() -> i64 {
     expect(module.decls[10].return_count == 2) catch |err| { return err }
     expect(module.decls[10].call_count == 2) catch |err| { return err }
     expect(module.decls[10].binary_count == 3) catch |err| { return err }
+    expect(module.decls[10].stmt_count == 7) catch |err| { return err }
+    expect(ast_text_eql(module.params[module.decls[10].param_start].name, "lhs")) catch |err| { return err }
+    expect(ast_text_eql(module.params[module.decls[10].param_start + 1].name, "rhs")) catch |err| { return err }
+
+    first_add_stmt: ZAstStmt = module.stmts[module.decls[10].stmt_start]
+    expect(first_add_stmt.kind == ZAstStmtVar) catch |err| { return err }
+    expect(ast_text_eql(first_add_stmt.name, "total")) catch |err| { return err }
+    expect(module.exprs[first_add_stmt.expr_index].kind == ZAstExprBinary) catch |err| { return err }
+
+    call_stmt: ZAstStmt = module.stmts[module.decls[10].stmt_start + 3]
+    expect(ast_text_eql(call_stmt.name, "more")) catch |err| { return err }
+    expect(module.exprs[call_stmt.expr_index].kind == ZAstExprCall) catch |err| { return err }
+    expect(ast_text_eql(module.exprs[call_stmt.expr_index].name, "helper")) catch |err| { return err }
+    expect(module.exprs[call_stmt.expr_index].arg_count == 1) catch |err| { return err }
+
+    expect(module.members[module.decls[5].member_start].type_index != ZAstNoIndex) catch |err| { return err }
+    expect(ast_text_eql(module.members[module.decls[5].member_start].name, "lhs")) catch |err| { return err }
+    expect(ast_text_eql(module.members[module.decls[7].member_start + 1].name, "Flag")) catch |err| { return err }
+    ZAstModule.check_semantics(&module) catch |err| {
+        return err
+    }
 
     return 0
 }

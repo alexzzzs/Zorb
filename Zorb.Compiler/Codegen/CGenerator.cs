@@ -23,6 +23,7 @@ public class CGenerator
     private readonly string _currentDir;
     private readonly SymbolTable _symbolTable;
     private readonly Dictionary<string, TypeNode> _localVars = new();
+    private readonly HashSet<string> _catchErrorVars = new();
     private readonly Stack<string?> _continueTargets = new();
     private readonly HashSet<string> _generatedResultTypes = new();
     private readonly HashSet<string> _generatedSliceTypes = new();
@@ -1149,6 +1150,9 @@ static void __zorb_slice_oob(void) {
                 if (ret.Value is ErrorExpr errExpr) {
                     var returnCode = $"return (struct {resultName}){{ .value = 0, .error = {GetErrorSymbolName(errExpr.ErrorCode)} }};";
                     return string.IsNullOrEmpty(generated.Prelude) ? returnCode : generated.Prelude + returnCode;
+                } else if (ret.Value is IdentifierExpr identifier && _catchErrorVars.Contains(identifier.Name)) {
+                    var returnCode = $"return (struct {resultName}){{ .value = 0, .error = {valueCode} }};";
+                    return string.IsNullOrEmpty(generated.Prelude) ? returnCode : generated.Prelude + returnCode;
                 } else {
                     var returnCode = $"return (struct {resultName}){{ .value = {valueCode}, .error = 0 }};";
                     return string.IsNullOrEmpty(generated.Prelude) ? returnCode : generated.Prelude + returnCode;
@@ -1751,11 +1755,14 @@ static void __zorb_slice_oob(void) {
                 sb.AppendLine($"if ({errorTemp} != 0) {{");
 
                 var savedLocals = CloneLocalVars();
+                var savedCatchErrorVars = new HashSet<string>(_catchErrorVars);
                 _localVars[catchExpr.ErrorVar] = new TypeNode { Name = "i32" };
+                _catchErrorVars.Add(catchExpr.ErrorVar);
                 sb.AppendLine($"    int32_t {catchExpr.ErrorVar} = {errorTemp};");
                 foreach (var catchStmt in catchExpr.CatchBody)
                     sb.AppendLine($"    {GenerateStatement(catchStmt)}");
                 RestoreLocalVars(savedLocals);
+                RestoreCatchErrorVars(savedCatchErrorVars);
 
                 sb.AppendLine("}");
                 return new GeneratedExpression(sb.ToString(), $"{resultTemp}.value", successType.Clone());
@@ -2156,6 +2163,13 @@ static void __zorb_slice_oob(void) {
         _localVars.Clear();
         foreach (var entry in saved)
             _localVars[entry.Key] = entry.Value;
+    }
+
+    private void RestoreCatchErrorVars(HashSet<string> saved)
+    {
+        _catchErrorVars.Clear();
+        foreach (var name in saved)
+            _catchErrorVars.Add(name);
     }
 
     private TypeNode? GetCallFunctionType(CallExpr call)
