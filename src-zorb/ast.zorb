@@ -175,6 +175,73 @@ fn zast_text_same(a: ZAstText, b: ZAstText) -> bool {
     return true
 }
 
+fn zast_text_from_string(value: string) -> ZAstText {
+    text: ZAstText
+    text.ptr = cast(*u8, value)
+    text.len = std.str.len(value)
+    return text
+}
+
+fn zast_text_skip_ws(text: ZAstText) -> ZAstText {
+    start: i64 = 0
+    while start < text.len {
+        ch: u8 = text.ptr[start]
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 {
+            break
+        }
+        start = start + 1
+    }
+
+    trimmed: ZAstText
+    trimmed.ptr = text.ptr + start
+    trimmed.len = text.len - start
+    return trimmed
+}
+
+fn zast_type_text_unwrap(text: ZAstText) -> ZAstText {
+    text = zast_text_skip_ws(text)
+    if text.len == 0 {
+        return text
+    }
+
+    if text.ptr[0] == 42 {
+        index: i64 = 0
+        while index < text.len && (text.ptr[index] == 42 || text.ptr[index] == 32 || text.ptr[index] == 9 || text.ptr[index] == 10 || text.ptr[index] == 13) {
+            index = index + 1
+        }
+        if index >= text.len {
+            return text
+        }
+        unwrapped: ZAstText
+        unwrapped.ptr = text.ptr + index
+        unwrapped.len = text.len - index
+        return zast_type_text_unwrap(unwrapped)
+    }
+
+    if text.ptr[0] == 91 {
+        index: i64 = 1
+        while index < text.len && text.ptr[index] != 93 {
+            index = index + 1
+        }
+        if index >= text.len {
+            return text
+        }
+        index = index + 1
+        while index < text.len && (text.ptr[index] == 32 || text.ptr[index] == 9 || text.ptr[index] == 10 || text.ptr[index] == 13) {
+            index = index + 1
+        }
+        if index >= text.len {
+            return text
+        }
+        unwrapped: ZAstText
+        unwrapped.ptr = text.ptr + index
+        unwrapped.len = text.len - index
+        return zast_type_text_unwrap(unwrapped)
+    }
+
+    return text
+}
+
 export fn ZAstText.eql_string(self: ZAstText, value: string) -> bool {
     a: []u8
     a.ptr = self.ptr
@@ -562,15 +629,113 @@ fn zast_is_builtin_type(name: ZAstText) -> bool {
     return false
 }
 
+fn zast_decl_type_text(self: *ZAstModule, type_index: i64) -> ZAstText {
+    if type_index == ZAstNoIndex {
+        return ZAstText.empty()
+    }
+    return self.types[type_index].text
+}
+
+fn zast_expr_type_text(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, through_stmt: i64) -> ZAstText {
+    if expr_index == ZAstNoIndex {
+        return ZAstText.empty()
+    }
+
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind == ZAstExprInteger {
+        return zast_text_from_string("i64")
+    }
+    if expr.kind == ZAstExprString {
+        return zast_text_from_string("string")
+    }
+    if expr.kind == ZAstExprBool {
+        return zast_text_from_string("bool")
+    }
+    if expr.kind == ZAstExprIdentifier {
+        p: i64 = 0
+        while p < decl.param_count {
+            param_index: i64 = decl.param_start + p
+            if zast_text_same(self.params[param_index].name, expr.name) {
+                return zast_decl_type_text(self, self.params[param_index].type_index)
+            }
+            p = p + 1
+        }
+
+        s: i64 = 0
+        while s < through_stmt {
+            stmt: ZAstStmt = self.stmts[decl.stmt_start + s]
+            if stmt.kind == ZAstStmtVar && zast_text_same(stmt.name, expr.name) {
+                return zast_decl_type_text(self, stmt.type_index)
+            }
+            s = s + 1
+        }
+
+        decl_index: i64 = ZAstModule.find_decl(self, expr.name)
+        if decl_index != ZAstNoIndex {
+            target: ZAstDecl = self.decls[decl_index]
+            if target.kind == ZAstDeclFunction || target.kind == ZAstDeclExternFunction {
+                return zast_decl_type_text(self, target.return_type_index)
+            }
+            return zast_decl_type_text(self, target.type_index)
+        }
+
+        return ZAstText.empty()
+    }
+    if expr.kind == ZAstExprCall {
+        decl_index: i64 = ZAstModule.find_decl(self, expr.name)
+        if decl_index != ZAstNoIndex {
+            return zast_decl_type_text(self, self.decls[decl_index].return_type_index)
+        }
+        return ZAstText.empty()
+    }
+    if expr.kind == ZAstExprUnary {
+        operand: ZAstText = zast_expr_type_text(self, decl, expr.left, through_stmt)
+        if expr.op == ZTokenBang {
+            return zast_text_from_string("bool")
+        }
+        if expr.op == ZTokenAmp {
+            if operand.len == 0 {
+                return operand
+            }
+            text: ZAstText
+            text.ptr = cast(*u8, "*")
+            text.len = 1
+            return text
+        }
+        if expr.op == ZTokenStar {
+            if operand.len > 0 && operand.ptr[0] == 42 {
+                text: ZAstText
+                text.ptr = operand.ptr + 1
+                text.len = operand.len - 1
+                return text
+            }
+            return ZAstText.empty()
+        }
+        return operand
+    }
+    if expr.kind == ZAstExprBinary {
+        if expr.op == ZTokenEqualEqual || expr.op == ZTokenBangEqual || expr.op == ZTokenGreater || expr.op == ZTokenLess || expr.op == ZTokenGreaterEqual || expr.op == ZTokenLessEqual || expr.op == ZTokenAndAnd || expr.op == ZTokenOrOr {
+            return zast_text_from_string("bool")
+        }
+        left_type: ZAstText = zast_expr_type_text(self, decl, expr.left, through_stmt)
+        right_type: ZAstText = zast_expr_type_text(self, decl, expr.right, through_stmt)
+        if left_type.len > 0 && zast_text_same(left_type, right_type) {
+            return left_type
+        }
+        if left_type.len > 0 {
+            return left_type
+        }
+        return right_type
+    }
+    return ZAstText.empty()
+}
+
 fn zast_type_known(self: *ZAstModule, type_index: i64) -> bool {
     if type_index == ZAstNoIndex {
         return true
     }
-    text: ZAstText = self.types[type_index].text
+    text: ZAstText = zast_type_text_unwrap(self.types[type_index].text)
     if text.len == 0 {
-        return true
-    }
-    if text.ptr[0] == 42 || text.ptr[0] == 91 {
         return true
     }
     if zast_is_builtin_type(text) {
@@ -584,7 +749,38 @@ fn zast_type_known(self: *ZAstModule, type_index: i64) -> bool {
     return kind == ZAstDeclStruct || kind == ZAstDeclEnum || kind == ZAstDeclUnion
 }
 
-fn zast_function_accepts_return(self: *ZAstModule, decl: ZAstDecl, expr_index: i64) -> bool {
+fn zast_expr_type_matches(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, expected_type_index: i64, through_stmt: i64) -> bool {
+    if expected_type_index == ZAstNoIndex {
+        return expr_index == ZAstNoIndex
+    }
+    if expr_index == ZAstNoIndex {
+        return false
+    }
+
+    expected: ZAstText = zast_text_skip_ws(self.types[expected_type_index].text)
+    if expected.len > 0 && expected.ptr[0] == 42 {
+        expr_node: ZAstExpr = self.exprs[expr_index]
+        return expr_node.kind == ZAstExprUnary && expr_node.op == ZTokenAmp
+    }
+    expected = zast_type_text_unwrap(expected)
+    expr_node: ZAstExpr = self.exprs[expr_index]
+    if expr_node.kind == ZAstExprInteger {
+        return ZAstText.eql_string(expected, "i64")
+    }
+    if expr_node.kind == ZAstExprString {
+        return ZAstText.eql_string(expected, "string")
+    }
+    if expr_node.kind == ZAstExprBool {
+        return ZAstText.eql_string(expected, "bool")
+    }
+    actual: ZAstText = zast_type_text_unwrap(zast_expr_type_text(self, decl, expr_index, through_stmt))
+    if expected.len == 0 || actual.len == 0 {
+        return false
+    }
+    return zast_text_same(expected, actual)
+}
+
+fn zast_function_accepts_return(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, through_stmt: i64) -> bool {
     if decl.return_type_index == ZAstNoIndex {
         return expr_index == ZAstNoIndex
     }
@@ -593,15 +789,7 @@ fn zast_function_accepts_return(self: *ZAstModule, decl: ZAstDecl, expr_index: i
         return false
     }
 
-    ret: ZAstText = self.types[decl.return_type_index].text
-    expr: ZAstExpr = self.exprs[expr_index]
-    if ZAstText.eql_string(ret, "bool") {
-        return expr.kind == ZAstExprBool || expr.kind == ZAstExprIdentifier || expr.kind == ZAstExprCall || expr.kind == ZAstExprBinary || expr.kind == ZAstExprUnary
-    }
-    if ZAstText.eql_string(ret, "string") {
-        return expr.kind == ZAstExprString || expr.kind == ZAstExprIdentifier || expr.kind == ZAstExprCall
-    }
-    return expr.kind == ZAstExprInteger || expr.kind == ZAstExprIdentifier || expr.kind == ZAstExprCall || expr.kind == ZAstExprBinary || expr.kind == ZAstExprUnary
+    return zast_expr_type_matches(self, decl, expr_index, decl.return_type_index, through_stmt)
 }
 
 fn zast_function_name_known(self: *ZAstModule, name: ZAstText) -> i64 {
@@ -671,6 +859,54 @@ fn zast_expr_names_known(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, thr
     return true
 }
 
+fn zast_check_stmt_node(self: *ZAstModule, decl: ZAstDecl, stmt_index: i64) !i64 {
+    stmt: ZAstStmt = self.stmts[stmt_index]
+    through_stmt: i64 = stmt_index - decl.stmt_start
+
+    if stmt.kind == ZAstStmtBlock {
+        inner_index: i64 = stmt.child_start
+        inner_end: i64 = stmt.child_start + stmt.child_count
+        while inner_index < inner_end {
+            zast_check_stmt_node(self, decl, inner_index) catch |err| {
+                return err
+            }
+            inner_index = inner_index + 1
+        }
+        return 0
+    }
+
+    if stmt.kind == ZAstStmtVar {
+        if !zast_type_known(self, stmt.type_index) {
+            return error.NotFound
+        }
+        if stmt.expr_index != ZAstNoIndex {
+            if !zast_expr_names_known(self, decl, stmt.expr_index, through_stmt) {
+                return error.NotFound
+            }
+            if !zast_expr_type_matches(self, decl, stmt.expr_index, stmt.type_index, through_stmt) {
+                return error.InvalidArgument
+            }
+        }
+    }
+
+    if stmt.kind == ZAstStmtReturn {
+        if !zast_expr_names_known(self, decl, stmt.expr_index, through_stmt) {
+            return error.NotFound
+        }
+        if !zast_function_accepts_return(self, decl, stmt.expr_index, through_stmt) {
+            return error.InvalidArgument
+        }
+    }
+
+    if stmt.kind == ZAstStmtExpr {
+        if stmt.expr_index != ZAstNoIndex && !zast_expr_names_known(self, decl, stmt.expr_index, through_stmt) {
+            return error.NotFound
+        }
+    }
+
+    return 0
+}
+
 export fn ZAstModule.has_duplicate_declarations(self: *ZAstModule) -> bool {
     i: i64 = 0
     while i < self.len {
@@ -700,6 +936,15 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
             return error.NotFound
         }
 
+        if self.decls[i].init_expr != ZAstNoIndex {
+            if !zast_expr_names_known(self, self.decls[i], self.decls[i].init_expr, 0) {
+                return error.NotFound
+            }
+            if !zast_expr_type_matches(self, self.decls[i], self.decls[i].init_expr, self.decls[i].type_index, 0) {
+                return error.InvalidArgument
+            }
+        }
+
         p: i64 = 0
         while p < self.decls[i].param_count {
             if !zast_type_known(self, self.params[self.decls[i].param_start + p].type_index) {
@@ -710,26 +955,34 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
 
         m: i64 = 0
         while m < self.decls[i].member_count {
-            if !zast_type_known(self, self.members[self.decls[i].member_start + m].type_index) {
+            member: ZAstMember = self.members[self.decls[i].member_start + m]
+            if member.type_index != ZAstNoIndex && !zast_type_known(self, member.type_index) {
                 return error.NotFound
+            }
+            if member.value_expr != ZAstNoIndex {
+                if !zast_expr_names_known(self, self.decls[i], member.value_expr, 0) {
+                    return error.NotFound
+                }
+                if member.type_index != ZAstNoIndex && !zast_expr_type_matches(self, self.decls[i], member.value_expr, member.type_index, 0) {
+                    return error.InvalidArgument
+                }
             }
             m = m + 1
         }
 
         if self.decls[i].kind == ZAstDeclFunction {
-            s: i64 = 0
-            while s < self.decls[i].stmt_count {
-                stmt: ZAstStmt = self.stmts[self.decls[i].stmt_start + s]
-                if stmt.kind == ZAstStmtVar && !zast_type_known(self, stmt.type_index) {
-                    return error.NotFound
+            child_index: i64 = self.decls[i].stmt_start
+            child_end: i64 = self.decls[i].stmt_start + self.decls[i].stmt_count
+            while child_index < child_end {
+                stmt: ZAstStmt = self.stmts[child_index]
+                zast_check_stmt_node(self, self.decls[i], child_index) catch |err| {
+                    return err
                 }
-                if !zast_expr_names_known(self, self.decls[i], stmt.expr_index, s) {
-                    return error.NotFound
+                if stmt.kind == ZAstStmtBlock {
+                    child_index = stmt.child_start + stmt.child_count
+                } else {
+                    child_index = child_index + 1
                 }
-                if stmt.kind == ZAstStmtReturn && !zast_function_accepts_return(self, self.decls[i], stmt.expr_index) {
-                    return error.InvalidArgument
-                }
-                s = s + 1
             }
         }
 

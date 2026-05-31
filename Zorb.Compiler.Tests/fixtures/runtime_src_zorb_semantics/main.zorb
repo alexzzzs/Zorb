@@ -16,39 +16,42 @@ fn source_slice(value: string) -> []u8 {
 
 fn parse_and_check(source_text: string) !i64 {
     heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(1048576) catch |err| {
-        return error.InvalidArgument
+        return err
     }
 
     source: []u8 = source_slice(source_text)
     tokens: ZTokenList = ZTokenList.init(&heap, 8) catch |err| {
-        return error.InvalidArgument
+        return err
     }
     interner: std.collections.StringInterner = std.collections.StringInterner.init(&heap, 8) catch |err| {
-        return error.InvalidArgument
+        return err
     }
 
     lexer: ZLexer = ZLexer.init(source)
     ZLexer.tokenize(&lexer, &heap, &tokens, &interner) catch |err| {
-        return error.InvalidArgument
+        return err
     }
 
     module: ZAstModule = ZAstModule.init(&heap, 8) catch |err| {
-        return error.InvalidArgument
+        return err
     }
     parser: ZParser = ZParser.init(&tokens)
     ZParser.parse_program(&parser, &heap, &module) catch |err| {
-        return error.InvalidArgument
+        return err
     }
 
     ZAstModule.check_semantics(&module) catch |err| {
-        return error.NotFound
+        return err
     }
     return 0
 }
 
-fn expect_error(source_text: string) !i64 {
+fn expect_error(source_text: string, expected: i64) !i64 {
     parse_and_check(source_text) catch |err| {
-        return 0
+        if err == expected {
+            return 0
+        }
+        return err
     }
     return error.InvalidArgument
 }
@@ -58,19 +61,19 @@ fn main() -> i64 {
         return err
     }
 
-    expect_error("fn dup() -> i64 { return 1 }\nfn dup() -> i64 { return 2 }\n") catch |err| {
+    expect_error("fn dup() -> i64 { return 1 }\nfn dup() -> i64 { return 2 }\n", error.AlreadyExists) catch |err| {
         return err
     }
 
-    expect_error("fn main() -> i64 { return missing }\n") catch |err| {
+    expect_error("fn main() -> i64 { return missing }\n", error.NotFound) catch |err| {
         return err
     }
 
-    expect_error("fn one(value: i64) -> i64 { return value }\nfn main() -> i64 { return one(1, 2) }\n") catch |err| {
+    expect_error("fn one(value: i64) -> i64 { return value }\nfn main() -> i64 { return one(1, 2) }\n", error.NotFound) catch |err| {
         return err
     }
 
-    expect_error("fn main() -> bool { return \"no\" }\n") catch |err| {
+    expect_error("fn main() -> bool { return \"no\" }\n", error.InvalidArgument) catch |err| {
         return err
     }
 

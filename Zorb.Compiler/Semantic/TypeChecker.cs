@@ -32,6 +32,7 @@ public class TypeChecker
     private readonly Stack<Dictionary<string, HashSet<string>>> _importAliasScopes = new();
     private readonly Stack<Dictionary<string, long>> _constValueScopes = new();
     private readonly Stack<Dictionary<string, Node>> _declarationNodeScopes = new();
+    private readonly Stack<HashSet<string>> _catchErrorVarScopes = new();
     private readonly Dictionary<string, string> _errorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<long, string> _errorValues = new();
     private IReadOnlyDictionary<string, IReadOnlyList<Node>>? _parsedFilesByPath;
@@ -931,6 +932,9 @@ public class TypeChecker
 
                             if (expectedType.IsErrorUnion)
                             {
+                                if (returnNode.Value is IdentifierExpr identifier && IsCatchErrorVar(identifier.Name))
+                                    return FlowOutcome.Returns;
+
                                 var successType = expectedType.ErrorInnerType ?? expectedType;
                                 if (!IsAssignableTo(successType, returnNode.Value, exprType))
                                 {
@@ -1341,6 +1345,7 @@ public class TypeChecker
         _symbolTable.PushScope();
         _constValueScopes.Push(new Dictionary<string, long>(StringComparer.Ordinal));
         _declarationNodeScopes.Push(new Dictionary<string, Node>(StringComparer.Ordinal));
+        _catchErrorVarScopes.Push(new HashSet<string>(StringComparer.Ordinal));
     }
 
     private void PopScopedState()
@@ -1350,6 +1355,13 @@ public class TypeChecker
             _constValueScopes.Pop();
         if (_declarationNodeScopes.Count > 1)
             _declarationNodeScopes.Pop();
+        if (_catchErrorVarScopes.Count > 0)
+            _catchErrorVarScopes.Pop();
+    }
+
+    private bool IsCatchErrorVar(string name)
+    {
+        return _catchErrorVarScopes.Any(scope => scope.Contains(name));
     }
 
     private bool TryLookupConstValue(string name, out long value)
@@ -1829,6 +1841,7 @@ public class TypeChecker
 
                 PushScopedState();
                 _symbolTable.DefineVariable(catchExpr.ErrorVar, new TypeNode { Name = "i32" });
+                _catchErrorVarScopes.Peek().Add(catchExpr.ErrorVar);
                 foreach (var stmt in catchExpr.CatchBody)
                     CheckStatement(stmt);
                 PopScopedState();

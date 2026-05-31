@@ -111,6 +111,39 @@ fn zparser_print_summary(self: *ZParser) {
     std.io.print("\n")
 }
 
+fn zparser_text_from_span(self: *ZParser, allocator: *std.mem.HeapAllocator, start_index: i64, end_index: i64) !ZAstText {
+    len: i64 = 0
+    index: i64 = start_index
+    while index < end_index {
+        len = len + self.tokens.ptr[index].len
+        index = index + 1
+    }
+    if len <= 0 {
+        return error.InvalidArgument
+    }
+
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, len) catch |err| {
+        return err
+    }
+    out_index: i64 = 0
+    index = start_index
+    while index < end_index {
+        token: ZToken = self.tokens.ptr[index]
+        token_index: i64 = 0
+        while token_index < token.len {
+            raw[out_index] = token.ptr[token_index]
+            out_index = out_index + 1
+            token_index = token_index + 1
+        }
+        index = index + 1
+    }
+
+    text: ZAstText
+    text.ptr = raw
+    text.len = len
+    return text
+}
+
 export fn ZParser.print_structured_summary(self: *ZParser) {
     std.io.print("imports: ")
     std.io.print_i64(self.import_count)
@@ -138,13 +171,15 @@ fn zparser_capture_type(self: *ZParser, allocator: *std.mem.HeapAllocator, modul
         return error.InvalidArgument
     }
 
-    start: ZToken = zparser_current(self)
-    end: ZToken = start
+    start_index: i64 = self.index
     depth: i64 = 0
     while !zparser_at(self, ZTokenEof) {
         kind: i64 = zparser_current(self).kind
         if depth == 0 && (kind == ZTokenComma || kind == ZTokenRParen || kind == ZTokenRBrace || kind == ZTokenLBrace || kind == ZTokenEquals || kind == ZTokenSemicolon) {
-            index: i64 = ZAstModule.append_type(module, allocator, ZAstText.from_range(start, end)) catch |err| {
+            text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
+                return err
+            }
+            index: i64 = ZAstModule.append_type(module, allocator, text) catch |err| {
                 return err
             }
             return index
@@ -155,7 +190,10 @@ fn zparser_capture_type(self: *ZParser, allocator: *std.mem.HeapAllocator, modul
         }
         if kind == ZTokenRBracket || kind == ZTokenRParen {
             if depth == 0 {
-                index: i64 = ZAstModule.append_type(module, allocator, ZAstText.from_range(start, end)) catch |err| {
+                text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
+                    return err
+                }
+                index: i64 = ZAstModule.append_type(module, allocator, text) catch |err| {
                     return err
                 }
                 return index
@@ -163,7 +201,6 @@ fn zparser_capture_type(self: *ZParser, allocator: *std.mem.HeapAllocator, modul
             depth = depth - 1
         }
 
-        end = zparser_current(self)
         zparser_advance(self)
     }
 
@@ -188,10 +225,7 @@ fn zparser_expression_stops(self: *ZParser, stop_comma: bool, stop_lbrace: bool,
     if kind == ZTokenRParen || kind == ZTokenRBracket {
         return true
     }
-    if stop_statement && kind == ZTokenReturn {
-        return true
-    }
-    if stop_statement && kind == ZTokenIf {
+    if stop_statement && (kind == ZTokenReturn || kind == ZTokenIf || kind == ZTokenWhile || kind == ZTokenFor || kind == ZTokenSwitch || kind == ZTokenMatch || kind == ZTokenContinue || kind == ZTokenBreak || kind == ZTokenImport || kind == ZTokenExtern || kind == ZTokenFn || kind == ZTokenConst || kind == ZTokenError || kind == ZTokenStruct || kind == ZTokenEnum || kind == ZTokenUnion) {
         return true
     }
     if stop_statement && kind == ZTokenIdentifier && zparser_peek_kind(self, 1) == ZTokenColon {
@@ -466,28 +500,44 @@ fn zparser_parse_statement(self: *ZParser, allocator: *std.mem.HeapAllocator, mo
     if kind == ZTokenIf || kind == ZTokenWhile || kind == ZTokenFor || kind == ZTokenSwitch || kind == ZTokenMatch {
         zparser_advance(self)
         if !zparser_at(self, ZTokenLBrace) {
-            zparser_parse_expression(self, allocator, module, false, true, false) catch |err| {
+            zparser_parse_expression(self, allocator, module, false, true, true) catch |err| {
                 return err
             }
         }
         if zparser_at(self, ZTokenLBrace) {
-            stmt: ZAstStmt = ZAstStmt.init(ZAstStmtBlock)
-            stmt.child_start = module.stmt_count_total
-            block_index: i64 = ZAstModule.append_stmt(module, allocator, stmt) catch |err| {
+            block_stmt: ZAstStmt = ZAstStmt.init(ZAstStmtBlock)
+            block_index: i64 = ZAstModule.append_stmt(module, allocator, block_stmt) catch |err| {
                 return err
             }
+            module.stmts[block_index].child_start = module.stmt_count_total
             zparser_parse_block(self, allocator, module, decl) catch |err| {
                 return err
             }
-            module.stmts[block_index].child_count = module.stmt_count_total - stmt.child_start
+            module.stmts[block_index].child_count = module.stmt_count_total - module.stmts[block_index].child_start
+            return 0
         }
+        block_stmt: ZAstStmt = ZAstStmt.init(ZAstStmtBlock)
+        block_index: i64 = ZAstModule.append_stmt(module, allocator, block_stmt) catch |err| {
+            return err
+        }
+        module.stmts[block_index].child_start = module.stmt_count_total
+        zparser_parse_statement(self, allocator, module, decl) catch |err| {
+            return err
+        }
+        module.stmts[block_index].child_count = module.stmt_count_total - module.stmts[block_index].child_start
         return 0
     }
 
     if kind == ZTokenLBrace {
+        block_stmt: ZAstStmt = ZAstStmt.init(ZAstStmtBlock)
+        block_index: i64 = ZAstModule.append_stmt(module, allocator, block_stmt) catch |err| {
+            return err
+        }
+        module.stmts[block_index].child_start = module.stmt_count_total
         zparser_parse_block(self, allocator, module, decl) catch |err| {
             return err
         }
+        module.stmts[block_index].child_count = module.stmt_count_total - module.stmts[block_index].child_start
         return 0
     }
 
@@ -711,7 +761,10 @@ fn zparser_parse_braced_members(self: *ZParser, allocator: *std.mem.HeapAllocato
             member.type_index = ZAstNoIndex
             member.value_expr = ZAstNoIndex
 
-            if !enum_members && zparser_at(self, ZTokenColon) {
+            if !enum_members {
+                if !zparser_at(self, ZTokenColon) {
+                    return error.InvalidArgument
+                }
                 zparser_advance(self)
                 member.type_index = zparser_capture_type(self, allocator, module) catch |err| {
                     return err
@@ -902,7 +955,7 @@ export fn ZParser.parse_program(self: *ZParser, allocator: *std.mem.HeapAllocato
     while !zparser_at(self, ZTokenEof) {
         if zparser_at(self, ZTokenImport) {
             zparser_parse_import(self, allocator, module) catch |err| {
-                return error.InvalidArgument
+                return err
             }
             continue
         }
@@ -915,56 +968,56 @@ export fn ZParser.parse_program(self: *ZParser, allocator: *std.mem.HeapAllocato
 
         if zparser_at(self, ZTokenExtern) {
             zparser_parse_extern_function(self, allocator, module, exported) catch |err| {
-                return error.InvalidArgument
+                return err
             }
             continue
         }
 
         if zparser_at(self, ZTokenError) {
             zparser_parse_error_declaration(self, allocator, module, exported) catch |err| {
-                return error.InvalidArgument
+                return err
             }
             continue
         }
 
         if zparser_at(self, ZTokenConst) {
             zparser_parse_value_declaration(self, allocator, module, exported, true) catch |err| {
-                return error.InvalidArgument
+                return err
             }
             continue
         }
 
         if zparser_at(self, ZTokenStruct) {
             zparser_parse_aggregate(self, allocator, module, exported, ZTokenStruct) catch |err| {
-                return error.InvalidArgument
+                return err
             }
             continue
         }
 
         if zparser_at(self, ZTokenEnum) {
             zparser_parse_aggregate(self, allocator, module, exported, ZTokenEnum) catch |err| {
-                return error.InvalidArgument
+                return err
             }
             continue
         }
 
         if zparser_at(self, ZTokenUnion) {
             zparser_parse_aggregate(self, allocator, module, exported, ZTokenUnion) catch |err| {
-                return error.InvalidArgument
+                return err
             }
             continue
         }
 
         if zparser_at(self, ZTokenFn) {
             zparser_parse_function(self, allocator, module, exported) catch |err| {
-                return error.InvalidArgument
+                return err
             }
             continue
         }
 
         if zparser_at(self, ZTokenIdentifier) && zparser_peek_kind(self, 1) == ZTokenColon {
             zparser_parse_value_declaration(self, allocator, module, exported, false) catch |err| {
-                return error.InvalidArgument
+                return err
             }
             continue
         }

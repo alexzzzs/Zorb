@@ -69,6 +69,10 @@ export fn std.mem.HeapAllocator.alloc(self: *std.mem.HeapAllocator, size: i64) !
     }
     
     ptr: *u8 = &self.buffer[self.pos]
+    view: []u8
+    view.ptr = ptr
+    view.len = aligned_size
+    std.mem.zero(view)
     self.pos = self.pos + aligned_size
     return ptr
 }
