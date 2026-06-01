@@ -275,6 +275,8 @@ fn zparser_parse_call(self: *ZParser, allocator: *std.mem.HeapAllocator, module:
     callee: ZAstExpr = module.exprs[callee_index]
     if callee.kind == ZAstExprIdentifier {
         expr.name = callee.name
+    } else {
+        expr.name = ZAstText.empty()
     }
     expr.arg_start = module.expr_arg_count
     self.current_call_count = self.current_call_count + 1
@@ -411,7 +413,7 @@ fn zparser_parse_primary(self: *ZParser, allocator: *std.mem.HeapAllocator, modu
 
     if kind == ZTokenMinus {
         op: i64 = zparser_advance(self).kind
-        rhs: i64 = zparser_parse_primary(self, allocator, module) catch |err| {
+        rhs: i64 = zparser_parse_postfix(self, allocator, module) catch |err| {
             return err
         }
         expr: ZAstExpr = ZAstExpr.init(ZAstExprUnary)
@@ -425,7 +427,7 @@ fn zparser_parse_primary(self: *ZParser, allocator: *std.mem.HeapAllocator, modu
 
     if kind == ZTokenAmp || kind == ZTokenBang || kind == ZTokenStar {
         op: i64 = zparser_advance(self).kind
-        rhs: i64 = zparser_parse_primary(self, allocator, module) catch |err| {
+        rhs: i64 = zparser_parse_postfix(self, allocator, module) catch |err| {
             return err
         }
         expr: ZAstExpr = ZAstExpr.init(ZAstExprUnary)

@@ -115,10 +115,10 @@ fn main() -> i64 {
     expect(module.decls[10].kind == ZAstDeclFunction) catch |err| { return err }
     expect(ast_text_eql(module.decls[10].name, "use_pair")) catch |err| { return err }
     expect(module.decls[10].param_count == 2) catch |err| { return err }
-    expect(module.decls[10].local_count == 5) catch |err| { return err }
+    expect(module.decls[10].local_count == 7) catch |err| { return err }
     expect(module.decls[10].return_count == 1) catch |err| { return err }
     expect(module.decls[10].binary_count == 2) catch |err| { return err }
-    expect(module.decls[10].stmt_count == 7) catch |err| { return err }
+    expect(module.decls[10].stmt_count == 9) catch |err| { return err }
 
     pair_field_stmt: ZAstStmt = module.stmts[module.decls[10].stmt_start]
     expect(pair_field_stmt.kind == ZAstStmtVar) catch |err| { return err }
@@ -134,7 +134,12 @@ fn main() -> i64 {
     expect(module.exprs[assign_stmt.expr_index].kind == ZAstExprField) catch |err| { return err }
     expect(module.exprs[assign_stmt.value_expr].kind == ZAstExprIdentifier) catch |err| { return err }
 
-    precedence_stmt: ZAstStmt = module.stmts[module.decls[10].stmt_start + 3]
+    deref_field_stmt: ZAstStmt = module.stmts[module.decls[10].stmt_start + 4]
+    expect(deref_field_stmt.kind == ZAstStmtVar) catch |err| { return err }
+    expect(module.exprs[deref_field_stmt.expr_index].kind == ZAstExprField) catch |err| { return err }
+    expect(module.exprs[module.exprs[deref_field_stmt.expr_index].left].kind == ZAstExprUnary) catch |err| { return err }
+
+    precedence_stmt: ZAstStmt = module.stmts[module.decls[10].stmt_start + 5]
     expect(precedence_stmt.kind == ZAstStmtVar) catch |err| { return err }
     precedence_root: ZAstExpr = module.exprs[precedence_stmt.expr_index]
     expect(precedence_root.kind == ZAstExprBinary) catch |err| { return err }
@@ -142,11 +147,11 @@ fn main() -> i64 {
     expect(module.exprs[precedence_root.right].kind == ZAstExprBinary) catch |err| { return err }
     expect(module.exprs[precedence_root.right].op == ZTokenStar) catch |err| { return err }
 
-    cast_stmt: ZAstStmt = module.stmts[module.decls[10].stmt_start + 4]
+    cast_stmt: ZAstStmt = module.stmts[module.decls[10].stmt_start + 6]
     expect(cast_stmt.kind == ZAstStmtVar) catch |err| { return err }
     expect(module.exprs[cast_stmt.expr_index].kind == ZAstExprCast) catch |err| { return err }
 
-    error_stmt: ZAstStmt = module.stmts[module.decls[10].stmt_start + 5]
+    error_stmt: ZAstStmt = module.stmts[module.decls[10].stmt_start + 7]
     expect(error_stmt.kind == ZAstStmtVar) catch |err| { return err }
     expect(module.exprs[error_stmt.expr_index].kind == ZAstExprError) catch |err| { return err }
     expect(ast_text_eql(module.exprs[error_stmt.expr_index].name, "Bad")) catch |err| { return err }

@@ -30,6 +30,8 @@ fn use_pair(pair: Pair, items: [4]i64) -> i64 {
     lhs: i64 = pair.lhs
     first: i64 = items[0]
     pair.lhs = first
+    pair_ptr: *Pair = &pair
+    deref_lhs: i64 = (*pair_ptr).lhs
     calc: i64 = lhs + first * 2
     narrowed: i32 = cast(i32, first)
     err_code: i32 = error.Bad

@@ -77,5 +77,25 @@ fn main() -> i64 {
         return err
     }
 
+    expect_error("fn main() -> i32 { return error.Missing }\n", error.NotFound) catch |err| {
+        return err
+    }
+
+    expect_error("struct Pair { lhs: i64 }\nfn main() -> i64 { pair: Pair return pair.rhs }\n", error.NotFound) catch |err| {
+        return err
+    }
+
+    expect_error("fn main() -> i64 { value: i64 = 1 return value[0] }\n", error.NotFound) catch |err| {
+        return err
+    }
+
+    expect_error("fn main() -> i64 { values: [4]i64 first: i64 = values[\"bad\"] return first }\n", error.NotFound) catch |err| {
+        return err
+    }
+
+    expect_error("fn main() -> i64 { value: i64 = 1 flag: bool = true value = flag return value }\n", error.InvalidArgument) catch |err| {
+        return err
+    }
+
     return 0
 }
