@@ -26,6 +26,16 @@ fn helper(value: i64) -> i64 {
     return value
 }
 
+fn use_pair(pair: Pair, items: [4]i64) -> i64 {
+    lhs: i64 = pair.lhs
+    first: i64 = items[0]
+    pair.lhs = first
+    calc: i64 = lhs + first * 2
+    narrowed: i32 = cast(i32, first)
+    err_code: i32 = error.Bad
+    return calc
+}
+
 export fn add(lhs: i64, rhs: i64) -> i64 {
     total: i64 = lhs + rhs
     ptr: *i64 = &lhs

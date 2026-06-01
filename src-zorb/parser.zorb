@@ -211,6 +211,37 @@ fn zparser_is_binary_operator(kind: i64) -> bool {
     return kind == ZTokenPlus || kind == ZTokenMinus || kind == ZTokenStar || kind == ZTokenSlash || kind == ZTokenPercent || kind == ZTokenAmp || kind == ZTokenPipe || kind == ZTokenCaret || kind == ZTokenLShift || kind == ZTokenRShift || kind == ZTokenGreater || kind == ZTokenLess || kind == ZTokenGreaterEqual || kind == ZTokenLessEqual || kind == ZTokenEqualEqual || kind == ZTokenBangEqual || kind == ZTokenAndAnd || kind == ZTokenOrOr
 }
 
+fn zparser_binary_precedence(kind: i64) -> i64 {
+    if kind == ZTokenStar || kind == ZTokenSlash || kind == ZTokenPercent {
+        return 9
+    }
+    if kind == ZTokenPlus || kind == ZTokenMinus {
+        return 8
+    }
+    if kind == ZTokenLShift || kind == ZTokenRShift {
+        return 7
+    }
+    if kind == ZTokenAmp {
+        return 6
+    }
+    if kind == ZTokenCaret {
+        return 5
+    }
+    if kind == ZTokenPipe {
+        return 4
+    }
+    if kind == ZTokenGreater || kind == ZTokenLess || kind == ZTokenGreaterEqual || kind == ZTokenLessEqual || kind == ZTokenEqualEqual || kind == ZTokenBangEqual {
+        return 3
+    }
+    if kind == ZTokenAndAnd {
+        return 2
+    }
+    if kind == ZTokenOrOr {
+        return 1
+    }
+    return 0
+}
+
 fn zparser_expression_stops(self: *ZParser, stop_comma: bool, stop_lbrace: bool, stop_statement: bool) -> bool {
     kind: i64 = zparser_current(self).kind
     if kind == ZTokenEof || kind == ZTokenRBrace || kind == ZTokenSemicolon {
@@ -225,7 +256,7 @@ fn zparser_expression_stops(self: *ZParser, stop_comma: bool, stop_lbrace: bool,
     if kind == ZTokenRParen || kind == ZTokenRBracket {
         return true
     }
-    if stop_statement && (kind == ZTokenReturn || kind == ZTokenIf || kind == ZTokenWhile || kind == ZTokenFor || kind == ZTokenSwitch || kind == ZTokenMatch || kind == ZTokenContinue || kind == ZTokenBreak || kind == ZTokenImport || kind == ZTokenExtern || kind == ZTokenFn || kind == ZTokenConst || kind == ZTokenError || kind == ZTokenStruct || kind == ZTokenEnum || kind == ZTokenUnion) {
+    if stop_statement && (kind == ZTokenReturn || kind == ZTokenIf || kind == ZTokenWhile || kind == ZTokenFor || kind == ZTokenSwitch || kind == ZTokenMatch || kind == ZTokenContinue || kind == ZTokenBreak || kind == ZTokenImport || kind == ZTokenExtern || kind == ZTokenFn || kind == ZTokenConst || kind == ZTokenStruct || kind == ZTokenEnum || kind == ZTokenUnion) {
         return true
     }
     if stop_statement && kind == ZTokenIdentifier && zparser_peek_kind(self, 1) == ZTokenColon {
@@ -234,13 +265,17 @@ fn zparser_expression_stops(self: *ZParser, stop_comma: bool, stop_lbrace: bool,
     return false
 }
 
-fn zparser_parse_call(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule, name: ZAstText) !i64 {
+fn zparser_parse_call(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule, callee_index: i64) !i64 {
     zparser_expect(self, ZTokenLParen) catch |err| {
         return error.InvalidArgument
     }
 
     expr: ZAstExpr = ZAstExpr.init(ZAstExprCall)
-    expr.name = name
+    expr.left = callee_index
+    callee: ZAstExpr = module.exprs[callee_index]
+    if callee.kind == ZAstExprIdentifier {
+        expr.name = callee.name
+    }
     expr.arg_start = module.expr_arg_count
     self.current_call_count = self.current_call_count + 1
 
@@ -280,15 +315,51 @@ fn zparser_parse_call(self: *ZParser, allocator: *std.mem.HeapAllocator, module:
 
 fn zparser_parse_primary(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule) !i64 {
     kind: i64 = zparser_current(self).kind
+    if kind == ZTokenError {
+        zparser_advance(self)
+        zparser_expect(self, ZTokenDot) catch |err| {
+            return error.InvalidArgument
+        }
+        name: ZToken = zparser_expect(self, ZTokenIdentifier) catch |err| {
+            return error.InvalidArgument
+        }
+        expr: ZAstExpr = ZAstExpr.init(ZAstExprError)
+        expr.name = ZAstText.from_token(name)
+        index: i64 = ZAstModule.append_expr(module, allocator, expr) catch |err| {
+            return err
+        }
+        return index
+    }
+
+    if kind == ZTokenCast {
+        zparser_advance(self)
+        zparser_expect(self, ZTokenLParen) catch |err| {
+            return error.InvalidArgument
+        }
+        type_index: i64 = zparser_capture_type(self, allocator, module) catch |err| {
+            return err
+        }
+        zparser_expect(self, ZTokenComma) catch |err| {
+            return error.InvalidArgument
+        }
+        value_index: i64 = zparser_parse_expression(self, allocator, module, false, false, false) catch |err| {
+            return err
+        }
+        zparser_expect(self, ZTokenRParen) catch |err| {
+            return error.InvalidArgument
+        }
+        expr: ZAstExpr = ZAstExpr.init(ZAstExprCast)
+        expr.type_index = type_index
+        expr.left = value_index
+        index: i64 = ZAstModule.append_expr(module, allocator, expr) catch |err| {
+            return err
+        }
+        return index
+    }
+
     if kind == ZTokenIdentifier || kind == ZTokenBuiltin {
         token: ZToken = zparser_advance(self)
         name: ZAstText = ZAstText.from_token(token)
-        if zparser_at(self, ZTokenLParen) {
-            call_index: i64 = zparser_parse_call(self, allocator, module, name) catch |err| {
-                return err
-            }
-            return call_index
-        }
         expr: ZAstExpr = ZAstExpr.init(ZAstExprIdentifier)
         expr.name = name
         index: i64 = ZAstModule.append_expr(module, allocator, expr) catch |err| {
@@ -374,18 +445,69 @@ fn zparser_parse_primary(self: *ZParser, allocator: *std.mem.HeapAllocator, modu
     return index
 }
 
-fn zparser_parse_expression(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule, stop_comma: bool, stop_lbrace: bool, stop_statement: bool) !i64 {
-    left: i64 = zparser_parse_primary(self, allocator, module) catch |err| {
+fn zparser_parse_postfix(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule) !i64 {
+    expr_index: i64 = zparser_parse_primary(self, allocator, module) catch |err| {
+        return err
+    }
+
+    while !zparser_at(self, ZTokenEof) {
+        if zparser_at(self, ZTokenDot) {
+            zparser_advance(self)
+            field: ZToken = zparser_expect(self, ZTokenIdentifier) catch |err| {
+                return error.InvalidArgument
+            }
+            expr: ZAstExpr = ZAstExpr.init(ZAstExprField)
+            expr.left = expr_index
+            expr.name = ZAstText.from_token(field)
+            expr_index = ZAstModule.append_expr(module, allocator, expr) catch |err| {
+                return err
+            }
+            continue
+        }
+
+        if zparser_at(self, ZTokenLBracket) {
+            zparser_advance(self)
+            index_expr: i64 = zparser_parse_expression(self, allocator, module, false, false, false) catch |err| {
+                return err
+            }
+            zparser_expect(self, ZTokenRBracket) catch |err| {
+                return error.InvalidArgument
+            }
+            expr: ZAstExpr = ZAstExpr.init(ZAstExprIndex)
+            expr.left = expr_index
+            expr.right = index_expr
+            expr_index = ZAstModule.append_expr(module, allocator, expr) catch |err| {
+                return err
+            }
+            continue
+        }
+
+        if zparser_at(self, ZTokenLParen) {
+            expr_index = zparser_parse_call(self, allocator, module, expr_index) catch |err| {
+                return err
+            }
+            continue
+        }
+
+        return expr_index
+    }
+
+    return expr_index
+}
+
+fn zparser_parse_expression_precedence(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule, stop_comma: bool, stop_lbrace: bool, stop_statement: bool, parent_precedence: i64) !i64 {
+    left: i64 = zparser_parse_postfix(self, allocator, module) catch |err| {
         return err
     }
 
     while !zparser_expression_stops(self, stop_comma, stop_lbrace, stop_statement) {
         kind: i64 = zparser_current(self).kind
-        if !zparser_is_binary_operator(kind) {
+        precedence: i64 = zparser_binary_precedence(kind)
+        if precedence == 0 || precedence <= parent_precedence {
             return left
         }
         zparser_advance(self)
-        right: i64 = zparser_parse_primary(self, allocator, module) catch |err| {
+        right: i64 = zparser_parse_expression_precedence(self, allocator, module, stop_comma, stop_lbrace, stop_statement, precedence) catch |err| {
             return err
         }
         expr: ZAstExpr = ZAstExpr.init(ZAstExprBinary)
@@ -399,6 +521,13 @@ fn zparser_parse_expression(self: *ZParser, allocator: *std.mem.HeapAllocator, m
     }
 
     return left
+}
+
+fn zparser_parse_expression(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule, stop_comma: bool, stop_lbrace: bool, stop_statement: bool) !i64 {
+    result: i64 = zparser_parse_expression_precedence(self, allocator, module, stop_comma, stop_lbrace, stop_statement, 0) catch |err| {
+        return err
+    }
+    return result
 }
 
 fn zparser_skip_expression_tail(self: *ZParser) {
@@ -542,10 +671,23 @@ fn zparser_parse_statement(self: *ZParser, allocator: *std.mem.HeapAllocator, mo
     }
 
     if !zparser_expression_stops(self, false, false, true) {
-        stmt: ZAstStmt = ZAstStmt.init(ZAstStmtExpr)
-        stmt.expr_index = zparser_parse_expression(self, allocator, module, false, false, true) catch |err| {
+        expr_index: i64 = zparser_parse_expression(self, allocator, module, false, false, true) catch |err| {
             return err
         }
+        if zparser_at(self, ZTokenEquals) {
+            zparser_advance(self)
+            stmt: ZAstStmt = ZAstStmt.init(ZAstStmtAssign)
+            stmt.expr_index = expr_index
+            stmt.value_expr = zparser_parse_expression(self, allocator, module, false, false, true) catch |err| {
+                return err
+            }
+            ZAstModule.append_stmt(module, allocator, stmt) catch |err| {
+                return err
+            }
+            return 0
+        }
+        stmt: ZAstStmt = ZAstStmt.init(ZAstStmtExpr)
+        stmt.expr_index = expr_index
         ZAstModule.append_stmt(module, allocator, stmt) catch |err| {
             return err
         }
