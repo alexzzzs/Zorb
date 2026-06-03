@@ -1,0 +1,20 @@
+fn a.b() -> i32 {
+    return 1
+}
+
+fn a_b() -> i32 {
+    return 2
+}
+
+enum m.Mode: i32 {
+    Run = 3
+}
+
+enum m_Mode: i32 {
+    Run = 4
+}
+
+fn main() -> i32 {
+    mode: m_Mode = m_Mode.Run
+    return a_b()
+}

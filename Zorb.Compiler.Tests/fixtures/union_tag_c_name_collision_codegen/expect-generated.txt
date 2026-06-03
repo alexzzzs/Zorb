@@ -1,0 +1,5 @@
+typedef int32_t a_b_Tag;
+static const a_b_Tag a_b_Tag_C = (a_b_Tag)0;
+int64_t a_b_Tag_C__z2 = 7;
+struct a_b x = (struct a_b){ .tag = a_b_Tag_C, .data = { .C = 1 } };
+int64_t y = a_b_Tag_C__z2;

@@ -1,0 +1,2 @@
+f->func(f->arg);
+f.func(f.arg);

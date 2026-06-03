@@ -11,4 +11,12 @@
     <ProjectReference Include="..\Zorb.Compiler\Zorb.Compiler.csproj" />
   </ItemGroup>
 
+  <Target
+    Name="RunExecutableHarnessOnDotnetTest"
+    AfterTargets="VSTest"
+    DependsOnTargets="Build"
+    Condition="'$(VSTestSessionCorrelationId)' != ''">
+    <Exec Command="dotnet &quot;$(TargetPath)&quot;" WorkingDirectory="$(MSBuildProjectDirectory)" />
+  </Target>
+
 </Project>

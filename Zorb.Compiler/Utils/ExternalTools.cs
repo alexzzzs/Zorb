@@ -46,30 +46,46 @@ public static class ExternalTools
 
     public static CommandResult RunProcess(string fileName, string arguments, string workingDirectory)
     {
+        return RunProcessCore(fileName, SplitCommandLine(arguments), workingDirectory, timeoutMilliseconds: null);
+    }
+
+    public static CommandResult RunProcess(string fileName, IEnumerable<string> arguments, string workingDirectory)
+    {
         return RunProcessCore(fileName, arguments, workingDirectory, timeoutMilliseconds: null);
     }
 
     public static CommandResult RunProcessWithTimeout(string fileName, string arguments, string workingDirectory, int timeoutMilliseconds)
+    {
+        return RunProcessCore(fileName, SplitCommandLine(arguments), workingDirectory, timeoutMilliseconds);
+    }
+
+    public static CommandResult RunProcessWithTimeout(string fileName, IEnumerable<string> arguments, string workingDirectory, int timeoutMilliseconds)
     {
         return RunProcessCore(fileName, arguments, workingDirectory, timeoutMilliseconds);
     }
 
     public static CommandResult RunProcessWithTimeout(string fileName, string arguments, string workingDirectory, TimeSpan timeout)
     {
+        return RunProcessCore(fileName, SplitCommandLine(arguments), workingDirectory, (int)timeout.TotalMilliseconds);
+    }
+
+    public static CommandResult RunProcessWithTimeout(string fileName, IEnumerable<string> arguments, string workingDirectory, TimeSpan timeout)
+    {
         return RunProcessCore(fileName, arguments, workingDirectory, (int)timeout.TotalMilliseconds);
     }
 
-    private static CommandResult RunProcessCore(string fileName, string arguments, string workingDirectory, int? timeoutMilliseconds)
+    private static CommandResult RunProcessCore(string fileName, IEnumerable<string> arguments, string workingDirectory, int? timeoutMilliseconds)
     {
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,
-            Arguments = arguments,
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
         };
+        foreach (var argument in arguments)
+            startInfo.ArgumentList.Add(argument);
 
         using var process = Process.Start(startInfo) ?? throw new ZorbCompilerException($"Failed to start process '{fileName}'.");
         var stdOutTask = process.StandardOutput.ReadToEndAsync();
@@ -101,5 +117,38 @@ public static class ExternalTools
         var stdErr = stdErrTask.GetAwaiter().GetResult();
         process.WaitForExit();
         return new CommandResult(process.ExitCode, stdOut, stdErr);
+    }
+
+    private static IReadOnlyList<string> SplitCommandLine(string arguments)
+    {
+        var result = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var inQuotes = false;
+
+        foreach (var ch in arguments)
+        {
+            if (ch == '"')
+            {
+                inQuotes = !inQuotes;
+                continue;
+            }
+
+            if (char.IsWhiteSpace(ch) && !inQuotes)
+            {
+                if (current.Length > 0)
+                {
+                    result.Add(current.ToString());
+                    current.Clear();
+                }
+                continue;
+            }
+
+            current.Append(ch);
+        }
+
+        if (current.Length > 0)
+            result.Add(current.ToString());
+
+        return result;
     }
 }

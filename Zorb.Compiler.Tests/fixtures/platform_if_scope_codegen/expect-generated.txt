@@ -1,0 +1,6 @@
+#if __zorb_builtin_is_linux
+{
+int64_t x = 1;
+}
+#endif
+int64_t x = 2;

@@ -468,15 +468,19 @@ public class TypeChecker
         _importAliasScopes.Push(new Dictionary<string, HashSet<string>>(StringComparer.Ordinal));
         _constValueScopes.Push(new Dictionary<string, long>(StringComparer.Ordinal));
         _declarationNodeScopes.Push(new Dictionary<string, Node>(StringComparer.Ordinal));
-        InitializeBuiltins();
-
-        CheckNodes(nodes, currentDir);
-        
-        _declarationNodeScopes.Pop();
-        _constValueScopes.Pop();
-        _importAliasScopes.Pop();
-        _fileScopes.Pop();
-        _parsedFilesByPath = null;
+        try
+        {
+            InitializeBuiltins();
+            CheckNodes(nodes, currentDir);
+        }
+        finally
+        {
+            _declarationNodeScopes.Pop();
+            _constValueScopes.Pop();
+            _importAliasScopes.Pop();
+            _fileScopes.Pop();
+            _parsedFilesByPath = null;
+        }
     }
 
     public void CheckNodes(IReadOnlyList<Node> nodes, string currentDir = ".")
@@ -497,6 +501,8 @@ public class TypeChecker
                 var fullName = QualifiedNames.GetFullName(fn.NamespacePath, fn.Name);
                 if (!declaredInThisFile.TryAdd(fullName, fn))
                     _errors.Error(fn, $"Duplicate top-level declaration '{fullName}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[fullName])}");
+                if (IsBuiltinDeclarationName(fullName))
+                    _errors.Error(fn, $"Top-level declaration '{fullName}' conflicts with a built-in symbol.");
                 MakeVisible(fullName);
                 if (!_symbolTable.IsDefined(fullName)) _symbolTable.DefineFunction(fullName, fn.ReturnType, fn.Parameters);
             }
@@ -542,6 +548,8 @@ public class TypeChecker
                 RegisterErrorDeclaration(vd);
                 if (!declaredInThisFile.TryAdd(vd.Name, vd))
                     _errors.Error(vd, $"Duplicate top-level declaration '{vd.Name}'.{FormatPreviousDeclarationSuffix(declaredInThisFile[vd.Name])}");
+                if (IsBuiltinDeclarationName(vd.Name))
+                    _errors.Error(vd, $"Top-level declaration '{vd.Name}' conflicts with a built-in symbol.");
                 MakeVisible(vd.Name);
                 if (!_symbolTable.IsDefined(vd.Name)) _symbolTable.DefineVariable(vd.Name, vd.TypeName, vd.IsConst);
                 TryRecordConstValue(vd);
@@ -584,26 +592,30 @@ public class TypeChecker
 
                 _currentFunction = functionDecl;
                 PushScopedState();
-
-                foreach (var param in functionDecl.Parameters)
+                try
                 {
-                    if (_declarationNodeScopes.Peek().TryGetValue(param.Name, out var previousParameter))
+                    foreach (var param in functionDecl.Parameters)
                     {
-                        _errors.Error(functionDecl, $"Duplicate parameter '{param.Name}' in function '{functionDecl.Name}'. Earlier parameter is in the same function header.");
-                        continue;
+                        if (_declarationNodeScopes.Peek().TryGetValue(param.Name, out var previousParameter))
+                        {
+                            _errors.Error(functionDecl, $"Duplicate parameter '{param.Name}' in function '{functionDecl.Name}'. Earlier parameter is in the same function header.");
+                            continue;
+                        }
+                        _symbolTable.DefineParameter(param.Name, param.TypeName);
+                        _declarationNodeScopes.Peek()[param.Name] = functionDecl;
                     }
-                    _symbolTable.DefineParameter(param.Name, param.TypeName);
-                    _declarationNodeScopes.Peek()[param.Name] = functionDecl;
-                }
 
-                var flow = CheckBlock(functionDecl.Body, pushScope: false);
-                if (FunctionRequiresReturn(functionDecl) && flow != FlowOutcome.Returns)
+                    var flow = CheckBlock(functionDecl.Body, pushScope: false);
+                    if (FunctionRequiresReturn(functionDecl) && flow != FlowOutcome.Returns)
+                    {
+                        _errors.Error(functionDecl, $"Function '{functionDecl.Name}' may exit without returning a value");
+                    }
+                }
+                finally
                 {
-                    _errors.Error(functionDecl, $"Function '{functionDecl.Name}' may exit without returning a value");
+                    PopScopedState();
+                    _currentFunction = null;
                 }
-
-                PopScopedState();
-                _currentFunction = null;
             }
         }
     }
@@ -693,18 +705,23 @@ public class TypeChecker
 
         _fileScopes.Push(new HashSet<string>());
         _importAliasScopes.Push(new Dictionary<string, HashSet<string>>(StringComparer.Ordinal));
-        MakeVisible("syscall");
-        MakeVisible("Builtin.IsLinux");
-        MakeVisible("Builtin.IsWindows");
-        MakeVisible("Builtin.IsBareMetal");
-        MakeVisible("Builtin.IsX86_64");
-        MakeVisible("Builtin.IsAArch64");
+        try
+        {
+            MakeVisible("syscall");
+            MakeVisible("Builtin.IsLinux");
+            MakeVisible("Builtin.IsWindows");
+            MakeVisible("Builtin.IsBareMetal");
+            MakeVisible("Builtin.IsX86_64");
+            MakeVisible("Builtin.IsAArch64");
 
-        CheckNodes(importedNodes, dir);
-
-        _importAliasScopes.Pop();
-        _fileScopes.Pop();
-        _currentDir = previousDir;
+            CheckNodes(importedNodes, dir);
+        }
+        finally
+        {
+            _importAliasScopes.Pop();
+            _fileScopes.Pop();
+            _currentDir = previousDir;
+        }
     }
 
     private void InitializeBuiltins()
@@ -742,6 +759,16 @@ public class TypeChecker
             _symbolTable.DefineVariable(t, new TypeNode { Name = t });
             MakeVisible(t);
         }
+    }
+
+    private static bool IsBuiltinDeclarationName(string name)
+    {
+        return name is "syscall"
+            or "Builtin.IsLinux"
+            or "Builtin.IsWindows"
+            or "Builtin.IsBareMetal"
+            or "Builtin.IsX86_64"
+            or "Builtin.IsAArch64";
     }
 
     private static bool FunctionRequiresReturn(FunctionDecl functionDecl)
@@ -1303,23 +1330,28 @@ public class TypeChecker
         if (pushScope)
             PushScopedState();
 
-        var flow = FlowOutcome.FallsThrough;
-        foreach (var stmt in statements)
+        try
         {
-            if (flow != FlowOutcome.FallsThrough)
+            var flow = FlowOutcome.FallsThrough;
+            foreach (var stmt in statements)
             {
-                _errors.Warning(stmt, "Unreachable statement.");
-                break;
+                if (flow != FlowOutcome.FallsThrough)
+                {
+                    _errors.Warning(stmt, "Unreachable statement.");
+                    break;
+                }
+
+                NormalizeAliasReferences(stmt);
+                flow = CheckStatement(stmt);
             }
 
-            NormalizeAliasReferences(stmt);
-            flow = CheckStatement(stmt);
+            return flow;
         }
-
-        if (pushScope)
-            PopScopedState();
-
-        return flow;
+        finally
+        {
+            if (pushScope)
+                PopScopedState();
+        }
     }
 
     private void CheckVariableDeclaration(VariableDeclarationNode varDecl)
@@ -1840,11 +1872,17 @@ public class TypeChecker
                 }
 
                 PushScopedState();
-                _symbolTable.DefineVariable(catchExpr.ErrorVar, new TypeNode { Name = "i32" });
-                _catchErrorVarScopes.Peek().Add(catchExpr.ErrorVar);
-                foreach (var stmt in catchExpr.CatchBody)
-                    CheckStatement(stmt);
-                PopScopedState();
+                try
+                {
+                    _symbolTable.DefineVariable(catchExpr.ErrorVar, new TypeNode { Name = "i32" });
+                    _catchErrorVarScopes.Peek().Add(catchExpr.ErrorVar);
+                    foreach (var stmt in catchExpr.CatchBody)
+                        CheckStatement(stmt);
+                }
+                finally
+                {
+                    PopScopedState();
+                }
                 break;
 
             case SizeofExpr sizeofExpr:
@@ -1857,6 +1895,9 @@ public class TypeChecker
             case ErrorExpr errorExpr:
                 if (!TryResolveDeclaredErrorSymbol(errorExpr.ErrorCode, out _))
                     _errors.Error(errorExpr, $"Use of undeclared error 'error.{errorExpr.ErrorCode}'. Declare it first with 'error {errorExpr.ErrorCode} = ...'.");
+                break;
+
+            case InvalidExpr:
                 break;
         }
     }
@@ -2617,6 +2658,9 @@ public class TypeChecker
                 if (catchLeftType == null || !catchLeftType.IsErrorUnion)
                     return null;
                 return (catchLeftType.ErrorInnerType ?? catchLeftType).Clone();
+
+            case InvalidExpr:
+                return null;
 
             default:
                 return null;

@@ -1,0 +1,9 @@
+fn id(auto: i64, auto__z2: i64) -> i64 {
+    return auto + auto__z2
+}
+
+fn main() -> i64 {
+    auto: i64 = 1
+    auto__z2: i64 = 2
+    return id(auto, auto__z2)
+}

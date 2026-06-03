@@ -363,7 +363,7 @@ public partial class Parser
                 if (messageExpr is not StringExpr message)
                 {
                     ErrorReporter.Error("Builtin.CompileError expects a string literal message.", startToken.Line, startToken.Column, _fileName);
-                    return null!;
+                    return CreateInvalidExpr(startToken);
                 }
 
                 var expr = new BuiltinExpr { Name = "Builtin.CompileError", Message = message.Value };
@@ -381,7 +381,7 @@ public partial class Parser
             }
 
             ErrorReporter.Error($"Unknown builtin: {builtinName}", startToken.Line, startToken.Column, _fileName);
-            return null!;
+            return CreateInvalidExpr(startToken);
         }
 
         if (Current.Type == TokenType.Cast)
@@ -493,13 +493,21 @@ public partial class Parser
             return expr;
         }
 
+        var unexpectedToken = Current;
         ErrorReporter.Error(
             $"Unexpected token in expression: {DescribeToken(Current)}. Expected a literal, identifier, builtin, cast, unary operator, array literal, struct literal, or '('.",
             Current.Line,
             Current.Column,
             _fileName);
         Advance();
-        return null!;
+        return CreateInvalidExpr(unexpectedToken);
+    }
+
+    private Expr CreateInvalidExpr(Token token)
+    {
+        var expr = new InvalidExpr();
+        StampNode(expr, token);
+        return expr;
     }
 
     private int GetPrecedence(TokenType type) => type switch
