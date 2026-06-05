@@ -25,6 +25,12 @@ public class ErrorReporter
     public List<string> Errors => _errors.Select(FormatDiagnosticMessage).ToList();
     public List<string> Warnings => _warnings.Select(FormatDiagnosticMessage).ToList();
 
+    public void Clear()
+    {
+        _errors.Clear();
+        _warnings.Clear();
+    }
+
     public void Error(string message)
     {
         _errors.Add(new DiagnosticEntry(message, null, "error", Red));

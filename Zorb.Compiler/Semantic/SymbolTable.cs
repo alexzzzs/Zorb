@@ -38,6 +38,13 @@ public class SymbolTable
         _scopes.Push(_globalSymbols);
     }
 
+    public void Clear()
+    {
+        _scopes.Clear();
+        _globalSymbols.Clear();
+        _scopes.Push(_globalSymbols);
+    }
+
     public void PushScope()
     {
         _scopes.Push(new Dictionary<string, SymbolInfo>());

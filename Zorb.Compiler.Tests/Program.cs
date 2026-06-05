@@ -79,6 +79,17 @@ catch (Exception ex)
 
 try
 {
+    RunTypeCheckerStateResetTests();
+    Console.WriteLine("PASS type_checker_state_reset");
+}
+catch (Exception ex)
+{
+    failures.Add($"type_checker_state_reset: {ex.Message}");
+    Console.WriteLine("FAIL type_checker_state_reset");
+}
+
+try
+{
     RunGeneratorStateResetTests();
     Console.WriteLine("PASS generator_state_reset");
 }
@@ -219,7 +230,7 @@ static void RunCliArgumentValidationTests(string fixtureRoot)
     {
         foreach (var testCase in GetCliArgumentCases(sampleInput, tempDir, hasWindowsHostToolchain))
         {
-            var result = RunProcessWithTimeout(
+            var result = RunProcessWithTimeoutArgs(
                 compilerInvocation.FileName,
                 CombineCommandArguments(compilerInvocation.ArgumentsPrefix, testCase.Arguments),
                 projectRoot,
@@ -255,7 +266,7 @@ static void RunSemanticDiagnosticOutputTests(string fixtureRoot)
         ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
     var compilerInvocation = GetCompilerInvocation(projectRoot);
     var sampleInput = Path.Combine(fixtureRoot, "error_undeclared", "main.zorb");
-    var result = RunProcessWithTimeout(
+    var result = RunProcessWithTimeoutArgs(
         compilerInvocation.FileName,
         CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"\"{sampleInput}\""),
         projectRoot,
@@ -326,6 +337,45 @@ fn second() -> i32 {
         var secondGenerated = generator.Generate(secondCompilation.Ast, ParseFile(secondPath).Files);
         if (secondGenerated.Contains("#include <stddef.h>", StringComparison.Ordinal))
             throw new Exception("CGenerator leaked imported headers across Generate() calls.");
+    });
+}
+
+static void RunTypeCheckerStateResetTests()
+{
+    WithTempDirectory("zorb-typechecker-state", tempDir =>
+    {
+        var firstPath = Path.Combine(tempDir, "first.zorb");
+        var secondPath = Path.Combine(tempDir, "second.zorb");
+
+        File.WriteAllText(firstPath, """
+const Error_First: i32 = 1
+
+fn first() -> i32 {
+    return Error_First
+}
+""");
+
+        File.WriteAllText(secondPath, """
+fn second() -> i32 {
+    return missing_symbol
+}
+""");
+
+        var checker = new TypeChecker();
+        var firstParse = ParseFile(firstPath);
+        checker.Check(firstParse.EntryNodes, tempDir, firstParse.Files);
+        AssertNoErrors(firstParse.Errors);
+        AssertNoErrors(checker.Errors.Errors);
+
+        var secondParse = ParseFile(secondPath);
+        checker.Check(secondParse.EntryNodes, tempDir, secondParse.Files);
+        AssertNoErrors(secondParse.Errors);
+
+        if (!checker.Errors.Errors.Any(error => error.Contains("Use of undeclared identifier 'missing_symbol'.", StringComparison.Ordinal)))
+            throw new Exception($"Expected missing symbol diagnostic after reused checker reset.{Environment.NewLine}{string.Join(Environment.NewLine, checker.Errors.Errors)}");
+
+        if (checker.Errors.Errors.Any(error => error.Contains("Error_First", StringComparison.Ordinal)))
+            throw new Exception($"TypeChecker leaked diagnostics or symbols from the first check.{Environment.NewLine}{string.Join(Environment.NewLine, checker.Errors.Errors)}");
     });
 }
 
@@ -687,9 +737,11 @@ static void RunBareMetalCliBuildTests(string fixtureRoot)
         var imagePath = Path.Combine(tempDir, "kernel.elf");
         var keptCPath = Path.Combine(tempDir, "kernel.c");
         var emittedBundledLinkerScriptPath = Path.Combine(tempDir, "bundled.ld");
-        var bundledBuild = RunProcessWithTimeout(
+        var bundledBuild = RunProcessWithTimeoutArgs(
             compilerInvocation.FileName,
-            CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"build \"{mainPath}\" --target bare-metal-x86_64 -o \"{imagePath}\" --keep-c \"{keptCPath}\" --emit-linker-script \"{emittedBundledLinkerScriptPath}\""),
+            BuildCommandArguments(
+                compilerInvocation,
+                "build", mainPath, "--target", "bare-metal-x86_64", "-o", imagePath, "--keep-c", keptCPath, "--emit-linker-script", emittedBundledLinkerScriptPath),
             projectRoot,
             TimeSpan.FromSeconds(30));
 
@@ -775,9 +827,11 @@ SECTIONS
 
         var customImagePath = Path.Combine(tempDir, "kernel-custom.elf");
         var emittedCustomLinkerScriptPath = Path.Combine(tempDir, "custom-emitted.ld");
-        var customBuild = RunProcessWithTimeout(
+        var customBuild = RunProcessWithTimeoutArgs(
             compilerInvocation.FileName,
-            CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"build \"{mainPath}\" --target bare-metal-x86_64 --linker-script \"{customLinkerScriptPath}\" --emit-linker-script \"{emittedCustomLinkerScriptPath}\" -o \"{customImagePath}\""),
+            BuildCommandArguments(
+                compilerInvocation,
+                "build", mainPath, "--target", "bare-metal-x86_64", "--linker-script", customLinkerScriptPath, "--emit-linker-script", emittedCustomLinkerScriptPath, "-o", customImagePath),
             projectRoot,
             TimeSpan.FromSeconds(30));
 
@@ -863,9 +917,9 @@ static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string 
     var builtBinaryPath = Path.Combine(fixtureTempDir, outputFileName);
     var keptCPath = Path.Combine(fixtureTempDir, $"{fixtureName}.c");
 
-    var build = RunProcessWithTimeout(
+    var build = RunProcessWithTimeoutArgs(
         compilerInvocation.FileName,
-        CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"build \"{mainPath}\" --target {cliTargetName} -o \"{builtBinaryPath}\" --keep-c \"{keptCPath}\""),
+        BuildCommandArguments(compilerInvocation, "build", mainPath, "--target", cliTargetName, "-o", builtBinaryPath, "--keep-c", keptCPath),
         projectRoot,
         TimeSpan.FromSeconds(30));
 
@@ -889,9 +943,9 @@ static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string 
     if (!string.Equals(actualBuiltStdErr, expectedStdErr, StringComparison.Ordinal))
         throw new Exception($"Built fixture '{fixtureName}' stderr mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdErr}{Environment.NewLine}Actual:{Environment.NewLine}{actualBuiltStdErr}");
 
-    var run = RunProcessWithTimeout(
+    var run = RunProcessWithTimeoutArgs(
         compilerInvocation.FileName,
-        CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"run \"{mainPath}\" --target {cliTargetName}"),
+        BuildCommandArguments(compilerInvocation, "run", mainPath, "--target", cliTargetName),
         projectRoot,
         TimeSpan.FromSeconds(30));
 
@@ -909,10 +963,10 @@ static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string 
 static ProcessResult RunBuiltCliBinary(string builtBinaryPath, string workingDirectory)
 {
     if (OperatingSystem.IsLinux())
-        return RunProcessWithTimeout("timeout", $"30s \"{builtBinaryPath}\"", workingDirectory, TimeSpan.FromSeconds(30));
+        return RunProcessWithTimeoutArgs("timeout", ["30s", builtBinaryPath], workingDirectory, TimeSpan.FromSeconds(30));
 
     if (OperatingSystem.IsWindows())
-        return RunProcessWithTimeout(builtBinaryPath, "", workingDirectory, TimeSpan.FromSeconds(30));
+        return RunProcessWithTimeoutArgs(builtBinaryPath, Array.Empty<string>(), workingDirectory, TimeSpan.FromSeconds(30));
 
     throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
 }
@@ -942,8 +996,8 @@ static CompilerInvocation GetCompilerInvocation(string projectRoot)
 static IEnumerable<CompilerInvocation> GetCandidateCompilerInvocations(string directory)
 {
     var executableName = OperatingSystem.IsWindows() ? "Zorb.Compiler.exe" : "Zorb.Compiler";
-    yield return new CompilerInvocation(Path.Combine(directory, executableName), "");
-    yield return new CompilerInvocation("dotnet", $"\"{Path.Combine(directory, "Zorb.Compiler.dll")}\"");
+    yield return new CompilerInvocation(Path.Combine(directory, executableName), []);
+    yield return new CompilerInvocation("dotnet", [Path.Combine(directory, "Zorb.Compiler.dll")]);
 }
 
 static bool CompilerInvocationExists(CompilerInvocation invocation)
@@ -951,7 +1005,7 @@ static bool CompilerInvocationExists(CompilerInvocation invocation)
     if (!string.Equals(invocation.FileName, "dotnet", StringComparison.Ordinal))
         return File.Exists(invocation.FileName);
 
-    var dllPath = invocation.ArgumentsPrefix.Trim().Trim('"');
+    var dllPath = invocation.ArgumentsPrefix.Count == 1 ? invocation.ArgumentsPrefix[0] : "";
     return File.Exists(dllPath);
 }
 
@@ -1373,29 +1427,29 @@ static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeEx
         {
             EnsureToolAvailable("timeout");
             var binaryPath = Path.Combine(tempDir, "out");
-            compile = RunProcess(
+            compile = RunProcessArgs(
                 "gcc",
-                $"-O2 -nostdlib -fno-pie -no-pie -z execstack -fno-builtin \"{sourcePath}\" -o \"{binaryPath}\"",
+                ["-O2", "-nostdlib", "-fno-pie", "-no-pie", "-z", "execstack", "-fno-builtin", sourcePath, "-o", binaryPath],
                 tempDir);
 
             if (compile.ExitCode != 0)
                 throw new Exception($"Runtime gcc compile failed with exit code {compile.ExitCode}.{Environment.NewLine}{compile.StdErr}{compile.StdOut}".Trim());
 
-            execution = RunProcess("timeout", $"30s \"{binaryPath}\"", tempDir);
+            execution = RunProcessArgs("timeout", ["30s", binaryPath], tempDir);
         }
         else if (runtimeExpectation.TargetName == "host-linux")
         {
             EnsureToolAvailable("timeout");
             var binaryPath = Path.Combine(tempDir, "out");
-            compile = RunProcess(
+            compile = RunProcessArgs(
                 "gcc",
-                $"-O2 \"{sourcePath}\" -o \"{binaryPath}\"",
+                ["-O2", sourcePath, "-o", binaryPath],
                 tempDir);
 
             if (compile.ExitCode != 0)
                 throw new Exception($"Hosted Linux gcc compile failed with exit code {compile.ExitCode}.{Environment.NewLine}{compile.StdErr}{compile.StdOut}".Trim());
 
-            execution = RunProcess("timeout", $"30s \"{binaryPath}\"", tempDir);
+            execution = RunProcessArgs("timeout", ["30s", binaryPath], tempDir);
         }
         else if (runtimeExpectation.TargetName == "linux-aarch64")
         {
@@ -1404,30 +1458,30 @@ static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeEx
             EnsureToolAvailable("timeout");
 
             var binaryPath = Path.Combine(tempDir, "out-aarch64");
-            compile = RunProcess(
+            compile = RunProcessArgs(
                 "aarch64-linux-gnu-gcc",
-                $"-O2 -nostdlib -static -fno-pie -no-pie -z execstack -fno-builtin \"{sourcePath}\" -o \"{binaryPath}\"",
+                ["-O2", "-nostdlib", "-static", "-fno-pie", "-no-pie", "-z", "execstack", "-fno-builtin", sourcePath, "-o", binaryPath],
                 tempDir);
 
             if (compile.ExitCode != 0)
                 throw new Exception($"Runtime aarch64 gcc compile failed with exit code {compile.ExitCode}.{Environment.NewLine}{compile.StdErr}{compile.StdOut}".Trim());
 
-            execution = RunProcess("timeout", $"30s qemu-aarch64 \"{binaryPath}\"", tempDir);
+            execution = RunProcessArgs("timeout", ["30s", "qemu-aarch64", binaryPath], tempDir);
         }
         else if (runtimeExpectation.TargetName == "host-windows")
         {
             var compiler = EnsureToolAvailable("clang-cl", "cl");
 
             var binaryPath = Path.Combine(tempDir, "out.exe");
-            compile = RunProcess(
+            compile = RunProcessArgs(
                 compiler,
-                GetWindowsCompileArguments(compiler, sourcePath, binaryPath),
+                GetWindowsCompileArgumentList(compiler, sourcePath, binaryPath),
                 tempDir);
 
             if (compile.ExitCode != 0)
                 throw new Exception($"Runtime Windows compile failed with exit code {compile.ExitCode}.{Environment.NewLine}{compile.StdErr}{compile.StdOut}".Trim());
 
-            execution = RunProcessWithTimeout(binaryPath, "", tempDir, TimeSpan.FromSeconds(30));
+            execution = RunProcessWithTimeoutArgs(binaryPath, Array.Empty<string>(), tempDir, TimeSpan.FromSeconds(30));
         }
         else
         {
@@ -1517,11 +1571,11 @@ static string FindAncestorContainingFile(string startPath, string fileName)
     throw new Exception($"Unable to locate '{fileName}' from '{startPath}'.");
 }
 
-static string GetWindowsCompileArguments(string compiler, string cSourcePath, string outputPath)
+static IReadOnlyList<string> GetWindowsCompileArgumentList(string compiler, string cSourcePath, string outputPath)
 {
     try
     {
-        return ExternalTools.GetWindowsCompileArguments(compiler, cSourcePath, outputPath);
+        return ExternalTools.GetWindowsCompileArgumentList(compiler, cSourcePath, outputPath);
     }
     catch (ZorbCompilerException ex)
     {
@@ -1529,13 +1583,13 @@ static string GetWindowsCompileArguments(string compiler, string cSourcePath, st
     }
 }
 
-static ProcessResult RunProcess(string fileName, string arguments, string workingDirectory)
+static ProcessResult RunProcessArgs(string fileName, IEnumerable<string> arguments, string workingDirectory)
 {
     var result = ExternalTools.RunProcess(fileName, arguments, workingDirectory);
     return new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
 }
 
-static ProcessResult RunProcessWithTimeout(string fileName, string arguments, string workingDirectory, TimeSpan timeout)
+static ProcessResult RunProcessWithTimeoutArgs(string fileName, IEnumerable<string> arguments, string workingDirectory, TimeSpan timeout)
 {
     try
     {
@@ -1548,15 +1602,18 @@ static ProcessResult RunProcessWithTimeout(string fileName, string arguments, st
     }
 }
 
-static string CombineCommandArguments(string prefix, string arguments)
+static IReadOnlyList<string> CombineCommandArguments(IReadOnlyList<string> prefix, string arguments)
 {
-    if (string.IsNullOrEmpty(prefix))
-        return arguments;
+    var result = new List<string>(prefix);
+    result.AddRange(ExternalTools.SplitCommandLine(arguments));
+    return result;
+}
 
-    if (string.IsNullOrEmpty(arguments))
-        return prefix;
-
-    return prefix + " " + arguments;
+static IReadOnlyList<string> BuildCommandArguments(CompilerInvocation invocation, params string[] arguments)
+{
+    var result = new List<string>(invocation.ArgumentsPrefix);
+    result.AddRange(arguments);
+    return result;
 }
 
 enum FixturePhase
@@ -1581,7 +1638,7 @@ sealed record ProcessResult(int ExitCode, string StdOut, string StdErr);
 
 sealed record RuntimeExpectation(string TargetName, string? ExpectedStdOut, string? ExpectedStdErr, int ExpectedExit);
 
-sealed record CompilerInvocation(string FileName, string ArgumentsPrefix);
+sealed record CompilerInvocation(string FileName, IReadOnlyList<string> ArgumentsPrefix);
 
 sealed record CliWorkflowCase(string FixtureName, string TargetName);
 

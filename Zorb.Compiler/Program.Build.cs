@@ -69,7 +69,7 @@ partial class Program
 
         var compile = RunProcess(
             "gcc",
-            $"{GetLinuxCompileFlags(noStdLib)} \"{cSourcePath}\" -o \"{fullOutputPath}\" {nativeFlags}",
+            GetLinuxCompileArguments(noStdLib, cSourcePath, fullOutputPath, nativeFlags),
             Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
 
         if (compile.ExitCode != 0)
@@ -106,7 +106,7 @@ partial class Program
 
             var compile = RunProcess(
                 "gcc",
-                $"{BareMetalX86_64ObjectCompileFlags} \"{cSourcePath}\" -o \"{objectPath}\"",
+                BuildArgumentList(SplitCompileFlags(BareMetalX86_64ObjectCompileFlags), cSourcePath, "-o", objectPath),
                 Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
 
             if (compile.ExitCode != 0)
@@ -114,7 +114,7 @@ partial class Program
 
             var link = RunProcess(
                 "ld",
-                $"-m elf_x86_64 -T \"{linkerScript.Path}\" -z max-page-size=0x1000 -o \"{fullOutputPath}\" \"{objectPath}\"",
+                ["-m", "elf_x86_64", "-T", linkerScript.Path, "-z", "max-page-size=0x1000", "-o", fullOutputPath, objectPath],
                 tempDir);
 
             if (link.ExitCode != 0)
@@ -172,7 +172,7 @@ partial class Program
 
         var compile = RunProcess(
             compiler,
-            GetWindowsCompileArguments(compiler, cSourcePath, fullOutputPath),
+            GetWindowsCompileArgumentList(compiler, cSourcePath, fullOutputPath),
             Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
 
         if (compile.ExitCode != 0)
@@ -216,13 +216,13 @@ partial class Program
 
             var compile = RunProcess(
                 "gcc",
-                $"{GetLinuxCompileFlags(noStdLib)} \"{cSourcePath}\" -o \"{binaryPath}\" {nativeFlags}",
+                GetLinuxCompileArguments(noStdLib, cSourcePath, binaryPath, nativeFlags),
                 Path.GetDirectoryName(cSourcePath) ?? tempDir);
 
             if (compile.ExitCode != 0)
                 return ReportFailedProcess("Native build failed.", compile);
 
-            var execution = RunProcessWithTimeout(binaryPath, "", tempDir, RunTimeoutMilliseconds);
+            var execution = RunProcessWithTimeout(binaryPath, Array.Empty<string>(), tempDir, RunTimeoutMilliseconds);
             if (!string.IsNullOrEmpty(execution.StdOut))
                 Console.Write(execution.StdOut);
             if (!string.IsNullOrEmpty(execution.StdErr))
@@ -252,13 +252,13 @@ partial class Program
 
             var compile = RunProcess(
                 compiler,
-                GetWindowsCompileArguments(compiler, cSourcePath, binaryPath),
+                GetWindowsCompileArgumentList(compiler, cSourcePath, binaryPath),
                 Path.GetDirectoryName(cSourcePath) ?? tempDir);
 
             if (compile.ExitCode != 0)
                 return ReportFailedProcess("Native build failed.", compile);
 
-            var execution = RunProcessWithTimeout(binaryPath, "", tempDir, RunTimeoutMilliseconds);
+            var execution = RunProcessWithTimeout(binaryPath, Array.Empty<string>(), tempDir, RunTimeoutMilliseconds);
             if (!string.IsNullOrEmpty(execution.StdOut))
                 Console.Write(execution.StdOut);
             if (!string.IsNullOrEmpty(execution.StdErr))
@@ -293,6 +293,37 @@ partial class Program
             CommandMode.Build or CommandMode.Run => throw new ZorbCompilerException($"Build and run currently support Linux and Windows hosts only. Current host: {DescribeCurrentHost()}."),
             _ => CompilationTarget.HostLinux
         };
+    }
+
+    private static IReadOnlyList<string> GetLinuxCompileArguments(bool noStdLib, string cSourcePath, string outputPath, string nativeFlags)
+    {
+        var args = new List<string>(SplitCompileFlags(GetLinuxCompileFlags(noStdLib)))
+        {
+            cSourcePath,
+            "-o",
+            outputPath
+        };
+        args.AddRange(ExternalTools.SplitCommandLine(nativeFlags));
+        return args;
+    }
+
+    private static IReadOnlyList<string> SplitCompileFlags(string flags)
+    {
+        return ExternalTools.SplitCommandLine(flags);
+    }
+
+    private static IReadOnlyList<string> BuildArgumentList(params object[] parts)
+    {
+        var args = new List<string>();
+        foreach (var part in parts)
+        {
+            if (part is IEnumerable<string> sequence)
+                args.AddRange(sequence);
+            else
+                args.Add(part.ToString() ?? "");
+        }
+
+        return args;
     }
 
     private static void EnsureTargetSupportedForCurrentHost(CommandMode mode, CompilationTarget target)

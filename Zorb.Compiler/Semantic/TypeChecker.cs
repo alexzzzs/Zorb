@@ -462,6 +462,7 @@ public class TypeChecker
 
     public void Check(IReadOnlyList<Node> nodes, string currentDir = ".", IReadOnlyDictionary<string, IReadOnlyList<Node>>? parsedFilesByPath = null)
     {
+        ResetCompilationState();
         _currentDir = currentDir;
         _parsedFilesByPath = parsedFilesByPath;
         _fileScopes.Push(new HashSet<string>());
@@ -481,6 +482,25 @@ public class TypeChecker
             _fileScopes.Pop();
             _parsedFilesByPath = null;
         }
+    }
+
+    private void ResetCompilationState()
+    {
+        _symbolTable.Clear();
+        _errors.Clear();
+        _processedImports.Clear();
+        _importAliasScopes.Clear();
+        _constValueScopes.Clear();
+        _declarationNodeScopes.Clear();
+        _catchErrorVarScopes.Clear();
+        _errorSymbols.Clear();
+        _errorValues.Clear();
+        _fileScopes.Clear();
+        _fileExports.Clear();
+        _parsedFilesByPath = null;
+        _currentDir = ".";
+        _currentFunction = null;
+        _loopDepth = 0;
     }
 
     public void CheckNodes(IReadOnlyList<Node> nodes, string currentDir = ".")

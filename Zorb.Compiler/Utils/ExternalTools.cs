@@ -8,10 +8,14 @@ public static class ExternalTools
 {
     public static string GetWindowsCompileArguments(string compiler, string cSourcePath, string outputPath)
     {
+        return string.Join(" ", GetWindowsCompileArgumentList(compiler, cSourcePath, outputPath).Select(QuoteArgument));
+    }
+
+    public static IReadOnlyList<string> GetWindowsCompileArgumentList(string compiler, string cSourcePath, string outputPath)
+    {
         return compiler switch
         {
-            "clang-cl" => $"/nologo /TC /O2 \"{cSourcePath}\" /Fe:\"{outputPath}\" /link kernel32.lib",
-            "cl" => $"/nologo /TC /O2 \"{cSourcePath}\" /Fe:\"{outputPath}\" /link kernel32.lib",
+            "clang-cl" or "cl" => ["/nologo", "/TC", "/O2", cSourcePath, $"/Fe:{outputPath}", "/link", "kernel32.lib"],
             _ => throw new ZorbCompilerException($"Unsupported Windows compiler '{compiler}'.")
         };
     }
@@ -40,7 +44,7 @@ public static class ExternalTools
     public static bool IsToolAvailable(string toolName)
     {
         var locator = OperatingSystem.IsWindows() ? "where" : "which";
-        var check = RunProcess(locator, toolName, Directory.GetCurrentDirectory());
+        var check = RunProcess(locator, [toolName], Directory.GetCurrentDirectory());
         return check.ExitCode == 0 && !string.IsNullOrWhiteSpace(check.StdOut);
     }
 
@@ -137,7 +141,7 @@ public static class ExternalTools
         return new CommandResult(process.ExitCode, stdOut, stdErr);
     }
 
-    private static IReadOnlyList<string> SplitCommandLine(string arguments)
+    public static IReadOnlyList<string> SplitCommandLine(string arguments)
     {
         var result = new List<string>();
         var current = new System.Text.StringBuilder();
@@ -168,5 +172,13 @@ public static class ExternalTools
             result.Add(current.ToString());
 
         return result;
+    }
+
+    private static string QuoteArgument(string argument)
+    {
+        if (argument.Length == 0 || argument.Any(char.IsWhiteSpace) || argument.Contains('"', StringComparison.Ordinal))
+            return "\"" + argument.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
+
+        return argument;
     }
 }

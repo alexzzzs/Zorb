@@ -7,9 +7,9 @@ partial class Program
         return noStdLib ? HostLinuxFreestandingCompileFlags : HostLinuxHostedCompileFlags;
     }
 
-    private static string GetWindowsCompileArguments(string compiler, string cSourcePath, string outputPath)
+    private static IReadOnlyList<string> GetWindowsCompileArgumentList(string compiler, string cSourcePath, string outputPath)
     {
-        return ExternalTools.GetWindowsCompileArguments(compiler, cSourcePath, outputPath);
+        return ExternalTools.GetWindowsCompileArgumentList(compiler, cSourcePath, outputPath);
     }
 
     private static string NormalizeWindowsExecutablePath(string outputPath)
@@ -32,7 +32,17 @@ partial class Program
         return FromCommandResult(ExternalTools.RunProcess(fileName, arguments, workingDirectory));
     }
 
+    private static ProcessResult RunProcess(string fileName, IEnumerable<string> arguments, string workingDirectory)
+    {
+        return FromCommandResult(ExternalTools.RunProcess(fileName, arguments, workingDirectory));
+    }
+
     private static ProcessResult RunProcessWithTimeout(string fileName, string arguments, string workingDirectory, int timeoutMilliseconds)
+    {
+        return FromCommandResult(ExternalTools.RunProcessWithTimeout(fileName, arguments, workingDirectory, timeoutMilliseconds));
+    }
+
+    private static ProcessResult RunProcessWithTimeout(string fileName, IEnumerable<string> arguments, string workingDirectory, int timeoutMilliseconds)
     {
         return FromCommandResult(ExternalTools.RunProcessWithTimeout(fileName, arguments, workingDirectory, timeoutMilliseconds));
     }
