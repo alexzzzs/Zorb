@@ -768,7 +768,21 @@ public class TypeChecker
             or "Builtin.IsWindows"
             or "Builtin.IsBareMetal"
             or "Builtin.IsX86_64"
-            or "Builtin.IsAArch64";
+            or "Builtin.IsAArch64"
+            or "Builtin.CompileError"
+            or "Builtin.sizeof";
+    }
+
+    private static bool IsInvalidPostfixTarget(Expr expr)
+    {
+        return expr switch
+        {
+            InvalidExpr => true,
+            CallExpr { TargetExpr: Expr target } => IsInvalidPostfixTarget(target),
+            FieldExpr field => IsInvalidPostfixTarget(field.Target),
+            IndexExpr index => IsInvalidPostfixTarget(index.Target),
+            _ => false
+        };
     }
 
     private static bool FunctionRequiresReturn(FunctionDecl functionDecl)
@@ -805,6 +819,9 @@ public class TypeChecker
         {
             call.ResolvedQualifiedName = null;
             var qualifiedName = QualifiedNames.TryGetQualifiedName(call.TargetExpr);
+            if (IsInvalidPostfixTarget(call.TargetExpr))
+                return null;
+
             var resolvedQualifiedName = qualifiedName;
             var targetResolvedViaAlias = !string.IsNullOrEmpty(qualifiedName) &&
                 TryResolveAliasQualifiedName(qualifiedName, out resolvedQualifiedName);
@@ -1793,6 +1810,9 @@ public class TypeChecker
                 break;
 
             case IndexExpr idx:
+                if (IsInvalidPostfixTarget(idx.Target))
+                    break;
+
                 CheckExpression(idx.Target);
                 CheckExpression(idx.Index);
                 var indexTargetType = GetExpressionType(idx.Target, reportErrors: false);
@@ -1801,6 +1821,9 @@ public class TypeChecker
                 break;
 
             case FieldExpr field:
+                if (IsInvalidPostfixTarget(field.Target))
+                    break;
+
                 if (ResolveQualifiedFieldSymbol(field) is ResolvedFieldSymbolInfo resolvedField)
                 {
                     if (resolvedField.SymbolInfo.Kind == SymbolKind.Variable || resolvedField.SymbolInfo.Kind == SymbolKind.Function)
@@ -2391,6 +2414,9 @@ public class TypeChecker
 
     private void CheckCallExpression(CallExpr call)
     {
+        if (call.TargetExpr != null && IsInvalidPostfixTarget(call.TargetExpr))
+            return;
+
         var callInfo = ResolveCallInfo(call, reportErrors: true);
         if (callInfo == null)
             return;
@@ -2475,12 +2501,18 @@ public class TypeChecker
                 return leftType ?? GetExpressionType(bin.Left, reportErrors);
 
             case CallExpr call:
+                if (call.TargetExpr != null && IsInvalidPostfixTarget(call.TargetExpr))
+                    return null;
+
                 return ResolveCallInfo(call, reportErrors)?.ReturnType;
 
             case CastExpr cast:
                 return cast.TargetType;
 
             case IndexExpr idx:
+                if (IsInvalidPostfixTarget(idx.Target))
+                    return null;
+
                 var targetType = GetExpressionType(idx.Target, reportErrors);
                 if (targetType == null)
                     return null;
@@ -2522,6 +2554,9 @@ public class TypeChecker
                 return null;
 
             case FieldExpr field:
+                if (IsInvalidPostfixTarget(field.Target))
+                    return null;
+
                 if (ResolveQualifiedFieldSymbol(field) is ResolvedFieldSymbolInfo resolvedFieldSymbol)
                 {
                     if (resolvedFieldSymbol.SymbolInfo.Kind == SymbolKind.Variable || resolvedFieldSymbol.SymbolInfo.Kind == SymbolKind.Function)

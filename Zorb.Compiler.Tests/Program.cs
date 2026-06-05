@@ -101,6 +101,28 @@ catch (Exception ex)
 
 try
 {
+    RunInvalidPostfixCascadeTests();
+    Console.WriteLine("PASS invalid_postfix_cascade");
+}
+catch (Exception ex)
+{
+    failures.Add($"invalid_postfix_cascade: {ex.Message}");
+    Console.WriteLine("FAIL invalid_postfix_cascade");
+}
+
+try
+{
+    RunBuiltinParserReservedDeclarationTests();
+    Console.WriteLine("PASS builtin_parser_reserved_declarations");
+}
+catch (Exception ex)
+{
+    failures.Add($"builtin_parser_reserved_declarations: {ex.Message}");
+    Console.WriteLine("FAIL builtin_parser_reserved_declarations");
+}
+
+try
+{
     RunResolvedCallMetadataTests();
     Console.WriteLine("PASS resolved_call_metadata");
 }
@@ -332,6 +354,63 @@ fn main() -> i64 {
         if (errors.Any(error => error.Contains("Condition must have type 'bool'", StringComparison.Ordinal)))
             throw new Exception($"Unexpected bool-condition follow-on diagnostic for unknown field target.{Environment.NewLine}{string.Join(Environment.NewLine, errors)}");
     });
+}
+
+static void RunInvalidPostfixCascadeTests()
+{
+    WithTempDirectory("zorb-invalid-postfix-cascade", tempDir =>
+    {
+        var mainPath = Path.Combine(tempDir, "main.zorb");
+        var source = """
+fn main() -> i64 {
+    return , .field(1)[0]
+}
+""";
+
+        var lexer = new Lexer(source, mainPath);
+        var parser = new Parser(lexer.Tokenize(), mainPath);
+        var ast = parser.ParseProgram();
+
+        if (parser.ErrorReporter.Errors.Count == 0)
+            throw new Exception("Expected parser to report the invalid expression.");
+
+        var checker = new TypeChecker();
+        checker.Check(ast, tempDir);
+
+        if (checker.Errors.Errors.Count != 0)
+        {
+            throw new Exception(
+                $"Expected no semantic follow-on diagnostics for invalid postfix target.{Environment.NewLine}{string.Join(Environment.NewLine, checker.Errors.Errors)}");
+        }
+    });
+}
+
+static void RunBuiltinParserReservedDeclarationTests()
+{
+    var compileErrorDecl = new FunctionDecl
+    {
+        NamespacePath = ["Builtin"],
+        Name = "CompileError",
+        ReturnType = new TypeNode { Name = "void" }
+    };
+    var sizeofDecl = new FunctionDecl
+    {
+        NamespacePath = ["Builtin"],
+        Name = "sizeof",
+        ReturnType = new TypeNode { Name = "i64" }
+    };
+
+    var checker = new TypeChecker();
+    checker.Check([compileErrorDecl, sizeofDecl]);
+
+    AssertContains(
+        checker.Errors.Errors,
+        "Top-level declaration 'Builtin.CompileError' conflicts with a built-in symbol.",
+        "error");
+    AssertContains(
+        checker.Errors.Errors,
+        "Top-level declaration 'Builtin.sizeof' conflicts with a built-in symbol.",
+        "error");
 }
 
 static void RunResolvedCallMetadataTests()

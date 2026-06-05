@@ -46,7 +46,7 @@ public static class ExternalTools
 
     public static CommandResult RunProcess(string fileName, string arguments, string workingDirectory)
     {
-        return RunProcessCore(fileName, SplitCommandLine(arguments), workingDirectory, timeoutMilliseconds: null);
+        return RunProcessCore(fileName, arguments, workingDirectory, timeoutMilliseconds: null);
     }
 
     public static CommandResult RunProcess(string fileName, IEnumerable<string> arguments, string workingDirectory)
@@ -56,7 +56,7 @@ public static class ExternalTools
 
     public static CommandResult RunProcessWithTimeout(string fileName, string arguments, string workingDirectory, int timeoutMilliseconds)
     {
-        return RunProcessCore(fileName, SplitCommandLine(arguments), workingDirectory, timeoutMilliseconds);
+        return RunProcessCore(fileName, arguments, workingDirectory, timeoutMilliseconds);
     }
 
     public static CommandResult RunProcessWithTimeout(string fileName, IEnumerable<string> arguments, string workingDirectory, int timeoutMilliseconds)
@@ -66,7 +66,7 @@ public static class ExternalTools
 
     public static CommandResult RunProcessWithTimeout(string fileName, string arguments, string workingDirectory, TimeSpan timeout)
     {
-        return RunProcessCore(fileName, SplitCommandLine(arguments), workingDirectory, (int)timeout.TotalMilliseconds);
+        return RunProcessCore(fileName, arguments, workingDirectory, (int)timeout.TotalMilliseconds);
     }
 
     public static CommandResult RunProcessWithTimeout(string fileName, IEnumerable<string> arguments, string workingDirectory, TimeSpan timeout)
@@ -76,7 +76,24 @@ public static class ExternalTools
 
     private static CommandResult RunProcessCore(string fileName, IEnumerable<string> arguments, string workingDirectory, int? timeoutMilliseconds)
     {
-        var startInfo = new ProcessStartInfo
+        var startInfo = CreateProcessStartInfo(fileName, workingDirectory);
+        foreach (var argument in arguments)
+            startInfo.ArgumentList.Add(argument);
+
+        return RunProcessCore(startInfo, timeoutMilliseconds);
+    }
+
+    private static CommandResult RunProcessCore(string fileName, string arguments, string workingDirectory, int? timeoutMilliseconds)
+    {
+        var startInfo = CreateProcessStartInfo(fileName, workingDirectory);
+        startInfo.Arguments = arguments;
+
+        return RunProcessCore(startInfo, timeoutMilliseconds);
+    }
+
+    private static ProcessStartInfo CreateProcessStartInfo(string fileName, string workingDirectory)
+    {
+        return new ProcessStartInfo
         {
             FileName = fileName,
             WorkingDirectory = workingDirectory,
@@ -84,10 +101,11 @@ public static class ExternalTools
             RedirectStandardError = true,
             UseShellExecute = false
         };
-        foreach (var argument in arguments)
-            startInfo.ArgumentList.Add(argument);
+    }
 
-        using var process = Process.Start(startInfo) ?? throw new ZorbCompilerException($"Failed to start process '{fileName}'.");
+    private static CommandResult RunProcessCore(ProcessStartInfo startInfo, int? timeoutMilliseconds)
+    {
+        using var process = Process.Start(startInfo) ?? throw new ZorbCompilerException($"Failed to start process '{startInfo.FileName}'.");
         var stdOutTask = process.StandardOutput.ReadToEndAsync();
         var stdErrTask = process.StandardError.ReadToEndAsync();
 
@@ -105,7 +123,7 @@ public static class ExternalTools
                     // and a kill failure should not mask the timeout diagnostic.
                 }
 
-                throw new ZorbCompilerException($"Process '{fileName}' timed out after {timeoutMilliseconds.Value / 1000} seconds.");
+                throw new ZorbCompilerException($"Process '{startInfo.FileName}' timed out after {timeoutMilliseconds.Value / 1000} seconds.");
             }
         }
         else
