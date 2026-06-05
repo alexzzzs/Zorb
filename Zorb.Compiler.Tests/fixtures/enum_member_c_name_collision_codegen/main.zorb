@@ -1,0 +1,12 @@
+enum a.b: i32 {
+    C = 1
+}
+
+enum a: i32 {
+    b_C = 2
+}
+
+fn main() {
+    x: a.b = a.b.C
+    y: a = a.b_C
+}

@@ -1,0 +1,10 @@
+auto: i64 = 1
+auto__z2: i64 = 2
+
+fn auto__z2__z2() -> i64 {
+    return 3
+}
+
+fn main() -> i64 {
+    return auto + auto__z2 + auto__z2__z2()
+}

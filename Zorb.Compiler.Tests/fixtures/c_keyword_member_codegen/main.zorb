@@ -1,0 +1,9 @@
+struct S {
+    auto: i64,
+    auto__z2: i64
+}
+
+fn main() -> i64 {
+    s: S = S{ auto: 1, auto__z2: 2 }
+    return s.auto + s.auto__z2
+}

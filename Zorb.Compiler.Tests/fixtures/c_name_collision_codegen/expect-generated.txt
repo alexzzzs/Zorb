@@ -1,0 +1,12 @@
+int32_t a_b();
+int32_t a_b__z2();
+typedef int32_t m_Mode;
+static const m_Mode m_Mode_Run = (m_Mode)3;
+typedef int32_t m_Mode__z2;
+static const m_Mode__z2 m_Mode__z2_Run = (m_Mode__z2)4;
+int32_t a_b() {
+return 1;
+int32_t a_b__z2() {
+return 2;
+int32_t mode = m_Mode__z2_Run;
+return a_b__z2();

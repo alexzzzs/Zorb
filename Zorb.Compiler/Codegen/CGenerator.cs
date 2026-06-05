@@ -16,6 +16,75 @@ namespace Zorb.Compiler.Codegen;
 public class CGenerator
 {
     private sealed record GeneratedExpression(string Prelude, string Code, TypeNode? Type);
+    private sealed record LocalScope(
+        Dictionary<string, TypeNode> Vars,
+        Dictionary<string, string> CNames);
+
+    private static readonly HashSet<string> ReservedCNames = new(StringComparer.Ordinal)
+    {
+        "auto",
+        "break",
+        "case",
+        "char",
+        "const",
+        "continue",
+        "default",
+        "do",
+        "double",
+        "else",
+        "enum",
+        "extern",
+        "float",
+        "for",
+        "goto",
+        "if",
+        "inline",
+        "int",
+        "long",
+        "register",
+        "restrict",
+        "return",
+        "short",
+        "signed",
+        "sizeof",
+        "static",
+        "struct",
+        "switch",
+        "typedef",
+        "union",
+        "unsigned",
+        "void",
+        "volatile",
+        "while",
+        "_Alignas",
+        "_Alignof",
+        "_Atomic",
+        "_Bool",
+        "_Complex",
+        "_Generic",
+        "_Imaginary",
+        "_Noreturn",
+        "_Static_assert",
+        "_Thread_local",
+        "SYSCALL_GET_8TH",
+        "syscall",
+        "__zorb_syscall",
+        "__syscall1",
+        "__syscall2",
+        "__syscall3",
+        "__syscall4",
+        "__syscall5",
+        "__syscall6",
+        "__syscall7",
+        "__zorb_slice_oob",
+        "__zorb_builtin_is_linux",
+        "__zorb_builtin_is_windows",
+        "__zorb_builtin_is_bare_metal",
+        "__zorb_builtin_is_x86_64",
+        "__zorb_builtin_is_aarch64",
+        "__zorb_user_start",
+        "__zorb_user_main",
+    };
 
     private readonly List<StructNode> _structs = new();
     private readonly HashSet<string> _includes = new() { "stdint.h" };
@@ -23,12 +92,19 @@ public class CGenerator
     private readonly string _currentDir;
     private readonly SymbolTable _symbolTable;
     private readonly Dictionary<string, TypeNode> _localVars = new();
+    private readonly Dictionary<string, string> _localCNames = new(StringComparer.Ordinal);
     private readonly HashSet<string> _catchErrorVars = new();
     private readonly Stack<string?> _continueTargets = new();
     private readonly HashSet<string> _generatedResultTypes = new();
     private readonly HashSet<string> _generatedSliceTypes = new();
     private readonly StringBuilder _dynamicResultStructs = new();
     private readonly StringBuilder _dynamicSliceStructs = new();
+    private readonly Dictionary<string, string> _functionCNames = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _typeCNames = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _memberCNames = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _enumMemberCNames = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _unionTagMemberCNames = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _globalVariableCNames = new(StringComparer.Ordinal);
     private List<Node> _allNodes = new();
     private IReadOnlyDictionary<string, IReadOnlyList<Node>>? _parsedFilesByPath;
     private int _tempCounter;
@@ -148,6 +224,7 @@ static void __zorb_slice_oob(void) {
         _allNodes = allNodes;
 
         CollectNodes(nodes, allNodes, processed, emittedItems, _currentDir);
+        BuildCNameMaps(allNodes);
 
         // PASS 1: Generate variables and functions first. 
         // This ensures MapType is called and all dynamic structs (like Result_u8_ptr) are generated.
@@ -215,7 +292,7 @@ static void __zorb_slice_oob(void) {
         var structs = allNodes.OfType<StructNode>().ToList();
         foreach (var s in structs)
         {
-            var cName = FlattenName(s.NamespacePath, s.Name, null);
+            var cName = GetTypeCName(s.NamespacePath, s.Name, null);
             if (emittedStructs.Contains(cName))
                 continue;
             emittedStructs.Add(cName);
@@ -226,7 +303,7 @@ static void __zorb_slice_oob(void) {
         var enums = allNodes.OfType<EnumNode>().ToList();
         foreach (var enumNode in enums)
         {
-            var cName = FlattenName(enumNode.NamespacePath, enumNode.Name, null);
+            var cName = GetTypeCName(enumNode.NamespacePath, enumNode.Name, null);
             if (emittedEnums.Contains(cName))
                 continue;
             emittedEnums.Add(cName);
@@ -237,7 +314,7 @@ static void __zorb_slice_oob(void) {
         var unions = allNodes.OfType<UnionNode>().ToList();
         foreach (var unionNode in unions)
         {
-            var cName = FlattenName(unionNode.NamespacePath, unionNode.Name, null);
+            var cName = GetTypeCName(unionNode.NamespacePath, unionNode.Name, null);
             if (emittedUnions.Contains(cName))
                 continue;
             emittedUnions.Add(cName);
@@ -257,7 +334,7 @@ static void __zorb_slice_oob(void) {
             var cName = GetFunctionCName(fn.NamespacePath, fn.Name, null);
             if (emittedPrototypes.Contains(cName)) continue;
             emittedPrototypes.Add(cName);
-            var parameters = string.Join(", ", fn.Parameters.Select(p => MapType(p.TypeName, p.Name)));
+            var parameters = GenerateParameterList(fn, registerLocals: false);
             prototypesSb.AppendLine($"{cReturnType} {cName}({parameters});");
         }
         if (HasHostedStartShim())
@@ -285,10 +362,17 @@ static void __zorb_slice_oob(void) {
         _includes.Add("stdint.h");
         _cHeaders.Clear();
         _localVars.Clear();
+        _localCNames.Clear();
         _dynamicResultStructs.Clear();
         _dynamicSliceStructs.Clear();
         _generatedResultTypes.Clear();
         _generatedSliceTypes.Clear();
+        _functionCNames.Clear();
+        _typeCNames.Clear();
+        _memberCNames.Clear();
+        _enumMemberCNames.Clear();
+        _unionTagMemberCNames.Clear();
+        _globalVariableCNames.Clear();
         _allNodes = allNodes;
         _parsedFilesByPath = parsedFilesByPath;
         _tempCounter = 0;
@@ -336,20 +420,22 @@ static void __zorb_slice_oob(void) {
     private string GenerateStruct(StructNode s, string? prefix)
     {
         var sb = new StringBuilder();
-        var cName = FlattenName(s.NamespacePath, s.Name, prefix);
+        var cName = GetTypeCName(s.NamespacePath, s.Name, prefix);
+        var structFullName = QualifiedNames.GetFullName(s.NamespacePath, s.Name);
         var needsComputedLayout = StructLayout.HasPackedAttribute(s) || StructLayout.GetAlignment(s.Attributes) is > 0;
         if (!needsComputedLayout)
         {
             sb.AppendLine($"struct {cName} {{");
             foreach (var field in s.Fields)
             {
-                var cType = field.TypeName.IsFunction ? MapType(field.TypeName, field.Name) : MapType(field.TypeName);
+                var fieldCName = GetMemberCName(structFullName, field.Name);
+                var cType = field.TypeName.IsFunction ? MapType(field.TypeName, fieldCName) : MapType(field.TypeName);
                 if (field.TypeName.ArraySize != null)
-                    sb.AppendLine($"    {cType} {field.Name}[{field.TypeName.ArraySize}];");
+                    sb.AppendLine($"    {cType} {fieldCName}[{field.TypeName.ArraySize}];");
                 else if (field.TypeName.IsFunction)
                     sb.AppendLine($"    {cType};");
                 else
-                    sb.AppendLine($"    {cType} {field.Name};");
+                    sb.AppendLine($"    {cType} {fieldCName};");
             }
             sb.AppendLine("};");
             sb.AppendLine();
@@ -380,13 +466,14 @@ static void __zorb_slice_oob(void) {
             }
 
             var field = layoutField.Field;
-            var cType = field.TypeName.IsFunction ? MapType(field.TypeName, field.Name) : MapType(field.TypeName);
+            var fieldCName = GetMemberCName(structFullName, field.Name);
+            var cType = field.TypeName.IsFunction ? MapType(field.TypeName, fieldCName) : MapType(field.TypeName);
             if (field.TypeName.ArraySize != null)
-                sb.AppendLine($"    {cType} {field.Name}[{field.TypeName.ArraySize}];");
+                sb.AppendLine($"    {cType} {fieldCName}[{field.TypeName.ArraySize}];");
             else if (field.TypeName.IsFunction)
                 sb.AppendLine($"    {cType};");
             else
-                sb.AppendLine($"    {cType} {field.Name};");
+                sb.AppendLine($"    {cType} {fieldCName};");
 
             currentOffset = layoutField.Offset + layoutField.Size;
         }
@@ -395,7 +482,10 @@ static void __zorb_slice_oob(void) {
         {
             _includes.Add("stddef.h");
             foreach (var layoutField in layout.Fields)
-                sb.AppendLine($"_Static_assert(offsetof(struct {cName}, {layoutField.Field.Name}) == {layoutField.Offset}, \"offset mismatch for {cName}.{layoutField.Field.Name}\");");
+            {
+                var fieldCName = GetMemberCName(structFullName, layoutField.Field.Name);
+                sb.AppendLine($"_Static_assert(offsetof(struct {cName}, {fieldCName}) == {layoutField.Offset}, \"offset mismatch for {cName}.{fieldCName}\");");
+            }
         }
         sb.AppendLine();
         return sb.ToString();
@@ -404,6 +494,7 @@ static void __zorb_slice_oob(void) {
     private string GenerateFunction(FunctionDecl fn, string? prefix)
     {
         _localVars.Clear();
+        _localCNames.Clear();
         foreach (var p in fn.Parameters) _localVars[p.Name] = p.TypeName;
 
         if (fn.ReturnType.Name != "void" || fn.ReturnType.IsPointer || fn.ReturnType.IsSlice || fn.ReturnType.ArraySize != null || fn.ReturnType.IsErrorUnion || fn.ReturnType.IsFunction)
@@ -414,7 +505,6 @@ static void __zorb_slice_oob(void) {
         var rawName = fn.Name;
         var sb = new StringBuilder();
         var cReturnType = MapType(fn.ReturnType);
-        var parameters = string.Join(", ", fn.Parameters.Select(p => MapType(p.TypeName, p.Name)));
         var cName = GetFunctionCName(fn.NamespacePath, rawName, prefix);
 
         var attrs = new List<string>();
@@ -439,17 +529,25 @@ static void __zorb_slice_oob(void) {
 
         if (fn.IsExtern)
         {
+            var externParameters = GenerateParameterList(fn, registerLocals: false);
             if (fn.Attributes.Contains("c_header"))
                 return "";
-            sb.AppendLine($"{attrStr}extern {cReturnType} {cName}({parameters});");
+            sb.AppendLine($"{attrStr}extern {cReturnType} {cName}({externParameters});");
             return sb.ToString();
         }
 
-        sb.AppendLine($"{attrStr}{cReturnType} {cName}({parameters}) {{");
+        var functionParameters = GenerateParameterList(fn, registerLocals: true);
+        sb.AppendLine($"{attrStr}{cReturnType} {cName}({functionParameters}) {{");
         _insideFunctionBody = true;
-        foreach (var stmt in fn.Body)
-            sb.AppendLine($"    {GenerateStatement(stmt)}");
-        _insideFunctionBody = false;
+        try
+        {
+            foreach (var stmt in fn.Body)
+                sb.AppendLine($"    {GenerateStatement(stmt)}");
+        }
+        finally
+        {
+            _insideFunctionBody = false;
+        }
         sb.AppendLine("}");
         return sb.ToString();
     }
@@ -457,11 +555,11 @@ static void __zorb_slice_oob(void) {
     private string GenerateEnum(EnumNode enumNode)
     {
         var sb = new StringBuilder();
-        var enumName = FlattenName(enumNode.NamespacePath, enumNode.Name, null);
+        var enumName = GetTypeCName(enumNode.NamespacePath, enumNode.Name, null);
         sb.AppendLine($"typedef {MapType(enumNode.UnderlyingType)} {enumName};");
         foreach (var member in enumNode.Members)
         {
-            var memberName = $"{enumName}_{member.Name}";
+            var memberName = GetEnumMemberCName(enumNode, member.Name);
             var memberValue = member.ResolvedValue ?? 0;
             sb.AppendLine($"static const {enumName} {memberName} = ({enumName}){memberValue};");
         }
@@ -472,23 +570,25 @@ static void __zorb_slice_oob(void) {
     private string GenerateUnion(UnionNode unionNode)
     {
         var sb = new StringBuilder();
-        var unionName = FlattenName(unionNode.NamespacePath, unionNode.Name, null);
+        var unionName = GetTypeCName(unionNode.NamespacePath, unionNode.Name, null);
+        var unionFullName = QualifiedNames.GetFullName(unionNode.NamespacePath, unionNode.Name);
         var tagName = GetUnionTagCName(unionNode);
         sb.AppendLine($"typedef int32_t {tagName};");
         for (int i = 0; i < unionNode.Variants.Count; i++)
-            sb.AppendLine($"static const {tagName} {tagName}_{unionNode.Variants[i].Name} = ({tagName}){i};");
+            sb.AppendLine($"static const {tagName} {GetUnionTagMemberCode(unionNode, unionNode.Variants[i].Name)} = ({tagName}){i};");
         sb.AppendLine($"struct {unionName} {{");
         sb.AppendLine($"    {tagName} tag;");
         sb.AppendLine("    union {");
         foreach (var variant in unionNode.Variants)
         {
-            var cType = variant.TypeName.IsFunction ? MapType(variant.TypeName, variant.Name) : MapType(variant.TypeName);
+            var variantCName = GetMemberCName(unionFullName, variant.Name);
+            var cType = variant.TypeName.IsFunction ? MapType(variant.TypeName, variantCName) : MapType(variant.TypeName);
             if (variant.TypeName.ArraySize != null)
-                sb.AppendLine($"        {cType} {variant.Name}[{variant.TypeName.ArraySize}];");
+                sb.AppendLine($"        {cType} {variantCName}[{variant.TypeName.ArraySize}];");
             else if (variant.TypeName.IsFunction)
                 sb.AppendLine($"        {cType};");
             else
-                sb.AppendLine($"        {cType} {variant.Name};");
+                sb.AppendLine($"        {cType} {variantCName};");
         }
         sb.AppendLine("    } data;");
         sb.AppendLine("};");
@@ -547,7 +647,7 @@ static void __zorb_slice_oob(void) {
         }
         else if (_symbolTable.IsExternType(fullName))
         {
-            baseType = FlattenName(type.NamespacePath, type.Name);
+            baseType = GetTypeCName(type.NamespacePath, type.Name, null);
         }
         else
         {
@@ -566,7 +666,7 @@ static void __zorb_slice_oob(void) {
             "void" => "void",
             "char" => "char",
             // If not a primitive, it's a struct - flatten name and prefix with 'struct'
-            _ => "struct " + FlattenName(type.NamespacePath, type.Name)
+            _ => "struct " + GetTypeCName(type.NamespacePath, type.Name, null)
         };
         }
 
@@ -605,7 +705,7 @@ static void __zorb_slice_oob(void) {
             "string" => "ptr",
             "void" => "void",
             "char" => "char",
-            _ => FlattenName(innerType.NamespacePath, innerType.Name)
+            _ => GetTypeCName(innerType.NamespacePath, innerType.Name, null)
         };
         if (innerType.IsPointer && innerType.Name != "string")
         {
@@ -639,8 +739,8 @@ static void __zorb_slice_oob(void) {
                 "void" => "int8_t",
                 "char" => "char",
                 _ => _symbolTable.IsExternType(QualifiedNames.GetFullName(innerType.NamespacePath, innerType.Name))
-                    ? FlattenName(innerType.NamespacePath, innerType.Name)
-                    : "struct " + FlattenName(innerType.NamespacePath, innerType.Name)
+                    ? GetTypeCName(innerType.NamespacePath, innerType.Name, null)
+                    : "struct " + GetTypeCName(innerType.NamespacePath, innerType.Name, null)
             };
 
         if (!innerType.IsSlice && innerType.IsPointer && innerType.Name != "string")
@@ -725,6 +825,129 @@ static void __zorb_slice_oob(void) {
         return "Slice_" + GetResultTypeName(GetSliceElementType(sliceType));
     }
 
+    private void BuildCNameMaps(List<Node> nodes)
+    {
+        var functionDeclarations = nodes
+            .OfType<FunctionDecl>()
+            .Select(fn => (FullName: QualifiedNames.GetFullName(fn.NamespacePath, fn.Name), BaseName: FlattenName(fn.NamespacePath, fn.Name, null)));
+        AddUniqueCNames(functionDeclarations, _functionCNames);
+
+        var typeDeclarations = new List<(string FullName, string BaseName)>();
+        foreach (var node in nodes)
+        {
+            switch (node)
+            {
+                case StructNode structNode:
+                    var structFullName = QualifiedNames.GetFullName(structNode.NamespacePath, structNode.Name);
+                    typeDeclarations.Add((structFullName, FlattenName(structNode.NamespacePath, structNode.Name, null)));
+                    AddUniqueCNames(
+                        structNode.Fields.Select(field => (FullName: GetMemberFullName(structFullName, field.Name), BaseName: field.Name)),
+                        _memberCNames,
+                        includeExistingTargetNames: false);
+                    break;
+                case EnumNode enumNode:
+                    typeDeclarations.Add((QualifiedNames.GetFullName(enumNode.NamespacePath, enumNode.Name), FlattenName(enumNode.NamespacePath, enumNode.Name, null)));
+                    break;
+                case UnionNode unionNode:
+                    var unionFullName = QualifiedNames.GetFullName(unionNode.NamespacePath, unionNode.Name);
+                    typeDeclarations.Add((unionFullName, FlattenName(unionNode.NamespacePath, unionNode.Name, null)));
+                    AddUniqueCNames(
+                        unionNode.Variants.Select(variant => (FullName: GetMemberFullName(unionFullName, variant.Name), BaseName: variant.Name)),
+                        _memberCNames,
+                        includeExistingTargetNames: false);
+                    var tagPath = unionNode.NamespacePath.Concat(new[] { unionNode.Name }).ToList();
+                    typeDeclarations.Add((QualifiedNames.GetFullName(tagPath, "Tag"), FlattenName(tagPath, "Tag", null)));
+                    break;
+                case ExternTypeDecl externType:
+                    typeDeclarations.Add((QualifiedNames.GetFullName(externType.NamespacePath, externType.Name), FlattenName(externType.NamespacePath, externType.Name, null)));
+                    break;
+            }
+        }
+        AddUniqueCNames(typeDeclarations, _typeCNames);
+
+        var enumMemberDeclarations = nodes
+            .OfType<EnumNode>()
+            .SelectMany(enumNode =>
+            {
+                var enumFullName = QualifiedNames.GetFullName(enumNode.NamespacePath, enumNode.Name);
+                var enumCName = GetTypeCName(enumNode.NamespacePath, enumNode.Name, null);
+                return enumNode.Members.Select(member => (
+                    FullName: GetEnumMemberFullName(enumFullName, member.Name),
+                    BaseName: $"{enumCName}_{member.Name}"));
+            });
+        AddUniqueCNames(enumMemberDeclarations, _enumMemberCNames);
+
+        var unionTagMemberDeclarations = nodes
+            .OfType<UnionNode>()
+            .SelectMany(unionNode =>
+            {
+                var unionFullName = QualifiedNames.GetFullName(unionNode.NamespacePath, unionNode.Name);
+                var tagCName = GetUnionTagCName(unionNode);
+                return unionNode.Variants.Select(variant => (
+                    FullName: GetUnionTagMemberFullName(unionFullName, variant.Name),
+                    BaseName: $"{tagCName}_{variant.Name}"));
+            });
+        AddUniqueCNames(
+            unionTagMemberDeclarations,
+            _unionTagMemberCNames,
+            _functionCNames.Values.Concat(_typeCNames.Values).Concat(_enumMemberCNames.Values));
+
+        var globalVariableDeclarations = nodes
+            .OfType<VariableDeclarationNode>()
+            .Select(variable => (FullName: variable.Name, BaseName: variable.Name.Replace(".", "_", StringComparison.Ordinal)));
+        AddUniqueCNames(
+            globalVariableDeclarations,
+            _globalVariableCNames,
+            _functionCNames.Values.Concat(_typeCNames.Values).Concat(_enumMemberCNames.Values).Concat(_unionTagMemberCNames.Values));
+    }
+
+    private static void AddUniqueCNames(
+        IEnumerable<(string FullName, string BaseName)> declarations,
+        Dictionary<string, string> target,
+        bool includeExistingTargetNames = true)
+    {
+        AddUniqueCNames(declarations, target, Enumerable.Empty<string>(), includeExistingTargetNames);
+    }
+
+    private static void AddUniqueCNames(
+        IEnumerable<(string FullName, string BaseName)> declarations,
+        Dictionary<string, string> target,
+        IEnumerable<string> additionalUsedNames,
+        bool includeExistingTargetNames = true)
+    {
+        var usedNames = new HashSet<string>(ReservedCNames, StringComparer.Ordinal);
+        usedNames.UnionWith(additionalUsedNames);
+        if (includeExistingTargetNames)
+            usedNames.UnionWith(target.Values);
+        var baseNameCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var declaration in declarations)
+        {
+            if (target.ContainsKey(declaration.FullName))
+                continue;
+
+            var ordinal = baseNameCounts.TryGetValue(declaration.BaseName, out var count) ? count + 1 : 1;
+            baseNameCounts[declaration.BaseName] = ordinal;
+
+            target[declaration.FullName] = AllocateCName(declaration.BaseName, usedNames, ordinal);
+        }
+    }
+
+    private static string AllocateCName(string baseName, HashSet<string> usedNames, int startingOrdinal = 1)
+    {
+        var ordinal = startingOrdinal;
+        var candidate = ordinal == 1
+            ? baseName
+            : $"{baseName}__z{ordinal}";
+        while (!usedNames.Add(candidate))
+        {
+            ordinal++;
+            candidate = $"{baseName}__z{ordinal}";
+        }
+
+        return candidate;
+    }
+
     private string FlattenName(List<string> path, string name, string? prefix = null)
     {
         var parts = new List<string>();
@@ -733,6 +956,55 @@ static void __zorb_slice_oob(void) {
         parts.AddRange(path);
         parts.Add(name);
         return string.Join("_", parts);
+    }
+
+    private string GetTypeCName(List<string> namespacePath, string name, string? prefix = null)
+    {
+        if (prefix != null)
+            return FlattenName(namespacePath, name, prefix);
+
+        var fullName = QualifiedNames.GetFullName(namespacePath, name);
+        return _typeCNames.TryGetValue(fullName, out var cName)
+            ? cName
+            : FlattenName(namespacePath, name, null);
+    }
+
+    private static string GetMemberFullName(string containerFullName, string memberName)
+    {
+        return $"{containerFullName}.{memberName}";
+    }
+
+    private string GetMemberCName(string containerFullName, string memberName)
+    {
+        var memberFullName = GetMemberFullName(containerFullName, memberName);
+        return _memberCNames.TryGetValue(memberFullName, out var cName)
+            ? cName
+            : memberName;
+    }
+
+    private string GetMemberCName(TypeNode containerType, string memberName)
+    {
+        var containerFullName = QualifiedNames.GetFullName(containerType.NamespacePath, containerType.Name);
+        return GetMemberCName(containerFullName, memberName);
+    }
+
+    private static string GetEnumMemberFullName(string enumFullName, string memberName)
+    {
+        return $"{enumFullName}.{memberName}";
+    }
+
+    private string GetEnumMemberCName(string enumFullName, string memberName)
+    {
+        var memberFullName = GetEnumMemberFullName(enumFullName, memberName);
+        return _enumMemberCNames.TryGetValue(memberFullName, out var cName)
+            ? cName
+            : $"{enumFullName.Replace(".", "_", StringComparison.Ordinal)}_{memberName}";
+    }
+
+    private string GetEnumMemberCName(EnumNode enumNode, string memberName)
+    {
+        var enumFullName = QualifiedNames.GetFullName(enumNode.NamespacePath, enumNode.Name);
+        return GetEnumMemberCName(enumFullName, memberName);
     }
 
     private bool HasHostedStartShim()
@@ -842,7 +1114,69 @@ static void __zorb_slice_oob(void) {
         if (ShouldRenameHostedMain(namespacePath, name))
             return "__zorb_user_main";
 
-        return FlattenName(namespacePath, name, prefix);
+        if (prefix != null)
+            return FlattenName(namespacePath, name, prefix);
+
+        var fullName = QualifiedNames.GetFullName(namespacePath, name);
+        return _functionCNames.TryGetValue(fullName, out var cName)
+            ? cName
+            : FlattenName(namespacePath, name, null);
+    }
+
+    private string GetVariableCName(string qualifiedName, SymbolInfo symbolInfo)
+    {
+        var lastDot = qualifiedName.LastIndexOf('.');
+        if (lastDot < 0)
+            return GetGlobalVariableCName(qualifiedName);
+
+        var typeFullName = QualifiedNames.GetFullName(symbolInfo.Type.NamespacePath, symbolInfo.Type.Name);
+        if (symbolInfo.IsConst && _typeCNames.ContainsKey(typeFullName))
+            return GetEnumMemberCName(typeFullName, qualifiedName[(lastDot + 1)..]);
+
+        return qualifiedName.Replace(".", "_", StringComparison.Ordinal);
+    }
+
+    private string GetGlobalVariableCName(string name)
+    {
+        return _globalVariableCNames.TryGetValue(name, out var cName)
+            ? cName
+            : name.Replace(".", "_", StringComparison.Ordinal);
+    }
+
+    private string RegisterLocalCName(string name)
+    {
+        if (_localCNames.TryGetValue(name, out var existing))
+            return existing;
+
+        var baseName = name.Replace(".", "_", StringComparison.Ordinal);
+        var usedNames = new HashSet<string>(ReservedCNames, StringComparer.Ordinal);
+        usedNames.UnionWith(_localCNames.Values);
+        var candidate = AllocateCName(baseName, usedNames);
+
+        _localCNames[name] = candidate;
+        return candidate;
+    }
+
+    private string GetLocalCName(string name)
+    {
+        return _localCNames.TryGetValue(name, out var cName)
+            ? cName
+            : name.Replace(".", "_", StringComparison.Ordinal);
+    }
+
+    private string GenerateParameterList(FunctionDecl fn, bool registerLocals)
+    {
+        var parameterCNames = new Dictionary<string, string>(StringComparer.Ordinal);
+        var usedNames = new HashSet<string>(ReservedCNames, StringComparer.Ordinal);
+        foreach (var parameter in fn.Parameters)
+        {
+            var cName = registerLocals
+                ? RegisterLocalCName(parameter.Name)
+                : AllocateCName(parameter.Name.Replace(".", "_", StringComparison.Ordinal), usedNames);
+            parameterCNames[parameter.Name] = cName;
+        }
+
+        return string.Join(", ", fn.Parameters.Select(parameter => MapType(parameter.TypeName, parameterCNames[parameter.Name])));
     }
 
     private string GenerateStatement(Statement stmt)
@@ -866,7 +1200,10 @@ static void __zorb_slice_oob(void) {
         }
         if (stmt is VariableDeclarationNode vd)
         {
-            var safeName = vd.Name.Replace(".", "_");
+            var safeName = _insideFunctionBody
+                ? RegisterLocalCName(vd.Name)
+                : GetGlobalVariableCName(vd.Name);
+            _localCNames[vd.Name] = safeName;
 
             _localVars[vd.Name] = vd.TypeName; // Track the variable type
 
@@ -950,11 +1287,15 @@ static void __zorb_slice_oob(void) {
             {
                 var conditionalSb = new StringBuilder();
                 conditionalSb.AppendLine($"#if {preprocessorCondition}");
+                conditionalSb.AppendLine("{");
                 AppendIndentedGeneratedBlock(conditionalSb, ifs.Body, "    ");
+                conditionalSb.AppendLine("}");
                 if (ifs.ElseBody.Count > 0)
                 {
                     conditionalSb.AppendLine("#else");
+                    conditionalSb.AppendLine("{");
                     AppendIndentedGeneratedBlock(conditionalSb, ifs.ElseBody, "    ");
+                    conditionalSb.AppendLine("}");
                 }
                 conditionalSb.Append("#endif");
                 return conditionalSb.ToString();
@@ -1322,13 +1663,19 @@ static void __zorb_slice_oob(void) {
 
         var sb = new StringBuilder();
         var savedLocals = CloneLocalVars();
-        foreach (var statement in statements)
+        try
         {
-            var generated = GenerateStatement(statement);
-            if (!string.IsNullOrEmpty(generated))
-                sb.AppendLine(generated);
+            foreach (var statement in statements)
+            {
+                var generated = GenerateStatement(statement);
+                if (!string.IsNullOrEmpty(generated))
+                    sb.AppendLine(generated);
+            }
         }
-        RestoreLocalVars(savedLocals);
+        finally
+        {
+            RestoreLocalVars(savedLocals);
+        }
         return sb.ToString().TrimEnd();
     }
 
@@ -1457,8 +1804,7 @@ static void __zorb_slice_oob(void) {
 
                     var generatedTarget = GenerateExpressionWithPrelude(call.TargetExpr);
                     callPrelude.Append(generatedTarget.Prelude);
-                    var target = generatedTarget.Code.Replace(".", "_");
-                    return new GeneratedExpression(callPrelude.ToString(), $"{target}({args})", GetExprType(expr));
+                    return new GeneratedExpression(callPrelude.ToString(), $"{generatedTarget.Code}({args})", GetExprType(expr));
                 }
 
                 var cCallName = call.Name;
@@ -1468,12 +1814,22 @@ static void __zorb_slice_oob(void) {
                     var (resolvedNamespacePath, resolvedName) = QualifiedNames.SplitQualifiedName(resolvedFunctionName);
                     cCallName = GetFunctionCName(resolvedNamespacePath, resolvedName, null);
                 }
+                else if (_localCNames.ContainsKey(call.Name))
+                {
+                    cCallName = GetLocalCName(call.Name);
+                }
                 return new GeneratedExpression(callPrelude.ToString(), $"{cCallName}({args})", GetExprType(expr));
             case NumberExpr num:
                 return new GeneratedExpression("", num.Value.ToString(), GetExprType(expr));
             case StringExpr str:
                 return new GeneratedExpression("", $"\"{EscapeCString(str.Value)}\"", GetExprType(expr));
             case IdentifierExpr ident:
+                if (_localVars.ContainsKey(ident.Name))
+                    return new GeneratedExpression("", GetLocalCName(ident.Name), GetExprType(expr));
+
+                if (_symbolTable.TryLookup(ident.Name, out var variableSym) && variableSym!.Kind == SymbolKind.Variable)
+                    return new GeneratedExpression("", GetVariableCName(ident.Name, variableSym), GetExprType(expr));
+
                 if (_symbolTable.TryLookup(ident.Name, out var identSym) && identSym!.Kind == SymbolKind.Function)
                     return new GeneratedExpression("", GetFunctionCName(new List<string>(), ident.Name, null), GetExprType(expr));
 
@@ -1532,6 +1888,7 @@ static void __zorb_slice_oob(void) {
                     var variantField = structLiteral.Fields[0];
                     var variantType = GetUnionVariantType(structLiteral.TypeName, variantField.Name)
                         ?? throw new Exception($"Unknown union variant '{variantField.Name}' in '{FormatType(structLiteral.TypeName)}'.");
+                    var variantCName = GetMemberCName(structLiteral.TypeName, variantField.Name);
                     var generatedVariant = CoerceExpressionToTargetType(variantType, variantField.Value, GenerateExpressionWithPrelude(variantField.Value));
                     var tagCode = GetUnionTagMemberCode(unionDefinition, variantField.Name);
 
@@ -1539,7 +1896,7 @@ static void __zorb_slice_oob(void) {
                     {
                         return new GeneratedExpression(
                             "",
-                            $"({MapType(structLiteral.TypeName)}){{ .tag = {tagCode}, .data = {{ .{variantField.Name} = {generatedVariant.Code} }} }}",
+                            $"({MapType(structLiteral.TypeName)}){{ .tag = {tagCode}, .data = {{ .{variantCName} = {generatedVariant.Code} }} }}",
                             GetExprType(expr));
                     }
 
@@ -1551,11 +1908,11 @@ static void __zorb_slice_oob(void) {
                     if (variantType.ArraySize is int variantArrayLength)
                     {
                         for (int i = 0; i < variantArrayLength; i++)
-                            unionPrelude.AppendLine($"{unionTemp}.data.{variantField.Name}[{i}] = {generatedVariant.Code}[{i}];");
+                            unionPrelude.AppendLine($"{unionTemp}.data.{variantCName}[{i}] = {generatedVariant.Code}[{i}];");
                     }
                     else
                     {
-                        unionPrelude.AppendLine($"{unionTemp}.data.{variantField.Name} = {generatedVariant.Code};");
+                        unionPrelude.AppendLine($"{unionTemp}.data.{variantCName} = {generatedVariant.Code};");
                     }
 
                     return new GeneratedExpression(unionPrelude.ToString(), unionTemp, GetExprType(expr));
@@ -1571,7 +1928,7 @@ static void __zorb_slice_oob(void) {
 
                 if (generatedFields.All(field => CanInlineStructLiteralField(field.Field, field.FieldType, field.Generated)))
                 {
-                    var fieldInitializers = string.Join(", ", generatedFields.Select(field => GenerateInlineStructLiteralFieldInitializer(field.Field, field.FieldType, field.Generated)));
+                    var fieldInitializers = string.Join(", ", generatedFields.Select(field => GenerateInlineStructLiteralFieldInitializer(structLiteral.TypeName, field.Field, field.FieldType, field.Generated)));
                     return new GeneratedExpression(
                         "",
                         $"({MapType(structLiteral.TypeName)}){{ {fieldInitializers} }}",
@@ -1583,15 +1940,16 @@ static void __zorb_slice_oob(void) {
                 structPrelude.AppendLine($"{MapType(structLiteral.TypeName)} {structTemp};");
                 foreach (var field in generatedFields)
                 {
+                    var fieldCName = GetMemberCName(structLiteral.TypeName, field.Field.Name);
                     structPrelude.Append(field.Generated.Prelude);
                     if (field.FieldType?.ArraySize is int fieldLength)
                     {
                         for (int i = 0; i < fieldLength; i++)
-                            structPrelude.AppendLine($"{structTemp}.{field.Field.Name}[{i}] = {field.Generated.Code}[{i}];");
+                            structPrelude.AppendLine($"{structTemp}.{fieldCName}[{i}] = {field.Generated.Code}[{i}];");
                         continue;
                     }
 
-                    structPrelude.AppendLine($"{structTemp}.{field.Field.Name} = {field.Generated.Code};");
+                    structPrelude.AppendLine($"{structTemp}.{fieldCName} = {field.Generated.Code};");
                 }
                 return new GeneratedExpression(structPrelude.ToString(), structTemp, GetExprType(expr));
             case ArrayLiteralExpr arrayLiteral:
@@ -1651,7 +2009,7 @@ static void __zorb_slice_oob(void) {
                     _symbolTable.TryLookup(qualifiedName, out var varInfo))
                 {
                     if (varInfo!.Kind == SymbolKind.Variable)
-                        return new GeneratedExpression("", qualifiedName.Replace(".", "_"), GetExprType(expr));
+                        return new GeneratedExpression("", GetVariableCName(qualifiedName, varInfo), GetExprType(expr));
 
                     if (varInfo.Kind == SymbolKind.Function)
                     {
@@ -1668,9 +2026,10 @@ static void __zorb_slice_oob(void) {
                 var unionFieldTargetType = targetType?.IsPointer == true ? GetPointeeType(targetType) : targetType;
                 if (unionFieldTargetType != null && IsUnionType(unionFieldTargetType))
                 {
+                    var unionFieldCName = GetMemberCName(unionFieldTargetType, field.Field);
                     var unionAccess = field.Field == "tag"
                         ? (targetType?.IsPointer == true ? $"{fieldTargetCode}->tag" : $"{fieldTargetCode}.tag")
-                        : (targetType?.IsPointer == true ? $"{fieldTargetCode}->data.{field.Field}" : $"{fieldTargetCode}.data.{field.Field}");
+                        : (targetType?.IsPointer == true ? $"{fieldTargetCode}->data.{unionFieldCName}" : $"{fieldTargetCode}.data.{unionFieldCName}");
                     return new GeneratedExpression(generatedFieldTarget.Prelude, unionAccess, GetExprType(expr));
                 }
                 bool isPointerTarget = false;
@@ -1694,9 +2053,12 @@ static void __zorb_slice_oob(void) {
                 }
                 if (isPointerTarget)
                 {
-                    return new GeneratedExpression(generatedFieldTarget.Prelude, $"{fieldTargetCode}->{field.Field}", GetExprType(expr));
+                    var pointeeType = GetPointeeType(targetType);
+                    var fieldCName = pointeeType != null ? GetMemberCName(pointeeType, field.Field) : field.Field;
+                    return new GeneratedExpression(generatedFieldTarget.Prelude, $"{fieldTargetCode}->{fieldCName}", GetExprType(expr));
                 }
-                return new GeneratedExpression(generatedFieldTarget.Prelude, $"{fieldTargetCode}.{field.Field}", GetExprType(expr));
+                var structFieldCName = targetType != null ? GetMemberCName(targetType, field.Field) : field.Field;
+                return new GeneratedExpression(generatedFieldTarget.Prelude, $"{fieldTargetCode}.{structFieldCName}", GetExprType(expr));
             case CastExpr cast:
                 var generatedCastExpr = GenerateExpressionWithPrelude(cast.Expr);
                 var exprCode = generatedCastExpr.Code;
@@ -1757,8 +2119,9 @@ static void __zorb_slice_oob(void) {
                 var savedLocals = CloneLocalVars();
                 var savedCatchErrorVars = new HashSet<string>(_catchErrorVars);
                 _localVars[catchExpr.ErrorVar] = new TypeNode { Name = "i32" };
+                var errorVarCName = RegisterLocalCName(catchExpr.ErrorVar);
                 _catchErrorVars.Add(catchExpr.ErrorVar);
-                sb.AppendLine($"    int32_t {catchExpr.ErrorVar} = {errorTemp};");
+                sb.AppendLine($"    int32_t {errorVarCName} = {errorTemp};");
                 foreach (var catchStmt in catchExpr.CatchBody)
                     sb.AppendLine($"    {GenerateStatement(catchStmt)}");
                 RestoreLocalVars(savedLocals);
@@ -2108,13 +2471,22 @@ static void __zorb_slice_oob(void) {
 
     private string GetUnionTagCName(UnionNode unionNode)
     {
-        return FlattenName(unionNode.NamespacePath.Concat(new[] { unionNode.Name }).ToList(), "Tag", null);
+        return GetTypeCName(unionNode.NamespacePath.Concat(new[] { unionNode.Name }).ToList(), "Tag", null);
+    }
+
+    private static string GetUnionTagMemberFullName(string unionFullName, string variantName)
+    {
+        return $"{unionFullName}.Tag.{variantName}";
     }
 
     private string GetUnionTagMemberCode(UnionNode unionNode, string variantName)
     {
         var tagName = GetUnionTagCName(unionNode);
-        return $"{tagName}_{variantName}";
+        var unionFullName = QualifiedNames.GetFullName(unionNode.NamespacePath, unionNode.Name);
+        var tagMemberFullName = GetUnionTagMemberFullName(unionFullName, variantName);
+        return _unionTagMemberCNames.TryGetValue(tagMemberFullName, out var cName)
+            ? cName
+            : $"{tagName}_{variantName}";
     }
 
     private static string FormatType(TypeNode type)
@@ -2142,27 +2514,35 @@ static void __zorb_slice_oob(void) {
         return field.Value is ArrayLiteralExpr;
     }
 
-    private string GenerateInlineStructLiteralFieldInitializer(StructLiteralField field, TypeNode? fieldType, GeneratedExpression generated)
+    private string GenerateInlineStructLiteralFieldInitializer(TypeNode containerType, StructLiteralField field, TypeNode? fieldType, GeneratedExpression generated)
     {
+        var fieldCName = GetMemberCName(containerType, field.Name);
+
         if (fieldType?.ArraySize == null)
-            return $".{field.Name} = {generated.Code}";
+            return $".{fieldCName} = {generated.Code}";
 
         var arrayLiteral = (ArrayLiteralExpr)field.Value;
         var generatedElements = arrayLiteral.Elements.Select(GenerateExpressionWithPrelude).ToList();
         var elementCodes = string.Join(", ", generatedElements.Select(element => element.Code));
-        return $".{field.Name} = {{ {elementCodes} }}";
+        return $".{fieldCName} = {{ {elementCodes} }}";
     }
 
-    private Dictionary<string, TypeNode> CloneLocalVars()
+    private LocalScope CloneLocalVars()
     {
-        return _localVars.ToDictionary(entry => entry.Key, entry => entry.Value.Clone());
+        return new LocalScope(
+            _localVars.ToDictionary(entry => entry.Key, entry => entry.Value.Clone()),
+            _localCNames.ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal));
     }
 
-    private void RestoreLocalVars(Dictionary<string, TypeNode> saved)
+    private void RestoreLocalVars(LocalScope saved)
     {
         _localVars.Clear();
-        foreach (var entry in saved)
+        foreach (var entry in saved.Vars)
             _localVars[entry.Key] = entry.Value;
+
+        _localCNames.Clear();
+        foreach (var entry in saved.CNames)
+            _localCNames[entry.Key] = entry.Value;
     }
 
     private void RestoreCatchErrorVars(HashSet<string> saved)

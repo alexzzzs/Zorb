@@ -1,0 +1,6 @@
+typedef int32_t a_b;
+static const a_b a_b_C = (a_b)1;
+typedef int32_t a;
+static const a a_b_C__z2 = (a)2;
+int32_t x = a_b_C;
+int32_t y = a_b_C__z2;

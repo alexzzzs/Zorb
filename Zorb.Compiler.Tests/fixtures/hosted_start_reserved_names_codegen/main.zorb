@@ -1,0 +1,13 @@
+fn _start() {
+    __zorb_user_start()
+}
+
+fn __zorb_user_start() {
+}
+
+fn main() {
+    __zorb_user_main()
+}
+
+fn __zorb_user_main() {
+}

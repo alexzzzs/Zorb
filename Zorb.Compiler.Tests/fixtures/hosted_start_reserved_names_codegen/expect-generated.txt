@@ -1,0 +1,12 @@
+void __zorb_user_start();
+void __zorb_user_start__z2();
+void __zorb_user_main();
+void __zorb_user_main__z2();
+void __zorb_user_start() {
+__zorb_user_start__z2();
+void __zorb_user_start__z2() {
+void __zorb_user_main() {
+__zorb_user_main__z2();
+void __zorb_user_main__z2() {
+int main() {
+__zorb_user_start();

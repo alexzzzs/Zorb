@@ -1,0 +1,6 @@
+fn main() {
+    if Builtin.IsLinux {
+        x: i64 = 1
+    }
+    x: i64 = 2
+}

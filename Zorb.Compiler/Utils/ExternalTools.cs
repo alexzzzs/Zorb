@@ -49,7 +49,17 @@ public static class ExternalTools
         return RunProcessCore(fileName, arguments, workingDirectory, timeoutMilliseconds: null);
     }
 
+    public static CommandResult RunProcess(string fileName, IEnumerable<string> arguments, string workingDirectory)
+    {
+        return RunProcessCore(fileName, arguments, workingDirectory, timeoutMilliseconds: null);
+    }
+
     public static CommandResult RunProcessWithTimeout(string fileName, string arguments, string workingDirectory, int timeoutMilliseconds)
+    {
+        return RunProcessCore(fileName, arguments, workingDirectory, timeoutMilliseconds);
+    }
+
+    public static CommandResult RunProcessWithTimeout(string fileName, IEnumerable<string> arguments, string workingDirectory, int timeoutMilliseconds)
     {
         return RunProcessCore(fileName, arguments, workingDirectory, timeoutMilliseconds);
     }
@@ -59,19 +69,43 @@ public static class ExternalTools
         return RunProcessCore(fileName, arguments, workingDirectory, (int)timeout.TotalMilliseconds);
     }
 
+    public static CommandResult RunProcessWithTimeout(string fileName, IEnumerable<string> arguments, string workingDirectory, TimeSpan timeout)
+    {
+        return RunProcessCore(fileName, arguments, workingDirectory, (int)timeout.TotalMilliseconds);
+    }
+
+    private static CommandResult RunProcessCore(string fileName, IEnumerable<string> arguments, string workingDirectory, int? timeoutMilliseconds)
+    {
+        var startInfo = CreateProcessStartInfo(fileName, workingDirectory);
+        foreach (var argument in arguments)
+            startInfo.ArgumentList.Add(argument);
+
+        return RunProcessCore(startInfo, timeoutMilliseconds);
+    }
+
     private static CommandResult RunProcessCore(string fileName, string arguments, string workingDirectory, int? timeoutMilliseconds)
     {
-        var startInfo = new ProcessStartInfo
+        var startInfo = CreateProcessStartInfo(fileName, workingDirectory);
+        startInfo.Arguments = arguments;
+
+        return RunProcessCore(startInfo, timeoutMilliseconds);
+    }
+
+    private static ProcessStartInfo CreateProcessStartInfo(string fileName, string workingDirectory)
+    {
+        return new ProcessStartInfo
         {
             FileName = fileName,
-            Arguments = arguments,
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
         };
+    }
 
-        using var process = Process.Start(startInfo) ?? throw new ZorbCompilerException($"Failed to start process '{fileName}'.");
+    private static CommandResult RunProcessCore(ProcessStartInfo startInfo, int? timeoutMilliseconds)
+    {
+        using var process = Process.Start(startInfo) ?? throw new ZorbCompilerException($"Failed to start process '{startInfo.FileName}'.");
         var stdOutTask = process.StandardOutput.ReadToEndAsync();
         var stdErrTask = process.StandardError.ReadToEndAsync();
 
@@ -89,7 +123,7 @@ public static class ExternalTools
                     // and a kill failure should not mask the timeout diagnostic.
                 }
 
-                throw new ZorbCompilerException($"Process '{fileName}' timed out after {timeoutMilliseconds.Value / 1000} seconds.");
+                throw new ZorbCompilerException($"Process '{startInfo.FileName}' timed out after {timeoutMilliseconds.Value / 1000} seconds.");
             }
         }
         else
@@ -101,5 +135,38 @@ public static class ExternalTools
         var stdErr = stdErrTask.GetAwaiter().GetResult();
         process.WaitForExit();
         return new CommandResult(process.ExitCode, stdOut, stdErr);
+    }
+
+    private static IReadOnlyList<string> SplitCommandLine(string arguments)
+    {
+        var result = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var inQuotes = false;
+
+        foreach (var ch in arguments)
+        {
+            if (ch == '"')
+            {
+                inQuotes = !inQuotes;
+                continue;
+            }
+
+            if (char.IsWhiteSpace(ch) && !inQuotes)
+            {
+                if (current.Length > 0)
+                {
+                    result.Add(current.ToString());
+                    current.Clear();
+                }
+                continue;
+            }
+
+            current.Append(ch);
+        }
+
+        if (current.Length > 0)
+            result.Add(current.ToString());
+
+        return result;
     }
 }

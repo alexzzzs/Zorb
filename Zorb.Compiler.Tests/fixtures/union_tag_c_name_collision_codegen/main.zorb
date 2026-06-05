@@ -1,0 +1,10 @@
+union a.b {
+    C: i64
+}
+
+a_b_Tag_C: i64 = 7
+
+fn main() {
+    x: a.b = a.b{ C: 1 }
+    y: i64 = a_b_Tag_C
+}

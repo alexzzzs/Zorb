@@ -3,6 +3,8 @@ using Zorb.Compiler.AST.Statements;
 
 public abstract class Expr : Node { }
 
+public class InvalidExpr : Expr { }
+
 public class CallExpr : Expr
 {
     public List<string> NamespacePath { get; set; } = new();

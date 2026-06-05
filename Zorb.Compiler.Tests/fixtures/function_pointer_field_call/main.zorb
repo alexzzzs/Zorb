@@ -6,3 +6,7 @@ struct Fiber {
 fn run(f: *Fiber) {
     f.func(f.arg)
 }
+
+fn run_value(f: Fiber) {
+    f.func(f.arg)
+}
