@@ -229,6 +229,8 @@ Only use this after reviewing that the codegen change is intentional.
 4. Add expectation files only for the checks you care about.
 5. Run the suite.
 
+Generic language fixtures follow the same convention. Prefer separate fixtures for successful monomorphized output, runtime behavior, and each diagnostic contract such as wrong type-argument arity or use of type arguments on a non-generic declaration.
+
 For a new snapshot fixture:
 
 1. Add `main.zorb`.

@@ -10,14 +10,12 @@ public static class TypeHelpers
         if (operandType.ArraySize != null)
         {
             var pointerLevel = Math.Max(operandType.PointerLevel, operandType.IsPointer ? 1 : 0) + 1;
-            return new TypeNode
-            {
-                Name = operandType.Name,
-                NamespacePath = new List<string>(operandType.NamespacePath),
-                IsVolatile = operandType.IsVolatile,
-                IsPointer = true,
-                PointerLevel = pointerLevel
-            };
+            var arrayResult = operandType.Clone();
+            arrayResult.IsPointer = true;
+            arrayResult.PointerLevel = pointerLevel;
+            arrayResult.ArraySize = null;
+            arrayResult.ArraySizeExpr = null;
+            return arrayResult;
         }
 
         var result = operandType.Clone();
@@ -42,9 +40,16 @@ public static class TypeHelpers
             left.ArraySize != right.ArraySize ||
             left.IsErrorUnion != right.IsErrorUnion ||
             left.IsFunction != right.IsFunction ||
-            !left.NamespacePath.SequenceEqual(right.NamespacePath))
+            !left.NamespacePath.SequenceEqual(right.NamespacePath) ||
+            left.TypeArguments.Count != right.TypeArguments.Count)
         {
             return false;
+        }
+
+        for (int i = 0; i < left.TypeArguments.Count; i++)
+        {
+            if (!SameType(left.TypeArguments[i], right.TypeArguments[i]))
+                return false;
         }
 
         if (left.IsErrorUnion && !SameType(left.ErrorInnerType, right.ErrorInnerType))

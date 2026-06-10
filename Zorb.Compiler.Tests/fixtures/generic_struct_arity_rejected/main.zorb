@@ -1,0 +1,9 @@
+struct Pair<T, U> {
+    left: T,
+    right: U,
+}
+
+fn main() -> i64 {
+    value: Pair<i64>
+    return 0
+}

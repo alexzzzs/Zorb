@@ -1,0 +1,9 @@
+struct Box<T> {
+    value: T,
+}
+
+fn main() -> i64 {
+    unsigned: Box<u64> = Box<u64>{ value: 1 }
+    signed: Box<i64> = unsigned
+    return 0
+}

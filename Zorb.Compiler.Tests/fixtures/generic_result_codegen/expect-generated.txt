@@ -1,0 +1,4 @@
+struct Box_g1_6_n3_i64 {
+struct Result_Box_g1_6_n3_i64 {
+struct Box_g1_6_n3_i64 value;
+struct Result_Box_g1_6_n3_i64 load_g1_19_n15_Box_g1_6_n3_i64(struct Box_g1_6_n3_i64 value);

@@ -85,33 +85,13 @@ public partial class Parser
             else if (Current.Type == TokenType.LParen)
             {
                 var calleeLocation = expr;
-                Advance();
-                var args = new List<Expr>();
-                if (Current.Type != TokenType.RParen)
-                {
-                    do
-                    {
-                        args.Add(ParseExpression());
-                        if (Current.Type == TokenType.Comma)
-                            Advance();
-                        else
-                            break;
-                    } while (true);
-                }
-                Expect(TokenType.RParen, "Missing closing ')' in function call");
-
-                var lastToken = Previous;
-
-                var callExpr = expr is IdentifierExpr id
-                    ? new CallExpr { NamespacePath = new List<string>(), Name = id.Name, Args = args }
-                    : new CallExpr { Name = "", Args = args, TargetExpr = expr };
-
-                StampNode(callExpr, calleeLocation);
-                var totalSpan = calleeLocation.Line == lastToken.Line
-                    ? (lastToken.Column + lastToken.Length) - calleeLocation.Column
-                    : Math.Max(callExpr.Length, lastToken.Length);
-                callExpr.Length = Math.Max(callExpr.Length, totalSpan);
-                expr = callExpr;
+                expr = ParseCallExpr(expr, calleeLocation);
+            }
+            else if (Current.Type == TokenType.Less && IsGenericCallStart())
+            {
+                var calleeLocation = expr;
+                var typeArguments = ParseTypeArgumentList();
+                expr = ParseCallExpr(expr, calleeLocation, typeArguments);
             }
             else
             {
@@ -122,6 +102,61 @@ public partial class Parser
         return expr;
     }
 
+    private CallExpr ParseCallExpr(Expr callee, Node calleeLocation, List<TypeNode>? typeArguments = null)
+    {
+        Expect(
+            TokenType.LParen,
+            typeArguments == null
+                ? "Expected '(' to start function call."
+                : "Expected '(' after generic function type arguments.");
+
+        var args = new List<Expr>();
+        if (Current.Type != TokenType.RParen)
+        {
+            do
+            {
+                args.Add(ParseExpression());
+                if (Current.Type == TokenType.Comma)
+                    Advance();
+                else
+                    break;
+            } while (true);
+        }
+        Expect(TokenType.RParen, "Missing closing ')' in function call");
+
+        var lastToken = Previous;
+        var callExpr = callee is IdentifierExpr id
+            ? new CallExpr
+            {
+                NamespacePath = new List<string>(),
+                Name = id.Name,
+                TypeArguments = typeArguments ?? new List<TypeNode>(),
+                Args = args
+            }
+            : new CallExpr
+            {
+                Name = "",
+                TypeArguments = typeArguments ?? new List<TypeNode>(),
+                Args = args,
+                TargetExpr = callee
+            };
+
+        StampNode(callExpr, calleeLocation);
+        var totalSpan = calleeLocation.Line == lastToken.Line
+            ? (lastToken.Column + lastToken.Length) - calleeLocation.Column
+            : Math.Max(callExpr.Length, lastToken.Length);
+        callExpr.Length = Math.Max(callExpr.Length, totalSpan);
+        return callExpr;
+    }
+
+    private bool IsGenericCallStart()
+    {
+        var offset = 0;
+        if (!TrySkipTypeArgumentList(ref offset))
+            return false;
+        return Peek(offset).Type == TokenType.LParen;
+    }
+
     private bool IsStructLiteralStart()
     {
         if (Current.Type != TokenType.Identifier)
@@ -130,6 +165,8 @@ public partial class Parser
         var offset = 1;
         while (Peek(offset).Type == TokenType.Dot && Peek(offset + 1).Type == TokenType.Identifier)
             offset += 2;
+        if (!TrySkipTypeArgumentList(ref offset))
+            return false;
 
         if (Peek(offset).Type != TokenType.LBrace)
             return false;
@@ -160,6 +197,43 @@ public partial class Parser
             }
 
             return Peek(offset).Type == TokenType.RBrace;
+        }
+    }
+
+    private bool TrySkipTypeArgumentList(ref int offset)
+    {
+        if (Peek(offset).Type != TokenType.Less)
+            return true;
+
+        var depth = 0;
+        while (true)
+        {
+            var tokenType = Peek(offset).Type;
+            if (tokenType == TokenType.Eof)
+                return false;
+
+            if (tokenType == TokenType.Less)
+                depth++;
+            else if (tokenType == TokenType.Greater)
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    offset++;
+                    return true;
+                }
+            }
+            else if (tokenType == TokenType.RShift)
+            {
+                depth -= 2;
+                if (depth <= 0)
+                {
+                    offset++;
+                    return depth == 0;
+                }
+            }
+
+            offset++;
         }
     }
 
@@ -233,6 +307,7 @@ public partial class Parser
 
         var name = path[^1];
         path.RemoveAt(path.Count - 1);
+        var typeArguments = ParseTypeArgumentList();
 
         Expect(TokenType.LBrace, "Expected '{' to start struct literal.");
         var fields = new List<StructLiteralField>();
@@ -266,7 +341,8 @@ public partial class Parser
             TypeName = new TypeNode
             {
                 Name = name,
-                NamespacePath = path
+                NamespacePath = path,
+                TypeArguments = typeArguments
             },
             Fields = fields
         };

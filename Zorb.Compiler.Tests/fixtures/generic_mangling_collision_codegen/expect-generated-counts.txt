@@ -1,0 +1,2 @@
+struct Pair_g2_8_n5_A_B_C_5_n2_AB { => 1
+struct Pair_g2_5_n2_AB_8_n5_A_B_C { => 1

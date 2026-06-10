@@ -1,0 +1,33 @@
+import "../../std/io.zorb"
+import "../../std/os.zorb"
+
+struct Box<T> {
+    value: T,
+}
+
+struct Pair<T, U> {
+    left: T,
+    right: U,
+}
+
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn unwrap<T>(box: Box<T>) -> T {
+    return box.value
+}
+
+fn _start() {
+    inner: Box<i64> = Box<i64>{ value: identity<i64>(41) }
+    nested: Box<Box<i64>> = Box<Box<i64>>{ value: inner }
+    pair: Pair<Box<i64>, bool> = Pair<Box<i64>, bool>{
+        left: nested.value,
+        right: true
+    }
+
+    answer: i64 = unwrap<i64>(pair.left) + 1
+    std.io.print_i64(answer)
+    std.io.print("\n")
+    std.os.exit(0)
+}

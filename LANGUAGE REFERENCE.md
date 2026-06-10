@@ -283,6 +283,42 @@ export struct std.mem.HeapAllocator {
 }
 ```
 
+Structs may declare one or more type parameters:
+
+```zorb
+struct Pair<T, U> {
+    left: T,
+    right: U,
+}
+
+fn make_pair() -> Pair<i64, bool> {
+    return Pair<i64, bool>{ left: 42, right: true }
+}
+```
+
+Generic structs are nominal types and are monomorphized during C generation: each concrete instantiation emits its own C `struct`. Type arguments are written with angle brackets in every type position and in typed struct literals. Nested instantiations such as `Box<Box<i64>>` are supported.
+
+Type parameters may be used through supported type wrappers:
+
+```zorb
+struct BufferView<T> {
+    ptr: *T,
+    items: []T,
+    cache: [4]T,
+}
+```
+
+Generic structs support the same `packed`, `align(N)`, `layout(explicit)`, and field `offset(N)` attributes as non-generic structs. Layout is checked for each concrete instantiation.
+
+Current limits:
+
+- Type arguments are explicit; there is no generic type inference yet.
+- Every use must provide exactly the declared number of type arguments.
+- Type parameters are scoped to the generic declaration.
+- Generic arguments may themselves be built-in or user-defined types, including concrete generic instantiations.
+- Enums, unions, extern types, and built-in types cannot declare or accept type arguments.
+- Generic declarations do not currently support constraints or default type arguments.
+
 ### Tagged Unions
 
 Tagged unions declare a nominal payload type with an automatically generated discriminator enum:
@@ -323,6 +359,41 @@ Function names may be qualified:
 fn std.io.print(msg: string) {
 }
 ```
+
+Non-extern functions may declare one or more type parameters:
+
+```zorb
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn demo() -> i64 {
+    return identity<i64>(42)
+}
+```
+
+Generic function calls must provide explicit type arguments. Each concrete instantiation is monomorphized into generated C.
+
+Generic functions may use their type parameters in parameters, return types, local declarations, casts, `Builtin.sizeof(...)`, struct literals, arrays, slices, pointers, function types, and error unions. Calls may use imported declarations and nested generic types:
+
+```zorb
+fn unwrap<T>(box: Box<T>) -> T {
+    return box.value
+}
+
+fn demo(value: Box<i64>) -> i64 {
+    return unwrap<i64>(value)
+}
+```
+
+Rules:
+
+- Calls must provide exactly the declared number of type arguments.
+- Type arguments are validated like any other type reference.
+- A non-generic function rejects type arguments.
+- Function-pointer calls do not accept type arguments.
+- `extern fn` declarations cannot declare type parameters.
+- Uninstantiated generic functions are not currently first-class function values.
 
 ### Extern Functions
 
@@ -435,6 +506,17 @@ string
 `bool` is a first-class type. Conditions require `bool`; integers and pointers are not implicitly truthy.
 
 `string` is a source-level type. It maps to `char*` in generated C but does not implicitly convert to pointer or integer types.
+
+### Generic Type Instantiations
+
+```zorb
+box: Box<i64>
+nested: Box<Pair<i64, bool>>
+```
+
+A generic type instantiation is a declared generic struct name followed by a comma-separated type argument list in angle brackets. It may appear anywhere a type is accepted, including pointer, slice, array, function, cast, `Builtin.sizeof(...)`, parameter, return, local, global, and field types.
+
+Adjacent closing brackets in nested types are accepted, so `Box<Box<i64>>` does not require whitespace.
 
 ### Pointers
 

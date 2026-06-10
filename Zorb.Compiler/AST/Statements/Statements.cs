@@ -10,6 +10,7 @@ public class TypeNode
 {
     public string Name { get; set; } = "i32";
     public List<string> NamespacePath { get; set; } = new();
+    public List<TypeNode> TypeArguments { get; set; } = new();
     public bool IsAliasQualifiedReference { get; set; }
     public bool IsVolatile { get; set; }
     public bool IsSlice { get; set; }
@@ -30,6 +31,7 @@ public class TypeNode
         {
             Name = Name,
             NamespacePath = new List<string>(NamespacePath),
+            TypeArguments = TypeArguments.Select(t => t.Clone()).ToList(),
             IsAliasQualifiedReference = IsAliasQualifiedReference,
             IsVolatile = IsVolatile,
             IsSlice = IsSlice,
@@ -75,6 +77,7 @@ public class FunctionDecl : Node
     public bool IsExported { get; set; }
     public List<string> NamespacePath { get; set; } = new();
     public string Name { get; set; } = null!;
+    public List<string> TypeParameters { get; set; } = new();
     public List<Parameter> Parameters { get; set; } = new();
     public TypeNode ReturnType { get; set; } = new() { Name = "void" };
     public List<Statement> Body { get; set; } = new();
@@ -194,6 +197,7 @@ public class StructNode : Node
     public bool IsExported { get; set; }
     public List<string> NamespacePath { get; set; } = new();
     public string Name { get; set; } = null!;
+    public List<string> TypeParameters { get; set; } = new();
     public List<string> Attributes { get; set; } = new();
     public List<StructField> Fields { get; set; } = new();
     public Expr? AlignExpr { get; set; }

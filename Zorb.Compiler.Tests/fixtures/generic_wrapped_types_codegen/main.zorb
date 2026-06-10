@@ -1,0 +1,9 @@
+struct Wrapped<T> {
+    pointer: *T,
+    slice: []T,
+    items: [2]T,
+}
+
+fn use(value: Wrapped<i64>) -> i64 {
+    return value.items[0]
+}

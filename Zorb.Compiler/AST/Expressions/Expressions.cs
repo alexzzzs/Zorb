@@ -9,6 +9,7 @@ public class CallExpr : Expr
 {
     public List<string> NamespacePath { get; set; } = new();
     public string Name { get; set; } = null!;
+    public List<TypeNode> TypeArguments { get; set; } = new();
     public List<Expr> Args { get; set; } = new();
     public Expr? TargetExpr { get; set; }
     public string? ResolvedQualifiedName { get; set; }

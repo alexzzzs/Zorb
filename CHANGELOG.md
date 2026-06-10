@@ -44,6 +44,10 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Explicit generic structs and functions with multiple type parameters, nested concrete type arguments, imported generic declarations, and monomorphized C output.
+- Generic type support across pointers, slices, fixed arrays, function signatures, struct literals, `Builtin.sizeof(...)`, and error unions.
+- Generic struct support for `packed`, `align(N)`, `layout(explicit)`, and field `offset(N)` attributes.
+- Parser, semantic, code-generation, import, layout, diagnostic, and runtime fixtures covering generic success paths and invalid arity, duplicate parameters, unknown arguments, non-generic misuse, nominal mismatches, and unsupported generic extern declarations.
 - `match` statements for enum and tagged-union branching, including exhaustiveness checking and tagged-union payload binding via patterns like `Value.Number(n)`.
 - Fixture, runtime, and example coverage for enum matching, union matching, and non-exhaustive match diagnostics.
 - `enum` declarations with explicit built-in integer backing types, auto-incremented members, and constant-expression member initializers.
@@ -59,6 +63,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Concrete generic struct types now participate in exact nominal type compatibility, and type substitution preserves pointer, slice, array, and error-union wrappers.
 - The compiler entrypoint and parser are now split across smaller partial-class source files so CLI/build logic and parsing logic are easier to work on in isolation.
 
 ### Fixed

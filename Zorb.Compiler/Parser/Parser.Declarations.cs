@@ -173,6 +173,7 @@ public partial class Parser
         var (path, name) = ParseDottedDeclName(
             "Expected struct name after 'struct'.",
             "Expected identifier after '.' in struct name.");
+        var typeParameters = ParseTypeParameterList();
 
         Expect(TokenType.LBrace, "Expected '{' to start struct body.");
 
@@ -203,7 +204,7 @@ public partial class Parser
 
         Expect(TokenType.RBrace, "Expected '}' to close struct body.");
 
-        var node = new StructNode { NamespacePath = path, Name = name, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr, Fields = fields };
+        var node = new StructNode { NamespacePath = path, Name = name, TypeParameters = typeParameters, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr, Fields = fields };
         StampNode(node, startToken);
         return node;
     }
@@ -401,6 +402,7 @@ public partial class Parser
 
         var name = path.Last();
         path.RemoveAt(path.Count - 1);
+        var typeArguments = ParseTypeArgumentList();
 
         if (Current.Type == TokenType.LBracket && Current.Line == Previous.Line)
         {
@@ -416,6 +418,7 @@ public partial class Parser
         {
             Name = name,
             NamespacePath = path,
+            TypeArguments = typeArguments,
             IsVolatile = isVolatile,
             IsSlice = isSlice,
             IsPointer = pointer,
@@ -431,6 +434,7 @@ public partial class Parser
         {
             Name = typeNode.Name,
             NamespacePath = new List<string>(typeNode.NamespacePath),
+            TypeArguments = typeNode.TypeArguments.Select(argument => argument.Clone()).ToList(),
             IsVolatile = typeNode.IsVolatile,
             IsSlice = typeNode.IsSlice,
             IsPointer = typeNode.IsPointer,
@@ -440,6 +444,61 @@ public partial class Parser
             IsErrorUnion = true,
             ErrorInnerType = typeNode
         };
+    }
+
+    private List<string> ParseTypeParameterList()
+    {
+        var parameters = new List<string>();
+        if (!Match(TokenType.Less))
+            return parameters;
+
+        do
+        {
+            var parameterToken = Expect(TokenType.Identifier, "Expected type parameter name.");
+            // Report duplicates but omit them from the recovered parameter list.
+            if (parameters.Contains(parameterToken.Value, StringComparer.Ordinal))
+            {
+                ErrorReporter.Error($"Duplicate type parameter '{parameterToken.Value}'.", parameterToken.Line, parameterToken.Column, _fileName);
+                continue;
+            }
+            parameters.Add(parameterToken.Value);
+        } while (Match(TokenType.Comma));
+
+        Expect(TokenType.Greater, "Expected '>' to close type parameter list.");
+        return parameters;
+    }
+
+    private List<TypeNode> ParseTypeArgumentList()
+    {
+        var arguments = new List<TypeNode>();
+        if (!Match(TokenType.Less))
+            return arguments;
+
+        do
+        {
+            arguments.Add(ParseType());
+        } while (Match(TokenType.Comma));
+
+        ExpectTypeArgumentListClose();
+        return arguments;
+    }
+
+    private void ExpectTypeArgumentListClose()
+    {
+        if (Match(TokenType.Greater))
+            return;
+
+        if (Current.Type == TokenType.RShift)
+        {
+            // Current is a TokenType.RShift (`>>`): rewriting _tokens[_pos] as a
+            // TokenType.Greater at the second column consumes the first `>` now
+            // and safely preserves the remaining `>` for the next nested parse.
+            var token = Current;
+            _tokens[_pos] = new Token(TokenType.Greater, "", token.Line, token.Column + 1);
+            return;
+        }
+
+        Expect(TokenType.Greater, "Expected '>' to close type argument list.");
     }
 
     private FunctionDecl ParseFunction()
@@ -457,6 +516,7 @@ public partial class Parser
 
         var name = path.Last();
         path.RemoveAt(path.Count - 1);
+        var typeParameters = ParseTypeParameterList();
 
         Expect(TokenType.LParen, "Expected '(' after function name.");
 
@@ -489,7 +549,7 @@ public partial class Parser
             };
         }
 
-        FunctionDecl function = new() { NamespacePath = path, Name = name, Parameters = parameters, ReturnType = returnType, IsExtern = isExtern, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr };
+        FunctionDecl function = new() { NamespacePath = path, Name = name, TypeParameters = typeParameters, Parameters = parameters, ReturnType = returnType, IsExtern = isExtern, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr };
         StampNode(function, startToken);
 
         if (isExtern)

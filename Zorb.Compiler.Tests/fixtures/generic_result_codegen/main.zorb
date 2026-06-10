@@ -1,0 +1,14 @@
+struct Box<T> {
+    value: T,
+}
+
+// load<T> intentionally always succeeds to exercise generic result-wrapper codegen.
+fn load<T>(value: T) -> !T {
+    return value
+}
+
+fn use(value: Box<i64>) -> Box<i64> {
+    return load<Box<i64>>(value) catch |err| {
+        return value
+    }
+}

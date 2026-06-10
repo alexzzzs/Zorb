@@ -1,0 +1,7 @@
+fn pair<T, U>(left: T, right: U) -> T {
+    return left
+}
+
+fn main() -> i64 {
+    return pair<i64>(1, true)
+}

@@ -14,7 +14,7 @@ The project already has:
 The compiler supports a focused language subset:
 
 - functions, `extern fn`, and namespaced declarations
-- `struct` types
+- `struct` types plus explicit generic structs and functions, monomorphized in generated C
 - `enum` types with explicit integer backing types
 - tagged `union` types with generated tag enums
 - globals, `const` declarations, and error declarations
@@ -28,6 +28,28 @@ The compiler supports a focused language subset:
 - builtins such as `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`, and `Builtin.sizeof(...)`
 
 The current semantic source of truth is [SEMANTICS.md](./SEMANTICS.md).
+
+## Generics
+
+Structs and non-extern functions may declare one or more type parameters:
+
+```zorb
+struct Box<T> {
+    value: T,
+}
+
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn make() -> Box<i64> {
+    return Box<i64>{ value: identity<i64>(42) }
+}
+```
+
+Type arguments are currently explicit. Generic calls such as `identity<i64>(42)` and generic types such as `Box<i64>` must provide exactly the declared number of arguments. Nested forms such as `Box<Box<i64>>`, imported generic declarations, pointers, slices, arrays, error unions, and generic struct layout attributes are supported.
+
+Each concrete use is monomorphized into a distinct C function or struct. Zorb does not currently provide type inference, constraints, default type arguments, generic enums or unions, generic extern functions, or first-class values for uninstantiated generic functions.
 
 Cross-platform stdlib helpers currently include:
 
@@ -341,6 +363,7 @@ Current checked-in examples:
 - [`examples/basics/net_socket.zorb`](./examples/basics/net_socket.zorb): low-level TCP socket setup using the Linux-first `std.net` APIs.
 - [`examples/basics/stdlib_helpers.zorb`](./examples/basics/stdlib_helpers.zorb): string, memory, and formatted output helpers from the standard library.
 - [`examples/basics/literals.zorb`](./examples/basics/literals.zorb): typed struct and array literals combined with logical operators.
+- [`examples/basics/generics.zorb`](./examples/basics/generics.zorb): explicit generic structs and functions with nested concrete instantiations.
 - [`examples/basics/switch_for.zorb`](./examples/basics/switch_for.zorb): `for` loops and `switch` with an `else` branch.
 - [`examples/dogfood/lexer/main.zorb`](./examples/dogfood/lexer/main.zorb): a small lexer demo written in Zorb that exercises real control flow, slices, and token handling.
 - [`examples/advanced/threads.zorb`](./examples/advanced/threads.zorb): lower-level task/thread setup using inline assembly and Linux syscalls.

@@ -1,0 +1,1 @@
+extern fn convert<T>(value: T) -> T

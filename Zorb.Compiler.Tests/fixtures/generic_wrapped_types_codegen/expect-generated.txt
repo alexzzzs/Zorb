@@ -1,0 +1,4 @@
+struct Wrapped_g1_6_n3_i64 {
+int64_t* pointer;
+struct Slice_i64 slice;
+int64_t items[2];
