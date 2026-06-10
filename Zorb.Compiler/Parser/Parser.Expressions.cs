@@ -113,6 +113,37 @@ public partial class Parser
                 callExpr.Length = Math.Max(callExpr.Length, totalSpan);
                 expr = callExpr;
             }
+            else if (Current.Type == TokenType.Less && IsGenericCallStart())
+            {
+                var calleeLocation = expr;
+                var typeArguments = ParseTypeArgumentList();
+                Expect(TokenType.LParen, "Expected '(' after generic function type arguments.");
+                var args = new List<Expr>();
+                if (Current.Type != TokenType.RParen)
+                {
+                    do
+                    {
+                        args.Add(ParseExpression());
+                        if (Current.Type == TokenType.Comma)
+                            Advance();
+                        else
+                            break;
+                    } while (true);
+                }
+                Expect(TokenType.RParen, "Missing closing ')' in function call");
+
+                var lastToken = Previous;
+                var callExpr = expr is IdentifierExpr id
+                    ? new CallExpr { NamespacePath = new List<string>(), Name = id.Name, TypeArguments = typeArguments, Args = args }
+                    : new CallExpr { Name = "", TypeArguments = typeArguments, Args = args, TargetExpr = expr };
+
+                StampNode(callExpr, calleeLocation);
+                var totalSpan = calleeLocation.Line == lastToken.Line
+                    ? (lastToken.Column + lastToken.Length) - calleeLocation.Column
+                    : Math.Max(callExpr.Length, lastToken.Length);
+                callExpr.Length = Math.Max(callExpr.Length, totalSpan);
+                expr = callExpr;
+            }
             else
             {
                 break;
@@ -120,6 +151,14 @@ public partial class Parser
         }
 
         return expr;
+    }
+
+    private bool IsGenericCallStart()
+    {
+        var offset = 0;
+        if (!TrySkipTypeArgumentList(ref offset))
+            return false;
+        return Peek(offset).Type == TokenType.LParen;
     }
 
     private bool IsStructLiteralStart()
@@ -130,6 +169,8 @@ public partial class Parser
         var offset = 1;
         while (Peek(offset).Type == TokenType.Dot && Peek(offset + 1).Type == TokenType.Identifier)
             offset += 2;
+        if (!TrySkipTypeArgumentList(ref offset))
+            return false;
 
         if (Peek(offset).Type != TokenType.LBrace)
             return false;
@@ -160,6 +201,43 @@ public partial class Parser
             }
 
             return Peek(offset).Type == TokenType.RBrace;
+        }
+    }
+
+    private bool TrySkipTypeArgumentList(ref int offset)
+    {
+        if (Peek(offset).Type != TokenType.Less)
+            return true;
+
+        var depth = 0;
+        while (true)
+        {
+            var tokenType = Peek(offset).Type;
+            if (tokenType == TokenType.Eof)
+                return false;
+
+            if (tokenType == TokenType.Less)
+                depth++;
+            else if (tokenType == TokenType.Greater)
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    offset++;
+                    return true;
+                }
+            }
+            else if (tokenType == TokenType.RShift)
+            {
+                depth -= 2;
+                if (depth <= 0)
+                {
+                    offset++;
+                    return depth == 0;
+                }
+            }
+
+            offset++;
         }
     }
 
@@ -233,6 +311,7 @@ public partial class Parser
 
         var name = path[^1];
         path.RemoveAt(path.Count - 1);
+        var typeArguments = ParseTypeArgumentList();
 
         Expect(TokenType.LBrace, "Expected '{' to start struct literal.");
         var fields = new List<StructLiteralField>();
@@ -266,7 +345,8 @@ public partial class Parser
             TypeName = new TypeNode
             {
                 Name = name,
-                NamespacePath = path
+                NamespacePath = path,
+                TypeArguments = typeArguments
             },
             Fields = fields
         };

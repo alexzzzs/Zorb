@@ -14,6 +14,7 @@ public static class TypeHelpers
             {
                 Name = operandType.Name,
                 NamespacePath = new List<string>(operandType.NamespacePath),
+                TypeArguments = operandType.TypeArguments.Select(t => t.Clone()).ToList(),
                 IsVolatile = operandType.IsVolatile,
                 IsPointer = true,
                 PointerLevel = pointerLevel
@@ -42,9 +43,16 @@ public static class TypeHelpers
             left.ArraySize != right.ArraySize ||
             left.IsErrorUnion != right.IsErrorUnion ||
             left.IsFunction != right.IsFunction ||
-            !left.NamespacePath.SequenceEqual(right.NamespacePath))
+            !left.NamespacePath.SequenceEqual(right.NamespacePath) ||
+            left.TypeArguments.Count != right.TypeArguments.Count)
         {
             return false;
+        }
+
+        for (int i = 0; i < left.TypeArguments.Count; i++)
+        {
+            if (!SameType(left.TypeArguments[i], right.TypeArguments[i]))
+                return false;
         }
 
         if (left.IsErrorUnion && !SameType(left.ErrorInnerType, right.ErrorInnerType))

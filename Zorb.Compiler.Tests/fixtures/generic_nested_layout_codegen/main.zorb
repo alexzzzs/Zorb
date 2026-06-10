@@ -1,0 +1,12 @@
+struct Inner<T> {
+    value: T,
+}
+
+[packed]
+struct Outer<T> {
+    value: T,
+}
+
+fn make() -> Outer<Inner<i32>> {
+    return Outer<Inner<i32>>{ value: Inner<i32>{ value: 7 } }
+}

@@ -97,8 +97,12 @@ public class CGenerator
     private readonly Stack<string?> _continueTargets = new();
     private readonly HashSet<string> _generatedResultTypes = new();
     private readonly HashSet<string> _generatedSliceTypes = new();
-    private readonly StringBuilder _dynamicResultStructs = new();
-    private readonly StringBuilder _dynamicSliceStructs = new();
+    private readonly HashSet<string> _generatedGenericStructTypes = new();
+    private readonly HashSet<string> _generatedEarlyStructTypes = new();
+    private readonly HashSet<string> _generatedGenericFunctions = new();
+    private readonly StringBuilder _dynamicTypeDefinitions = new();
+    private readonly StringBuilder _dynamicGenericFunctionPrototypes = new();
+    private readonly StringBuilder _dynamicGenericFunctions = new();
     private readonly Dictionary<string, string> _functionCNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _typeCNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _memberCNames = new(StringComparer.Ordinal);
@@ -244,6 +248,8 @@ static void __zorb_slice_oob(void) {
         var functions = allNodes.OfType<FunctionDecl>().ToList();
         foreach (var fn in functions)
         {
+            if (fn.TypeParameters.Count > 0)
+                continue;
             var cName = GetFunctionCName(fn.NamespacePath, fn.Name, null);
             if (emittedItems.Contains(cName))
                 continue;
@@ -283,17 +289,20 @@ static void __zorb_slice_oob(void) {
         sb.AppendLine(RuntimeFailureHelpers);
 
         PreGenerateSliceTypes(allNodes);
+        PreGenerateGenericStructTypes(allNodes);
 
-        // Slice structs may appear as fields inside user structs, so they must be emitted first.
-        sb.Append(_dynamicSliceStructs.ToString());
+        // Generated and dependency structs are accumulated in dependency order.
+        sb.Append(_dynamicTypeDefinitions.ToString());
 
         // Emit AST structs first (must be before prototypes)
         var emittedStructs = new HashSet<string>();
         var structs = allNodes.OfType<StructNode>().ToList();
         foreach (var s in structs)
         {
+            if (s.TypeParameters.Count > 0)
+                continue;
             var cName = GetTypeCName(s.NamespacePath, s.Name, null);
-            if (emittedStructs.Contains(cName))
+            if (_generatedEarlyStructTypes.Contains(cName) || emittedStructs.Contains(cName))
                 continue;
             emittedStructs.Add(cName);
             sb.Append(GenerateStruct(s, null));
@@ -321,15 +330,13 @@ static void __zorb_slice_oob(void) {
             sb.Append(GenerateUnion(unionNode));
         }
 
-        // Emit result structs after user structs because result values can contain user struct values.
-        sb.Append(_dynamicResultStructs.ToString());
-
         // Generate function prototypes (structs are already defined)
         var prototypesSb = new StringBuilder();
         var emittedPrototypes = new HashSet<string>();
         foreach (var fn in functions)
         {
             if (fn.IsExtern) continue;
+            if (fn.TypeParameters.Count > 0) continue;
             var cReturnType = MapType(fn.ReturnType);
             var cName = GetFunctionCName(fn.NamespacePath, fn.Name, null);
             if (emittedPrototypes.Contains(cName)) continue;
@@ -340,6 +347,7 @@ static void __zorb_slice_oob(void) {
         if (HasHostedStartShim())
             prototypesSb.AppendLine("int main();");
         sb.Append(prototypesSb.ToString());
+        sb.Append(_dynamicGenericFunctionPrototypes.ToString());
         sb.AppendLine();
 
         // Emit constants/variables
@@ -350,6 +358,7 @@ static void __zorb_slice_oob(void) {
 
         // Emit functions
         sb.Append(funcsSb.ToString());
+        sb.Append(_dynamicGenericFunctions.ToString());
 
         _parsedFilesByPath = null;
         return sb.ToString();
@@ -363,10 +372,14 @@ static void __zorb_slice_oob(void) {
         _cHeaders.Clear();
         _localVars.Clear();
         _localCNames.Clear();
-        _dynamicResultStructs.Clear();
-        _dynamicSliceStructs.Clear();
+        _dynamicTypeDefinitions.Clear();
+        _dynamicGenericFunctionPrototypes.Clear();
+        _dynamicGenericFunctions.Clear();
         _generatedResultTypes.Clear();
         _generatedSliceTypes.Clear();
+        _generatedGenericStructTypes.Clear();
+        _generatedEarlyStructTypes.Clear();
+        _generatedGenericFunctions.Clear();
         _functionCNames.Clear();
         _typeCNames.Clear();
         _memberCNames.Clear();
@@ -417,11 +430,15 @@ static void __zorb_slice_oob(void) {
         }
     }
 
-    private string GenerateStruct(StructNode s, string? prefix)
+    private string GenerateStruct(
+        StructNode s,
+        string? prefix,
+        string? cNameOverride = null,
+        string? memberOwnerOverride = null)
     {
         var sb = new StringBuilder();
-        var cName = GetTypeCName(s.NamespacePath, s.Name, prefix);
-        var structFullName = QualifiedNames.GetFullName(s.NamespacePath, s.Name);
+        var cName = cNameOverride ?? GetTypeCName(s.NamespacePath, s.Name, prefix);
+        var structFullName = memberOwnerOverride ?? QualifiedNames.GetFullName(s.NamespacePath, s.Name);
         var needsComputedLayout = StructLayout.HasPackedAttribute(s) || StructLayout.GetAlignment(s.Attributes) is > 0;
         if (!needsComputedLayout)
         {
@@ -450,7 +467,7 @@ static void __zorb_slice_oob(void) {
             attrs.Add($"aligned({alignment.Value})");
         var attrStr = attrs.Count > 0 ? $" __attribute__(({string.Join(", ", attrs)}))" : "";
 
-        if (!StructLayout.TryCompute(s, name => _symbolTable.LookupStructNode(name), out var layout, out var error))
+        if (!StructLayout.TryCompute(s, ResolveConcreteStructForLayout, out var layout, out var error))
             throw new InvalidOperationException(error ?? $"Unable to compute layout for struct '{cName}'.");
 
         sb.AppendLine($"struct{attrStr} {cName} {{");
@@ -505,7 +522,7 @@ static void __zorb_slice_oob(void) {
         var rawName = fn.Name;
         var sb = new StringBuilder();
         var cReturnType = MapType(fn.ReturnType);
-        var cName = GetFunctionCName(fn.NamespacePath, rawName, prefix);
+        var cName = prefix ?? GetFunctionCName(fn.NamespacePath, rawName, null);
 
         var attrs = new List<string>();
         foreach (var attr in fn.Attributes)
@@ -649,6 +666,11 @@ static void __zorb_slice_oob(void) {
         {
             baseType = GetTypeCName(type.NamespacePath, type.Name, null);
         }
+        else if (type.TypeArguments.Count > 0)
+        {
+            baseType = "struct " + GetGenericTypeCName(type);
+            GenerateGenericStruct(type);
+        }
         else
         {
             baseType = type.Name switch
@@ -705,7 +727,7 @@ static void __zorb_slice_oob(void) {
             "string" => "ptr",
             "void" => "void",
             "char" => "char",
-            _ => GetTypeCName(innerType.NamespacePath, innerType.Name, null)
+            _ => innerType.TypeArguments.Count > 0 ? GetGenericTypeCName(innerType) : GetTypeCName(innerType.NamespacePath, innerType.Name, null)
         };
         if (innerType.IsPointer && innerType.Name != "string")
         {
@@ -721,8 +743,9 @@ static void __zorb_slice_oob(void) {
         if (_generatedResultTypes.Contains(resultName))
             return;
         _generatedResultTypes.Add(resultName);
+        GenerateStructDependency(innerType);
 
-        var cInnerType = innerType.IsSlice
+        var cInnerType = innerType.IsSlice || innerType.TypeArguments.Count > 0
             ? MapType(innerType)
             : innerType.Name switch
             {
@@ -752,7 +775,7 @@ static void __zorb_slice_oob(void) {
         _includes.Add("stdint.h");
         var structCode = $"struct {resultName} {{\n    {cInnerType} value;\n    int32_t error;\n}};\n";
         
-        _dynamicResultStructs.AppendLine(structCode);
+        _dynamicTypeDefinitions.AppendLine(structCode);
         
         _structs.Insert(0, new StructNode
         {
@@ -775,7 +798,7 @@ static void __zorb_slice_oob(void) {
         var pointerType = TypeHelpers.AddressOfType(elementType);
         var structCode = $"struct {sliceName} {{\n    {MapType(pointerType, "ptr")};\n    int64_t len;\n}};\n";
 
-        _dynamicSliceStructs.AppendLine(structCode);
+        _dynamicTypeDefinitions.AppendLine(structCode);
     }
 
     private void PreGenerateSliceTypes(List<Node> nodes)
@@ -801,6 +824,79 @@ static void __zorb_slice_oob(void) {
 
         foreach (var variable in nodes.OfType<VariableDeclarationNode>())
             PreGenerateSliceType(variable.TypeName);
+    }
+
+    private void PreGenerateGenericStructTypes(List<Node> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            switch (node)
+            {
+                case VariableDeclarationNode variable:
+                    PreGenerateGenericStructType(variable.TypeName);
+                    break;
+                case StructNode structNode:
+                    foreach (var field in structNode.Fields)
+                        PreGenerateGenericStructType(field.TypeName);
+                    break;
+                case UnionNode unionNode:
+                    foreach (var variant in unionNode.Variants)
+                        PreGenerateGenericStructType(variant.TypeName);
+                    break;
+                case FunctionDecl function:
+                    PreGenerateGenericStructType(function.ReturnType);
+                    foreach (var parameter in function.Parameters)
+                        PreGenerateGenericStructType(parameter.TypeName);
+                    break;
+            }
+        }
+    }
+
+    private void PreGenerateGenericStructType(TypeNode type)
+    {
+        foreach (var typeArgument in type.TypeArguments)
+            PreGenerateGenericStructType(typeArgument);
+        if (type.TypeArguments.Count > 0 && IsConcreteType(type))
+            GenerateGenericStruct(type);
+        if (type.IsErrorUnion && type.ErrorInnerType != null)
+            PreGenerateGenericStructType(type.ErrorInnerType);
+        if (type.IsFunction)
+        {
+            if (type.ReturnType != null)
+                PreGenerateGenericStructType(type.ReturnType);
+            foreach (var parameterType in type.ParamTypes)
+                PreGenerateGenericStructType(parameterType);
+        }
+    }
+
+    private bool IsConcreteType(TypeNode type)
+    {
+        foreach (var typeArgument in type.TypeArguments)
+        {
+            if (!IsConcreteType(typeArgument))
+                return false;
+        }
+
+        if (type.IsErrorUnion && type.ErrorInnerType != null && !IsConcreteType(type.ErrorInnerType))
+            return false;
+        if (type.IsFunction)
+        {
+            if (type.ReturnType != null && !IsConcreteType(type.ReturnType))
+                return false;
+            if (type.ParamTypes.Any(parameterType => !IsConcreteType(parameterType)))
+                return false;
+        }
+
+        if (type.NamespacePath.Count > 0 || type.TypeArguments.Count > 0)
+            return true;
+        if (type.Name is "i8" or "i16" or "i32" or "i64" or "u8" or "u16" or "u32" or "u64" or "bool" or "string" or "void" or "char")
+            return true;
+
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
+        return _symbolTable.LookupStructNode(fullName) != null ||
+            _symbolTable.LookupEnumNode(fullName) != null ||
+            _symbolTable.LookupUnionNode(fullName) != null ||
+            _symbolTable.IsExternType(fullName);
     }
 
     private void PreGenerateSliceType(TypeNode type)
@@ -969,6 +1065,188 @@ static void __zorb_slice_oob(void) {
             : FlattenName(namespacePath, name, null);
     }
 
+    private string GetGenericTypeCName(TypeNode type)
+    {
+        var baseName = GetTypeCName(type.NamespacePath, type.Name, null);
+        var argumentNames = type.TypeArguments.Select(GetTypeCNameSuffix).ToList();
+        return baseName + "_g" + argumentNames.Count + string.Concat(argumentNames.Select(name => "_" + EncodeNameSegment(name)));
+    }
+
+    private string GetTypeCNameSuffix(TypeNode type)
+    {
+        string encoded;
+        if (type.IsFunction)
+        {
+            var returnType = GetTypeCNameSuffix(type.ReturnType ?? new TypeNode { Name = "void" });
+            var parameterTypes = type.ParamTypes.Select(GetTypeCNameSuffix).ToList();
+            encoded = "fn_r" + EncodeNameSegment(returnType) +
+                "_p" + parameterTypes.Count +
+                string.Concat(parameterTypes.Select(parameter => "_" + EncodeNameSegment(parameter)));
+        }
+        else
+        {
+            var baseName = type.Name switch
+            {
+                "i8" or "i16" or "i32" or "i64" or "u8" or "u16" or "u32" or "u64" or "bool" or "void" or "char" => type.Name,
+                "string" => "string",
+                _ => type.TypeArguments.Count > 0 ? GetGenericTypeCName(type) : GetTypeCName(type.NamespacePath, type.Name, null)
+            };
+            encoded = "n" + EncodeNameSegment(baseName);
+        }
+
+        if (type.IsPointer)
+            encoded = "p" + Math.Max(type.PointerLevel, 1) + "_" + EncodeNameSegment(encoded);
+        if (type.IsSlice)
+            encoded = "s_" + EncodeNameSegment(encoded);
+        if (type.ArraySize != null)
+            encoded = $"a{type.ArraySize}_" + EncodeNameSegment(encoded);
+        if (type.IsErrorUnion)
+        {
+            var innerType = type.ErrorInnerType?.Clone() ?? type.Clone();
+            innerType.IsErrorUnion = false;
+            innerType.ErrorInnerType = null;
+            encoded = "e_" + EncodeNameSegment(GetTypeCNameSuffix(innerType));
+        }
+        if (type.IsVolatile)
+            encoded = "v_" + EncodeNameSegment(encoded);
+
+        return encoded;
+    }
+
+    private static string EncodeNameSegment(string value)
+    {
+        return value.Length + "_" + value;
+    }
+
+    private void GenerateGenericStruct(TypeNode type)
+    {
+        var genericName = GetGenericTypeCName(type);
+        if (!_generatedGenericStructTypes.Add(genericName))
+            return;
+
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
+        var structDefinition = _symbolTable.LookupStructNode(fullName)
+            ?? throw new InvalidOperationException($"Unknown generic struct '{fullName}'.");
+        var instantiated = InstantiateStruct(structDefinition, type);
+        foreach (var field in instantiated.Fields)
+            GenerateStructDependency(field.TypeName);
+        _dynamicTypeDefinitions.Append(GenerateStruct(
+            instantiated,
+            prefix: null,
+            cNameOverride: genericName,
+            memberOwnerOverride: fullName));
+    }
+
+    private void GenerateStructDependency(TypeNode type)
+    {
+        if (type.IsPointer || type.IsSlice || type.IsFunction)
+            return;
+
+        if (type.IsErrorUnion)
+        {
+            if (type.ErrorInnerType != null)
+                GenerateStructDependency(type.ErrorInnerType);
+            return;
+        }
+
+        if (type.TypeArguments.Count > 0)
+        {
+            GenerateGenericStruct(type);
+            return;
+        }
+
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
+        var definition = _symbolTable.LookupStructNode(fullName);
+        if (definition == null || definition.TypeParameters.Count > 0)
+            return;
+
+        var cName = GetTypeCName(definition.NamespacePath, definition.Name, null);
+        if (!_generatedEarlyStructTypes.Add(cName))
+            return;
+
+        foreach (var field in definition.Fields)
+            GenerateStructDependency(field.TypeName);
+        _dynamicTypeDefinitions.Append(GenerateStruct(definition, null));
+    }
+
+    private static Dictionary<string, TypeNode> BuildTypeSubstitutions(IReadOnlyList<string> parameters, IReadOnlyList<TypeNode> arguments)
+    {
+        var result = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        for (int i = 0; i < parameters.Count && i < arguments.Count; i++)
+            result[parameters[i]] = arguments[i].Clone();
+        return result;
+    }
+
+    private static TypeNode SubstituteTypeParameters(TypeNode type, IReadOnlyDictionary<string, TypeNode> substitutions)
+    {
+        if (type.NamespacePath.Count == 0 && type.TypeArguments.Count == 0 && substitutions.TryGetValue(type.Name, out var replacement))
+        {
+            var substituted = replacement.Clone();
+            substituted.IsVolatile |= type.IsVolatile;
+            substituted.IsPointer = type.IsPointer || substituted.IsPointer;
+            substituted.PointerLevel += type.PointerLevel;
+            substituted.IsSlice |= type.IsSlice;
+            if (type.ArraySize != null)
+            {
+                substituted.ArraySize = type.ArraySize;
+                substituted.ArraySizeExpr = type.ArraySizeExpr;
+            }
+            if (type.IsErrorUnion)
+            {
+                var innerType = substituted.Clone();
+                substituted.IsErrorUnion = true;
+                substituted.ErrorInnerType = innerType;
+            }
+            return substituted;
+        }
+
+        var clone = type.Clone();
+        clone.TypeArguments = clone.TypeArguments.Select(argument => SubstituteTypeParameters(argument, substitutions)).ToList();
+        if (clone.IsErrorUnion && clone.ErrorInnerType != null)
+            clone.ErrorInnerType = SubstituteTypeParameters(clone.ErrorInnerType, substitutions);
+        if (clone.IsFunction)
+        {
+            clone.ParamTypes = clone.ParamTypes.Select(param => SubstituteTypeParameters(param, substitutions)).ToList();
+            if (clone.ReturnType != null)
+                clone.ReturnType = SubstituteTypeParameters(clone.ReturnType, substitutions);
+        }
+
+        return clone;
+    }
+
+    private StructNode? ResolveConcreteStructForLayout(TypeNode type)
+    {
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
+        var definition = _symbolTable.LookupStructNode(fullName);
+        if (definition == null)
+            return null;
+        return definition.TypeParameters.Count == 0 ? definition : InstantiateStruct(definition, type);
+    }
+
+    private static StructNode InstantiateStruct(StructNode definition, TypeNode concreteType)
+    {
+        var substitutions = BuildTypeSubstitutions(definition.TypeParameters, concreteType.TypeArguments);
+        return new StructNode
+        {
+            File = definition.File,
+            Line = definition.Line,
+            Column = definition.Column,
+            Length = definition.Length,
+            IsExported = definition.IsExported,
+            NamespacePath = new List<string>(definition.NamespacePath),
+            Name = FormatType(concreteType),
+            Attributes = new List<string>(definition.Attributes),
+            AlignExpr = definition.AlignExpr,
+            Fields = definition.Fields.Select(field => CopyNode(field, new StructField
+            {
+                Name = field.Name,
+                TypeName = SubstituteTypeParameters(field.TypeName, substitutions),
+                Attributes = new List<string>(field.Attributes),
+                OffsetExpr = field.OffsetExpr
+            })).ToList()
+        };
+    }
+
     private static string GetMemberFullName(string containerFullName, string memberName)
     {
         return $"{containerFullName}.{memberName}";
@@ -1121,6 +1399,224 @@ static void __zorb_slice_oob(void) {
         return _functionCNames.TryGetValue(fullName, out var cName)
             ? cName
             : FlattenName(namespacePath, name, null);
+    }
+
+    private string GetFunctionCNameForResolvedName(string resolvedName)
+    {
+        var (namespacePath, name) = QualifiedNames.SplitQualifiedName(resolvedName);
+        return GetFunctionCName(namespacePath, name, null);
+    }
+
+    private string GetGenericFunctionCName(FunctionDecl function, IReadOnlyList<TypeNode> typeArguments)
+    {
+        var argumentNames = typeArguments.Select(GetTypeCNameSuffix).ToList();
+        return GetFunctionCName(function.NamespacePath, function.Name, null) +
+            "_g" + argumentNames.Count +
+            string.Concat(argumentNames.Select(name => "_" + EncodeNameSegment(name)));
+    }
+
+    private string GenerateGenericFunction(string resolvedName, IReadOnlyList<TypeNode> typeArguments)
+    {
+        var function = FindFunctionDecl(resolvedName)
+            ?? throw new InvalidOperationException($"Unknown generic function '{resolvedName}'.");
+        var cName = GetGenericFunctionCName(function, typeArguments);
+        if (!_generatedGenericFunctions.Add(cName))
+            return cName;
+
+        var substitutions = BuildTypeSubstitutions(function.TypeParameters, typeArguments);
+        var instantiated = InstantiateFunction(function, substitutions);
+        var savedLocals = CloneLocalVars();
+        var savedInsideFunctionBody = _insideFunctionBody;
+        try
+        {
+            var prototypeReturnType = MapType(instantiated.ReturnType);
+            var prototypeParameters = GenerateParameterList(instantiated, registerLocals: false);
+            _dynamicGenericFunctionPrototypes.AppendLine($"{prototypeReturnType} {cName}({prototypeParameters});");
+            _dynamicGenericFunctions.AppendLine(GenerateFunction(instantiated, cName));
+        }
+        finally
+        {
+            RestoreLocalVars(savedLocals);
+            _insideFunctionBody = savedInsideFunctionBody;
+        }
+
+        return cName;
+    }
+
+    private FunctionDecl? FindFunctionDecl(string resolvedName)
+    {
+        return _allNodes.OfType<FunctionDecl>()
+            .FirstOrDefault(function => string.Equals(QualifiedNames.GetFullName(function.NamespacePath, function.Name), resolvedName, StringComparison.Ordinal));
+    }
+
+    private static FunctionDecl InstantiateFunction(FunctionDecl function, IReadOnlyDictionary<string, TypeNode> substitutions)
+    {
+        return new FunctionDecl
+        {
+            File = function.File,
+            Line = function.Line,
+            Column = function.Column,
+            Length = function.Length,
+            IsExported = function.IsExported,
+            NamespacePath = new List<string>(function.NamespacePath),
+            Name = function.Name,
+            Parameters = function.Parameters
+                .Select(parameter => new Parameter(parameter.Name, SubstituteTypeParameters(parameter.TypeName, substitutions)))
+                .ToList(),
+            ReturnType = SubstituteTypeParameters(function.ReturnType, substitutions),
+            Body = function.Body.Select(statement => CloneStatement(statement, substitutions)).ToList(),
+            IsExtern = function.IsExtern,
+            Attributes = new List<string>(function.Attributes),
+            AlignExpr = function.AlignExpr
+        };
+    }
+
+    private static Statement CloneStatement(Statement statement, IReadOnlyDictionary<string, TypeNode> substitutions)
+    {
+        switch (statement)
+        {
+            case VariableDeclarationNode varDecl:
+                return CopyNode(varDecl, new VariableDeclarationNode
+                {
+                    IsExported = varDecl.IsExported,
+                    Name = varDecl.Name,
+                    TypeName = SubstituteTypeParameters(varDecl.TypeName, substitutions),
+                    Value = varDecl.Value != null ? CloneExpr(varDecl.Value, substitutions) : null,
+                    Attributes = new List<string>(varDecl.Attributes),
+                    IsConst = varDecl.IsConst,
+                    AlignExpr = varDecl.AlignExpr
+                });
+            case ExpressionStatement exprStmt:
+                return CopyNode(exprStmt, new ExpressionStatement { Expression = CloneExpr(exprStmt.Expression, substitutions) });
+            case AssignStmt assign:
+                return CopyNode(assign, new AssignStmt { Target = CloneExpr(assign.Target, substitutions), Value = CloneExpr(assign.Value, substitutions) });
+            case ReturnNode returnNode:
+                return CopyNode(returnNode, new ReturnNode { Value = returnNode.Value != null ? CloneExpr(returnNode.Value, substitutions) : null });
+            case IfStmt ifStmt:
+                return CopyNode(ifStmt, new IfStmt
+                {
+                    Condition = CloneExpr(ifStmt.Condition, substitutions),
+                    Body = ifStmt.Body.Select(statement => CloneStatement(statement, substitutions)).ToList(),
+                    ElseBody = ifStmt.ElseBody.Select(statement => CloneStatement(statement, substitutions)).ToList()
+                });
+            case WhileStmt whileStmt:
+                return CopyNode(whileStmt, new WhileStmt
+                {
+                    Condition = CloneExpr(whileStmt.Condition, substitutions),
+                    Body = whileStmt.Body.Select(statement => CloneStatement(statement, substitutions)).ToList()
+                });
+            case ForStmt forStmt:
+                return CopyNode(forStmt, new ForStmt
+                {
+                    Initializer = forStmt.Initializer != null ? CloneStatement(forStmt.Initializer, substitutions) : null,
+                    Condition = forStmt.Condition != null ? CloneExpr(forStmt.Condition, substitutions) : null,
+                    Update = forStmt.Update != null ? CloneStatement(forStmt.Update, substitutions) : null,
+                    Body = forStmt.Body.Select(statement => CloneStatement(statement, substitutions)).ToList()
+                });
+            case ContinueStmt continueStmt:
+                return CopyNode(continueStmt, new ContinueStmt());
+            case BreakStmt breakStmt:
+                return CopyNode(breakStmt, new BreakStmt());
+            case SwitchStmt switchStmt:
+                return CopyNode(switchStmt, new SwitchStmt
+                {
+                    Expression = CloneExpr(switchStmt.Expression, substitutions),
+                    Cases = switchStmt.Cases.Select(@case => new SwitchCase
+                    {
+                        Value = CloneExpr(@case.Value, substitutions),
+                        Body = @case.Body.Select(statement => CloneStatement(statement, substitutions)).ToList()
+                    }).ToList(),
+                    ElseBody = switchStmt.ElseBody.Select(statement => CloneStatement(statement, substitutions)).ToList()
+                });
+            case MatchStmt matchStmt:
+                return CopyNode(matchStmt, new MatchStmt
+                {
+                    Expression = CloneExpr(matchStmt.Expression, substitutions),
+                    Cases = matchStmt.Cases.Select(@case => new MatchCase
+                    {
+                        Pattern = @case.Pattern,
+                        Body = @case.Body.Select(statement => CloneStatement(statement, substitutions)).ToList()
+                    }).ToList(),
+                    ElseBody = matchStmt.ElseBody.Select(statement => CloneStatement(statement, substitutions)).ToList()
+                });
+            case AsmStatementNode asmStmt:
+                return CopyNode(asmStmt, new AsmStatementNode
+                {
+                    Code = new List<string>(asmStmt.Code),
+                    Outputs = asmStmt.Outputs.Select(operand => new AsmOperand { Constraint = operand.Constraint, Expression = CloneExpr(operand.Expression, substitutions) }).ToList(),
+                    Inputs = asmStmt.Inputs.Select(operand => new AsmOperand { Constraint = operand.Constraint, Expression = CloneExpr(operand.Expression, substitutions) }).ToList(),
+                    Clobbers = new List<string>(asmStmt.Clobbers)
+                });
+            default:
+                return statement;
+        }
+    }
+
+    private static Expr CloneExpr(Expr expr, IReadOnlyDictionary<string, TypeNode> substitutions)
+    {
+        switch (expr)
+        {
+            case NumberExpr number:
+                return CopyNode(number, new NumberExpr { Value = number.Value });
+            case StringExpr str:
+                return CopyNode(str, new StringExpr { Value = str.Value });
+            case IdentifierExpr identifier:
+                return CopyNode(identifier, new IdentifierExpr { Name = identifier.Name });
+            case BinaryExpr binary:
+                return CopyNode(binary, new BinaryExpr { Left = CloneExpr(binary.Left, substitutions), Operator = binary.Operator, Right = CloneExpr(binary.Right, substitutions) });
+            case UnaryExpr unary:
+                return CopyNode(unary, new UnaryExpr { Operator = unary.Operator, Operand = CloneExpr(unary.Operand, substitutions) });
+            case CallExpr call:
+                return CopyNode(call, new CallExpr
+                {
+                    NamespacePath = new List<string>(call.NamespacePath),
+                    Name = call.Name,
+                    TypeArguments = call.TypeArguments.Select(argument => SubstituteTypeParameters(argument, substitutions)).ToList(),
+                    Args = call.Args.Select(argument => CloneExpr(argument, substitutions)).ToList(),
+                    TargetExpr = call.TargetExpr != null ? CloneExpr(call.TargetExpr, substitutions) : null,
+                    ResolvedQualifiedName = call.ResolvedQualifiedName,
+                    ResolvedTargetQualifiedName = call.ResolvedTargetQualifiedName,
+                    ResolvedFunctionType = call.ResolvedFunctionType?.Clone()
+                });
+            case FieldExpr field:
+                return CopyNode(field, new FieldExpr { Target = CloneExpr(field.Target, substitutions), Field = field.Field, ResolvedQualifiedName = field.ResolvedQualifiedName });
+            case IndexExpr index:
+                return CopyNode(index, new IndexExpr { Target = CloneExpr(index.Target, substitutions), Index = CloneExpr(index.Index, substitutions) });
+            case CastExpr cast:
+                return CopyNode(cast, new CastExpr { TargetType = SubstituteTypeParameters(cast.TargetType, substitutions), Expr = CloneExpr(cast.Expr, substitutions) });
+            case SizeofExpr sizeofExpr:
+                return CopyNode(sizeofExpr, new SizeofExpr { TargetType = SubstituteTypeParameters(sizeofExpr.TargetType, substitutions) });
+            case StructLiteralExpr structLiteral:
+                return CopyNode(structLiteral, new StructLiteralExpr
+                {
+                    TypeName = SubstituteTypeParameters(structLiteral.TypeName, substitutions),
+                    Fields = structLiteral.Fields.Select(field => CopyNode(field, new StructLiteralField { Name = field.Name, Value = CloneExpr(field.Value, substitutions) })).ToList()
+                });
+            case ArrayLiteralExpr arrayLiteral:
+                return CopyNode(arrayLiteral, new ArrayLiteralExpr
+                {
+                    TypeName = SubstituteTypeParameters(arrayLiteral.TypeName, substitutions),
+                    Elements = arrayLiteral.Elements.Select(element => CloneExpr(element, substitutions)).ToList()
+                });
+            case CatchExpr catchExpr:
+                return CopyNode(catchExpr, new CatchExpr
+                {
+                    Left = CloneExpr(catchExpr.Left, substitutions),
+                    ErrorVar = catchExpr.ErrorVar,
+                    CatchBody = catchExpr.CatchBody.Select(statement => CloneStatement(statement, substitutions)).ToList()
+                });
+            default:
+                return expr;
+        }
+    }
+
+    private static T CopyNode<T>(Node source, T target) where T : Node
+    {
+        target.File = source.File;
+        target.Line = source.Line;
+        target.Column = source.Column;
+        target.Length = source.Length;
+        return target;
     }
 
     private string GetVariableCName(string qualifiedName, SymbolInfo symbolInfo)
@@ -1797,8 +2293,9 @@ static void __zorb_slice_oob(void) {
                     if (TryGetDirectFunctionSymbol(call.ResolvedTargetQualifiedName, out _) &&
                         !string.IsNullOrEmpty(call.ResolvedTargetQualifiedName))
                     {
-                        var (resolvedNamespacePath, resolvedName) = QualifiedNames.SplitQualifiedName(call.ResolvedTargetQualifiedName);
-                        var resolvedTarget = GetFunctionCName(resolvedNamespacePath, resolvedName, null);
+                        var resolvedTarget = call.TypeArguments.Count > 0
+                            ? GenerateGenericFunction(call.ResolvedTargetQualifiedName, call.TypeArguments)
+                            : GetFunctionCNameForResolvedName(call.ResolvedTargetQualifiedName);
                         return new GeneratedExpression(callPrelude.ToString(), $"{resolvedTarget}({args})", GetExprType(expr));
                     }
 
@@ -1811,8 +2308,9 @@ static void __zorb_slice_oob(void) {
                 if (TryGetDirectFunctionSymbol(call.ResolvedQualifiedName, out var resolvedFunctionSymbol))
                 {
                     var resolvedFunctionName = resolvedFunctionSymbol!.Name;
-                    var (resolvedNamespacePath, resolvedName) = QualifiedNames.SplitQualifiedName(resolvedFunctionName);
-                    cCallName = GetFunctionCName(resolvedNamespacePath, resolvedName, null);
+                    cCallName = call.TypeArguments.Count > 0
+                        ? GenerateGenericFunction(resolvedFunctionName, call.TypeArguments)
+                        : GetFunctionCNameForResolvedName(resolvedFunctionName);
                 }
                 else if (_localCNames.ContainsKey(call.Name))
                 {
@@ -2405,7 +2903,7 @@ static void __zorb_slice_oob(void) {
 
         if (_symbolTable.TryLookupStruct(fullName, out var fields))
         {
-            foreach (var field in fields!)
+            foreach (var field in GetStructFieldsForType(structType))
             {
                 if (field.Name == fieldName)
                     return field.Type.Clone();
@@ -2424,6 +2922,19 @@ static void __zorb_slice_oob(void) {
             }
         }
         return null;
+    }
+
+    private List<(string Name, TypeNode Type)> GetStructFieldsForType(TypeNode structType)
+    {
+        var fullName = QualifiedNames.GetFullName(structType.NamespacePath, structType.Name);
+        var structNode = _symbolTable.LookupStructNode(fullName);
+        if (structNode == null)
+            return new List<(string Name, TypeNode Type)>();
+
+        var substitutions = BuildTypeSubstitutions(structNode.TypeParameters, structType.TypeArguments);
+        return structNode.Fields
+            .Select(field => (field.Name, SubstituteTypeParameters(field.TypeName, substitutions)))
+            .ToList();
     }
 
     private bool IsUnionType(TypeNode type)
@@ -2492,6 +3003,8 @@ static void __zorb_slice_oob(void) {
     private static string FormatType(TypeNode type)
     {
         var baseName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
+        if (type.TypeArguments.Count > 0)
+            baseName += "<" + string.Join(", ", type.TypeArguments.Select(FormatType)) + ">";
 
         if (type.IsPointer)
             baseName = new string('*', Math.Max(type.PointerLevel, 1)) + baseName;

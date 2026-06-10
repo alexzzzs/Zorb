@@ -33,6 +33,7 @@ public class TypeChecker
     private readonly Stack<Dictionary<string, long>> _constValueScopes = new();
     private readonly Stack<Dictionary<string, Node>> _declarationNodeScopes = new();
     private readonly Stack<HashSet<string>> _catchErrorVarScopes = new();
+    private readonly Stack<HashSet<string>> _typeParameterScopes = new();
     private readonly Dictionary<string, string> _errorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<long, string> _errorValues = new();
     private IReadOnlyDictionary<string, IReadOnlyList<Node>>? _parsedFilesByPath;
@@ -112,6 +113,8 @@ public class TypeChecker
     {
         if (type.ArraySizeExpr != null)
             type.ArraySizeExpr = NormalizeAliasReferences(type.ArraySizeExpr);
+        foreach (var typeArgument in type.TypeArguments)
+            NormalizeTypeReferenceInPlace(typeArgument);
 
         if (type.IsFunction)
         {
@@ -148,6 +151,8 @@ public class TypeChecker
                 return bin;
 
             case CallExpr call:
+                foreach (var typeArgument in call.TypeArguments)
+                    NormalizeTypeReferenceInPlace(typeArgument);
                 for (int i = 0; i < call.Args.Count; i++)
                     call.Args[i] = NormalizeAliasReferences(call.Args[i]);
 
@@ -493,6 +498,7 @@ public class TypeChecker
         _constValueScopes.Clear();
         _declarationNodeScopes.Clear();
         _catchErrorVarScopes.Clear();
+        _typeParameterScopes.Clear();
         _errorSymbols.Clear();
         _errorValues.Clear();
         _fileScopes.Clear();
@@ -524,7 +530,7 @@ public class TypeChecker
                 if (IsBuiltinDeclarationName(fullName))
                     _errors.Error(fn, $"Top-level declaration '{fullName}' conflicts with a built-in symbol.");
                 MakeVisible(fullName);
-                if (!_symbolTable.IsDefined(fullName)) _symbolTable.DefineFunction(fullName, fn.ReturnType, fn.Parameters);
+                if (!_symbolTable.IsDefined(fullName)) _symbolTable.DefineFunction(fullName, fn.ReturnType, fn.Parameters, fn.TypeParameters);
             }
             else if (node is StructNode sn) {
                 var fullName = QualifiedNames.GetFullName(sn.NamespacePath, sn.Name);
@@ -588,8 +594,16 @@ public class TypeChecker
             else if (node is StructNode structNode)
             {
                 ResolveStructAttributes(structNode);
-                foreach (var field in structNode.Fields)
-                    ValidateTypeReference(field.TypeName, field);
+                PushTypeParameterScope(structNode.TypeParameters);
+                try
+                {
+                    foreach (var field in structNode.Fields)
+                        ValidateTypeReference(field.TypeName, field);
+                }
+                finally
+                {
+                    PopTypeParameterScope();
+                }
                 var fullName = QualifiedNames.GetFullName(structNode.NamespacePath, structNode.Name);
                 ValidateStructAttributes(structNode, fullName);
             }
@@ -604,13 +618,24 @@ public class TypeChecker
             else if (node is FunctionDecl functionDecl)
             {
                 ResolveAlignmentAttribute(functionDecl.Attributes, functionDecl.AlignExpr, functionDecl, "Function Alignment");
-                ValidateTypeReference(functionDecl.ReturnType, functionDecl);
-                foreach (var param in functionDecl.Parameters)
-                    ValidateTypeReference(param.TypeName, functionDecl);
+                if (functionDecl.IsExtern && functionDecl.TypeParameters.Count > 0)
+                    _errors.Error(functionDecl, $"Extern function '{QualifiedNames.GetFullName(functionDecl.NamespacePath, functionDecl.Name)}' cannot declare type parameters.");
+                PushTypeParameterScope(functionDecl.TypeParameters);
+                try
+                {
+                    ValidateTypeReference(functionDecl.ReturnType, functionDecl);
+                    foreach (var param in functionDecl.Parameters)
+                        ValidateTypeReference(param.TypeName, functionDecl);
+                }
+                finally
+                {
+                    PopTypeParameterScope();
+                }
 
                 if (functionDecl.IsExtern) continue;
 
                 _currentFunction = functionDecl;
+                PushTypeParameterScope(functionDecl.TypeParameters);
                 PushScopedState();
                 try
                 {
@@ -634,6 +659,7 @@ public class TypeChecker
                 finally
                 {
                     PopScopedState();
+                    PopTypeParameterScope();
                     _currentFunction = null;
                 }
             }
@@ -868,11 +894,7 @@ public class TypeChecker
                     : qualifiedInfo!.Name;
                 call.ResolvedTargetQualifiedName = resolvedTargetName;
                 var callableInfo = qualifiedInfo!;
-                call.ResolvedFunctionType = callableInfo.GetCallableFunctionType();
-                return new ResolvedCallInfo(
-                    qualifiedName ?? "call target",
-                    callableInfo.GetCallableParameters(),
-                    callableInfo.GetCallableReturnType());
+                return InstantiateCallableInfo(callableInfo, call, qualifiedName ?? "call target", reportErrors);
             }
 
             var targetType = GetExpressionType(call.TargetExpr, reportErrors: false);
@@ -888,6 +910,12 @@ public class TypeChecker
             }
 
             call.ResolvedFunctionType = targetType.Clone();
+            if (call.TypeArguments.Count > 0)
+            {
+                if (reportErrors)
+                    _errors.Error(call, "Function pointer calls do not accept type arguments.");
+                return null;
+            }
             return new ResolvedCallInfo(
                 !string.IsNullOrEmpty(qualifiedName) ? qualifiedName : "function pointer",
                 targetType.ParamTypes.Select(type => new Parameter("", type)).ToList(),
@@ -946,12 +974,47 @@ public class TypeChecker
 
         var resolvedSymbolInfo = symbolInfo!;
         call.ResolvedQualifiedName = resolvedSymbolInfo.Name;
-        call.ResolvedFunctionType = resolvedSymbolInfo.GetCallableFunctionType();
+        return InstantiateCallableInfo(resolvedSymbolInfo, call, displayName, reportErrors);
+    }
 
+    private ResolvedCallInfo? InstantiateCallableInfo(SymbolInfo symbolInfo, CallExpr call, string displayName, bool reportErrors)
+    {
+        if (symbolInfo.TypeParameters.Count == 0 && call.TypeArguments.Count > 0)
+        {
+            if (reportErrors)
+                _errors.Error(call, $"Function '{displayName}' is not generic and does not accept type arguments.");
+            return null;
+        }
+
+        if (symbolInfo.TypeParameters.Count > 0 && call.TypeArguments.Count != symbolInfo.TypeParameters.Count)
+        {
+            if (reportErrors)
+                _errors.Error(call, $"Function '{displayName}' expects {symbolInfo.TypeParameters.Count} type argument(s), got {call.TypeArguments.Count}.");
+            return null;
+        }
+
+        foreach (var typeArgument in call.TypeArguments)
+            ValidateTypeReference(typeArgument, call);
+
+        var substitutions = BuildTypeSubstitutions(symbolInfo.TypeParameters, call.TypeArguments);
+        var parameters = symbolInfo.GetCallableParameters()
+            .Select(parameter => new Parameter(parameter.Name, SubstituteTypeParameters(parameter.TypeName, substitutions)))
+            .ToList();
+        var returnType = symbolInfo.GetCallableReturnType() is TypeNode type
+            ? SubstituteTypeParameters(type, substitutions)
+            : null;
+
+        call.ResolvedFunctionType = new TypeNode
+        {
+            Name = symbolInfo.Name,
+            IsFunction = true,
+            ReturnType = returnType?.Clone(),
+            ParamTypes = parameters.Select(parameter => parameter.TypeName.Clone()).ToList()
+        };
         return new ResolvedCallInfo(
             displayName,
-            resolvedSymbolInfo.GetCallableParameters(),
-            resolvedSymbolInfo.GetCallableReturnType());
+            parameters,
+            returnType);
     }
 
     private FlowOutcome CheckStatement(Statement stmt)
@@ -1736,7 +1799,14 @@ public class TypeChecker
         if (!explicitLayout && !structNode.Attributes.Contains("packed") && StructLayout.GetAlignment(structNode.Attributes) == null)
             return;
 
-        if (!StructLayout.TryCompute(structNode, name => _symbolTable.LookupStructNode(name), out _, out var error) && error != null)
+        if (structNode.TypeParameters.Count > 0)
+        {
+            if (explicitLayout && structNode.Fields.Any(field => StructLayout.GetExplicitOffset(field) == null))
+                _errors.Error(structNode, $"Explicit-layout struct '{fullName}' requires every field to declare an [offset(N)] attribute.");
+            return;
+        }
+
+        if (!StructLayout.TryCompute(structNode, ResolveConcreteStructForLayout, out _, out var error) && error != null)
             _errors.Error(structNode, error);
     }
 
@@ -2106,6 +2176,9 @@ public class TypeChecker
 
     private void ValidateTypeReference(TypeNode type, Node context)
     {
+        foreach (var typeArgument in type.TypeArguments)
+            ValidateTypeReference(typeArgument, context);
+
         var sourceFullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
         var wasAliasQualified = TryResolveAliasQualifiedName(sourceFullName, out var resolvedTypeName);
 
@@ -2163,13 +2236,22 @@ public class TypeChecker
             return;
         }
 
-        if (type.Name == "void" || type.Name == "string" || type.Name == "bool" || type.Name == "char" || _numericTypes.Contains(type.Name))
+        if (IsTypeParameterReference(type))
             return;
+
+        if (type.Name == "void" || type.Name == "string" || type.Name == "bool" || type.Name == "char" || _numericTypes.Contains(type.Name))
+        {
+            if (type.TypeArguments.Count > 0)
+                _errors.Error(context, $"Type '{type.Name}' does not accept type arguments.");
+            return;
+        }
 
         var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
 
         if (_symbolTable.LookupEnumNode(fullName) != null)
         {
+            if (type.TypeArguments.Count > 0)
+                _errors.Error(context, $"Enum '{fullName}' does not accept type arguments.");
             if (!type.IsAliasQualifiedReference && !CheckVisibility(fullName))
                 ReportNotVisible(context, "Enum", fullName);
             return;
@@ -2177,6 +2259,8 @@ public class TypeChecker
 
         if (_symbolTable.LookupUnionNode(fullName) != null)
         {
+            if (type.TypeArguments.Count > 0)
+                _errors.Error(context, $"Union '{fullName}' does not accept type arguments.");
             if (!type.IsAliasQualifiedReference && !CheckVisibility(fullName))
                 ReportNotVisible(context, "Union", fullName);
             return;
@@ -2184,15 +2268,36 @@ public class TypeChecker
 
         if (_symbolTable.IsExternType(fullName))
         {
+            if (type.TypeArguments.Count > 0)
+                _errors.Error(context, $"Extern type '{fullName}' does not accept type arguments.");
             if (!type.IsAliasQualifiedReference && !CheckVisibility(fullName))
                 ReportNotVisible(context, "Extern type", fullName);
             return;
         }
 
-        if (!_symbolTable.TryLookupStruct(fullName, out _))
+        var structNode = _symbolTable.LookupStructNode(fullName);
+        if (structNode == null)
         {
             _errors.Error(context, $"Unknown type '{fullName}'");
             return;
+        }
+
+        if (structNode.TypeParameters.Count != type.TypeArguments.Count)
+        {
+            _errors.Error(
+                context,
+                structNode.TypeParameters.Count == 0
+                    ? $"Struct '{fullName}' is not generic and does not accept type arguments."
+                    : $"Struct '{fullName}' expects {structNode.TypeParameters.Count} type argument(s), got {type.TypeArguments.Count}.");
+            return;
+        }
+
+        if (type.TypeArguments.Count > 0 &&
+            (StructLayout.HasPackedAttribute(structNode) || StructLayout.GetAlignment(structNode.Attributes) is > 0))
+        {
+            var concreteStruct = InstantiateStruct(structNode, type);
+            if (!StructLayout.TryCompute(concreteStruct, ResolveConcreteStructForLayout, out _, out var layoutError) && layoutError != null)
+                _errors.Error(context, layoutError);
         }
 
         if (!type.IsAliasQualifiedReference && !CheckVisibility(fullName))
@@ -2337,7 +2442,7 @@ public class TypeChecker
         if (!_symbolTable.TryLookupStruct(fullName, out var structFields))
             return;
 
-        var fieldMap = structFields!.ToDictionary(field => field.Name, field => field.Type, StringComparer.Ordinal);
+        var fieldMap = GetStructFieldsForType(structLiteral.TypeName).ToDictionary(field => field.Name, field => field.Type, StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var field in structLiteral.Fields)
@@ -2366,7 +2471,7 @@ public class TypeChecker
             }
         }
 
-        foreach (var field in structFields!)
+        foreach (var field in GetStructFieldsForType(structLiteral.TypeName))
         {
             if (!seen.Contains(field.Name))
                 _errors.Error(structLiteral, $"Struct literal for '{fullName}' is missing required field '{field.Name}'.");
@@ -2629,7 +2734,7 @@ public class TypeChecker
                             ReportNotVisible(field, "Struct", structName);
                         return null;
                     }
-                    var fieldDef = structDef!.FirstOrDefault(f => f.Name == field.Field);
+                    var fieldDef = GetStructFieldsForType(ft).FirstOrDefault(f => f.Name == field.Field);
                     if (!string.IsNullOrEmpty(fieldDef.Name))
                     {
                         return fieldDef.Type.Clone();
@@ -2824,6 +2929,8 @@ public class TypeChecker
     private static string FormatNonErrorType(TypeNode type)
     {
         var baseName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
+        if (type.TypeArguments.Count > 0)
+            baseName += "<" + string.Join(", ", type.TypeArguments.Select(FormatType)) + ">";
 
         if (type.IsPointer)
         {
@@ -2843,6 +2950,120 @@ public class TypeChecker
         return baseName;
     }
 
+    private void PushTypeParameterScope(IEnumerable<string> typeParameters)
+    {
+        _typeParameterScopes.Push(new HashSet<string>(typeParameters, StringComparer.Ordinal));
+    }
+
+    private void PopTypeParameterScope()
+    {
+        if (_typeParameterScopes.Count > 0)
+            _typeParameterScopes.Pop();
+    }
+
+    private bool IsTypeParameterReference(TypeNode type)
+    {
+        return type.NamespacePath.Count == 0 &&
+            type.TypeArguments.Count == 0 &&
+            !type.IsFunction &&
+            _typeParameterScopes.Any(scope => scope.Contains(type.Name));
+    }
+
+    private List<(string Name, TypeNode Type)> GetStructFieldsForType(TypeNode structType)
+    {
+        var fullName = QualifiedNames.GetFullName(structType.NamespacePath, structType.Name);
+        var structNode = _symbolTable.LookupStructNode(fullName);
+        if (structNode == null)
+            return new List<(string Name, TypeNode Type)>();
+
+        var substitutions = BuildTypeSubstitutions(structNode.TypeParameters, structType.TypeArguments);
+        return structNode.Fields
+            .Select(field => (field.Name, SubstituteTypeParameters(field.TypeName, substitutions)))
+            .ToList();
+    }
+
+    private static Dictionary<string, TypeNode> BuildTypeSubstitutions(IReadOnlyList<string> parameters, IReadOnlyList<TypeNode> arguments)
+    {
+        var result = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        for (int i = 0; i < parameters.Count && i < arguments.Count; i++)
+            result[parameters[i]] = arguments[i].Clone();
+        return result;
+    }
+
+    private static TypeNode SubstituteTypeParameters(TypeNode type, IReadOnlyDictionary<string, TypeNode> substitutions)
+    {
+        if (type.NamespacePath.Count == 0 && type.TypeArguments.Count == 0 && substitutions.TryGetValue(type.Name, out var replacement))
+        {
+            var substituted = replacement.Clone();
+            substituted.IsVolatile |= type.IsVolatile;
+            substituted.IsPointer = type.IsPointer || substituted.IsPointer;
+            substituted.PointerLevel += type.PointerLevel;
+            substituted.IsSlice |= type.IsSlice;
+            if (type.ArraySize != null)
+            {
+                substituted.ArraySize = type.ArraySize;
+                substituted.ArraySizeExpr = type.ArraySizeExpr;
+            }
+            if (type.IsErrorUnion)
+            {
+                var innerType = substituted.Clone();
+                substituted.IsErrorUnion = true;
+                substituted.ErrorInnerType = innerType;
+            }
+            return substituted;
+        }
+
+        var clone = type.Clone();
+        clone.TypeArguments = clone.TypeArguments.Select(argument => SubstituteTypeParameters(argument, substitutions)).ToList();
+        if (clone.IsErrorUnion && clone.ErrorInnerType != null)
+            clone.ErrorInnerType = SubstituteTypeParameters(clone.ErrorInnerType, substitutions);
+        if (clone.IsFunction)
+        {
+            clone.ParamTypes = clone.ParamTypes.Select(param => SubstituteTypeParameters(param, substitutions)).ToList();
+            if (clone.ReturnType != null)
+                clone.ReturnType = SubstituteTypeParameters(clone.ReturnType, substitutions);
+        }
+
+        return clone;
+    }
+
+    private StructNode? ResolveConcreteStructForLayout(TypeNode type)
+    {
+        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
+        var definition = _symbolTable.LookupStructNode(fullName);
+        if (definition == null)
+            return null;
+        return definition.TypeParameters.Count == 0 ? definition : InstantiateStruct(definition, type);
+    }
+
+    private static StructNode InstantiateStruct(StructNode definition, TypeNode concreteType)
+    {
+        var substitutions = BuildTypeSubstitutions(definition.TypeParameters, concreteType.TypeArguments);
+        return new StructNode
+        {
+            File = definition.File,
+            Line = definition.Line,
+            Column = definition.Column,
+            Length = definition.Length,
+            IsExported = definition.IsExported,
+            NamespacePath = new List<string>(definition.NamespacePath),
+            Name = FormatNonErrorType(concreteType),
+            Attributes = new List<string>(definition.Attributes),
+            AlignExpr = definition.AlignExpr,
+            Fields = definition.Fields.Select(field => new StructField
+            {
+                File = field.File,
+                Line = field.Line,
+                Column = field.Column,
+                Length = field.Length,
+                Name = field.Name,
+                TypeName = SubstituteTypeParameters(field.TypeName, substitutions),
+                Attributes = new List<string>(field.Attributes),
+                OffsetExpr = field.OffsetExpr
+            }).ToList()
+        };
+    }
+
     private static bool CanDecayArrayToPointer(TypeNode target, TypeNode source)
     {
         if (target.IsSlice || !target.IsPointer || source.ArraySize == null)
@@ -2855,7 +3076,9 @@ public class TypeChecker
         if (targetLevel != 1)
             return false;
 
-        return target.Name == source.Name && target.NamespacePath.SequenceEqual(source.NamespacePath);
+        return target.Name == source.Name &&
+            target.NamespacePath.SequenceEqual(source.NamespacePath) &&
+            TypeArgumentListsMatch(target.TypeArguments, source.TypeArguments);
     }
 
     private static bool CanCoerceToSlice(TypeNode target, TypeNode source)
@@ -2930,7 +3153,9 @@ public class TypeChecker
 
         if (!target.IsSlice && !source.IsSlice &&
             !_numericTypes.Contains(target.Name) && !_numericTypes.Contains(source.Name))
-            return target.Name == source.Name && target.NamespacePath.SequenceEqual(source.NamespacePath);
+            return target.Name == source.Name &&
+                target.NamespacePath.SequenceEqual(source.NamespacePath) &&
+                TypeArgumentListsMatch(target.TypeArguments, source.TypeArguments);
 
         return false;
     }
@@ -2943,6 +3168,18 @@ public class TypeChecker
         var unqualifiedTarget = target.Clone();
         unqualifiedTarget.IsVolatile = false;
         return TypeHelpers.SameType(unqualifiedTarget, source);
+    }
+
+    private static bool TypeArgumentListsMatch(IReadOnlyList<TypeNode> left, IReadOnlyList<TypeNode> right)
+    {
+        if (left.Count != right.Count)
+            return false;
+        for (int i = 0; i < left.Count; i++)
+        {
+            if (!TypeHelpers.SameType(left[i], right[i]))
+                return false;
+        }
+        return true;
     }
 
     private static bool SameNumericType(TypeNode target, TypeNode source)

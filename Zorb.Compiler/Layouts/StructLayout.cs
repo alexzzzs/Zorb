@@ -95,7 +95,7 @@ public static class StructLayout
 
     public static bool TryCompute(
         StructNode node,
-        Func<string, StructNode?> resolveStruct,
+        Func<TypeNode, StructNode?> resolveStruct,
         out StructLayoutInfo? layout,
         out string? error)
     {
@@ -104,7 +104,7 @@ public static class StructLayout
 
     private static bool TryCompute(
         StructNode node,
-        Func<string, StructNode?> resolveStruct,
+        Func<TypeNode, StructNode?> resolveStruct,
         HashSet<string> activeStructs,
         out StructLayoutInfo? layout,
         out string? error)
@@ -203,7 +203,7 @@ public static class StructLayout
 
     private static bool TryGetTypeLayout(
         TypeNode type,
-        Func<string, StructNode?> resolveStruct,
+        Func<TypeNode, StructNode?> resolveStruct,
         HashSet<string> activeStructs,
         out int size,
         out int alignment,
@@ -283,7 +283,7 @@ public static class StructLayout
         }
 
         var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
-        var structNode = resolveStruct(fullName);
+        var structNode = resolveStruct(type);
         if (structNode == null)
         {
             error = $"unknown struct type '{fullName}'";

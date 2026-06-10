@@ -1,0 +1,3 @@
+fn choose<T, T>(value: T) -> T {
+    return value
+}

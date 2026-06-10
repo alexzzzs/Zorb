@@ -1,0 +1,24 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+struct Box<T> {
+    value: T,
+}
+
+struct Holder {
+    item: Box<i64>,
+}
+
+fn unwrap<T>(box: Box<T>) -> T {
+    return box.value
+}
+
+fn _start() {
+    box: Box<i64> = Box<i64>{ value: 41 }
+    nested: Box<Box<i64>> = Box<Box<i64>>{ value: box }
+    holder: Holder = Holder{ item: unwrap<Box<i64>>(nested) }
+    answer: i64 = holder.item.value + 1
+    std.io.print_i64(answer)
+    std.io.print("\n")
+    std.os.exit(0)
+}

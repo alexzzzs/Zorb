@@ -22,6 +22,7 @@ public class SymbolInfo
     public SymbolKind Kind { get; set; }
     public TypeNode Type { get; set; } = null!;
     public List<Parameter>? Parameters { get; set; }
+    public List<string> TypeParameters { get; set; } = new();
     public StructNode? StructDefinition { get; set; }
     public EnumNode? EnumDefinition { get; set; }
     public UnionNode? UnionDefinition { get; set; }
@@ -81,12 +82,13 @@ public class SymbolTable
         CurrentScope[name] = info;
     }
 
-    public void DefineFunction(string name, TypeNode returnType, List<Parameter> parameters)
+    public void DefineFunction(string name, TypeNode returnType, List<Parameter> parameters, List<string>? typeParameters = null)
     {
         var info = new SymbolInfo
         {
             Name = name,
             Kind = SymbolKind.Function,
+            TypeParameters = typeParameters != null ? new List<string>(typeParameters) : new List<string>(),
             Type = new TypeNode
             {
                 Name = name,

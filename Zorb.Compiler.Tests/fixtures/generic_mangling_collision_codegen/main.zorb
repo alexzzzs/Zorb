@@ -1,0 +1,26 @@
+struct A_B_C {
+    value: i64,
+}
+
+struct AB {
+    value: i64,
+}
+
+struct Pair<T, U> {
+    left: T,
+    right: U,
+}
+
+fn first() -> Pair<A_B_C, AB> {
+    return Pair<A_B_C, AB>{
+        left: A_B_C{ value: 1 },
+        right: AB{ value: 2 }
+    }
+}
+
+fn second() -> Pair<AB, A_B_C> {
+    return Pair<AB, A_B_C>{
+        left: AB{ value: 3 },
+        right: A_B_C{ value: 4 }
+    }
+}

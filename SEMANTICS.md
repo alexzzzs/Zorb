@@ -192,6 +192,20 @@ Notes:
 
 - A `struct` declaration introduces a nominal type.
 - Struct names may be qualified with namespace path segments, for example `std.io.Writer`.
+- Struct declarations may introduce type parameters, for example `struct Box<T> { value: T }`.
+- Generic struct instantiations are written with angle brackets, for example `Box<i64>`.
+- Generic structs are monomorphized during C generation. Each concrete instantiation emits a concrete C struct.
+- Functions may also introduce type parameters, for example `fn identity<T>(value: T) -> T`.
+- Generic function calls must provide explicit type arguments, for example `identity<i64>(42)`.
+- Generic functions are monomorphized during C generation. Type inference is not currently supported.
+- Type parameters are scoped to the generic declaration.
+- Generic declarations may have multiple distinct type parameters.
+- Every generic use must provide exactly the declared number of type arguments.
+- Type arguments may be nested and may use pointers, slices, fixed arrays, function types, and error unions.
+- Different concrete argument lists are distinct nominal types and distinct monomorphized C declarations.
+- Imported exported generic structs and functions can be instantiated through their import alias.
+- Generic structs preserve normal struct layout attributes for each concrete instantiation.
+- Generic `extern fn` declarations, constraints, default type arguments, generic enums, and generic unions are not supported.
 
 ### Pointer Types
 
@@ -300,6 +314,10 @@ struct Name {
     other: Type,
 }
 
+struct Box<T> {
+    value: T,
+}
+
 [packed]
 struct PackedName {
     field: Type,
@@ -317,6 +335,11 @@ Meaning:
 - Struct fields are named and typed.
 - Trailing commas are effectively tolerated because field parsing stops at `}`.
 - Field types must name built-in numeric types, `void`, `string`, function types, or known structs.
+- Generic struct fields may use the struct's type parameters as field types, including through pointer, slice, and fixed-array wrappers.
+- Generic struct uses must provide exactly the number of type arguments declared by the struct.
+- Nested uses such as `Box<Box<i64>>` are valid.
+- Generic struct literals include their concrete type arguments, for example `Box<i64>{ value: 42 }`.
+- Concrete generic struct types participate in exact nominal type checking; `Box<i64>` is not assignable to `Box<u64>`.
 - Struct declarations also accept attributes.
 - Recognized struct attributes are `packed`, `align(N)`, and `layout(explicit)`.
 - Recognized struct-field attributes are `offset(N)`.
@@ -331,6 +354,8 @@ Syntax:
 ```text
 fn name(p: T, q: U) -> R { ... }
 extern fn name(p: T, q: U) -> R
+
+fn identity<T>(value: T) -> T { ... }
 ```
 
 Meaning:
@@ -339,6 +364,11 @@ Meaning:
 - Omitted return type means `void`.
 - `extern fn` declares a function without a body.
 - Names may be qualified with dotted paths.
+- Non-extern functions may declare distinct type parameters after the function name.
+- Generic calls provide explicit type arguments before the argument list, for example `identity<i64>(42)`.
+- Generic call arity must exactly match the declaration.
+- Type inference and uninstantiated generic function values are not supported.
+- `extern fn` declarations cannot be generic.
 
 ### Attributes
 
@@ -480,6 +510,7 @@ Postfix parsing supports:
 - field access: `expr.field`
 - indexing: `expr[index]`
 - call: `expr(...)`
+- explicit generic call: `expr<Type, OtherType>(...)`
 
 Special case:
 

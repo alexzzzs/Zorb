@@ -1,0 +1,7 @@
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn make() -> i64 {
+    return identity<i64>(42)
+}

@@ -1,0 +1,1 @@
+Extern function 'convert' cannot declare type parameters.

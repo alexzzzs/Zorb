@@ -1,0 +1,28 @@
+[packed]
+struct PackedBox<T> {
+    tag: u8,
+    value: T,
+}
+
+[align(16)]
+struct AlignedBox<T> {
+    value: T,
+}
+
+[layout(explicit)]
+struct ExplicitBox<T> {
+    [offset(0)] tag: u32,
+    [offset(8)] value: T,
+}
+
+fn packed_size() -> i64 {
+    return Builtin.sizeof(PackedBox<i64>)
+}
+
+fn aligned_size() -> i64 {
+    return Builtin.sizeof(AlignedBox<i64>)
+}
+
+fn explicit_size() -> i64 {
+    return Builtin.sizeof(ExplicitBox<i64>)
+}

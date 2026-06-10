@@ -1,0 +1,5 @@
+import "lib.zorb" as util
+
+fn unwrap(value: util.Box<i64>) -> i64 {
+    return util.identity<i64>(value.value)
+}
