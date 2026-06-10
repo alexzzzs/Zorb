@@ -455,8 +455,12 @@ public partial class Parser
         do
         {
             var parameterToken = Expect(TokenType.Identifier, "Expected type parameter name.");
+            // Report duplicates but omit them from the recovered parameter list.
             if (parameters.Contains(parameterToken.Value, StringComparer.Ordinal))
+            {
                 ErrorReporter.Error($"Duplicate type parameter '{parameterToken.Value}'.", parameterToken.Line, parameterToken.Column, _fileName);
+                continue;
+            }
             parameters.Add(parameterToken.Value);
         } while (Match(TokenType.Comma));
 
@@ -486,6 +490,9 @@ public partial class Parser
 
         if (Current.Type == TokenType.RShift)
         {
+            // Current is a TokenType.RShift (`>>`): rewriting _tokens[_pos] as a
+            // TokenType.Greater at the second column consumes the first `>` now
+            // and safely preserves the remaining `>` for the next nested parse.
             var token = Current;
             _tokens[_pos] = new Token(TokenType.Greater, "", token.Line, token.Column + 1);
             return;

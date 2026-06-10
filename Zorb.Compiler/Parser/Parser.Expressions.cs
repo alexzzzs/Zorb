@@ -85,64 +85,13 @@ public partial class Parser
             else if (Current.Type == TokenType.LParen)
             {
                 var calleeLocation = expr;
-                Advance();
-                var args = new List<Expr>();
-                if (Current.Type != TokenType.RParen)
-                {
-                    do
-                    {
-                        args.Add(ParseExpression());
-                        if (Current.Type == TokenType.Comma)
-                            Advance();
-                        else
-                            break;
-                    } while (true);
-                }
-                Expect(TokenType.RParen, "Missing closing ')' in function call");
-
-                var lastToken = Previous;
-
-                var callExpr = expr is IdentifierExpr id
-                    ? new CallExpr { NamespacePath = new List<string>(), Name = id.Name, Args = args }
-                    : new CallExpr { Name = "", Args = args, TargetExpr = expr };
-
-                StampNode(callExpr, calleeLocation);
-                var totalSpan = calleeLocation.Line == lastToken.Line
-                    ? (lastToken.Column + lastToken.Length) - calleeLocation.Column
-                    : Math.Max(callExpr.Length, lastToken.Length);
-                callExpr.Length = Math.Max(callExpr.Length, totalSpan);
-                expr = callExpr;
+                expr = ParseCallExpr(expr, calleeLocation);
             }
             else if (Current.Type == TokenType.Less && IsGenericCallStart())
             {
                 var calleeLocation = expr;
                 var typeArguments = ParseTypeArgumentList();
-                Expect(TokenType.LParen, "Expected '(' after generic function type arguments.");
-                var args = new List<Expr>();
-                if (Current.Type != TokenType.RParen)
-                {
-                    do
-                    {
-                        args.Add(ParseExpression());
-                        if (Current.Type == TokenType.Comma)
-                            Advance();
-                        else
-                            break;
-                    } while (true);
-                }
-                Expect(TokenType.RParen, "Missing closing ')' in function call");
-
-                var lastToken = Previous;
-                var callExpr = expr is IdentifierExpr id
-                    ? new CallExpr { NamespacePath = new List<string>(), Name = id.Name, TypeArguments = typeArguments, Args = args }
-                    : new CallExpr { Name = "", TypeArguments = typeArguments, Args = args, TargetExpr = expr };
-
-                StampNode(callExpr, calleeLocation);
-                var totalSpan = calleeLocation.Line == lastToken.Line
-                    ? (lastToken.Column + lastToken.Length) - calleeLocation.Column
-                    : Math.Max(callExpr.Length, lastToken.Length);
-                callExpr.Length = Math.Max(callExpr.Length, totalSpan);
-                expr = callExpr;
+                expr = ParseCallExpr(expr, calleeLocation, typeArguments);
             }
             else
             {
@@ -151,6 +100,53 @@ public partial class Parser
         }
 
         return expr;
+    }
+
+    private CallExpr ParseCallExpr(Expr callee, Node calleeLocation, List<TypeNode>? typeArguments = null)
+    {
+        Expect(
+            TokenType.LParen,
+            typeArguments == null
+                ? "Expected '(' to start function call."
+                : "Expected '(' after generic function type arguments.");
+
+        var args = new List<Expr>();
+        if (Current.Type != TokenType.RParen)
+        {
+            do
+            {
+                args.Add(ParseExpression());
+                if (Current.Type == TokenType.Comma)
+                    Advance();
+                else
+                    break;
+            } while (true);
+        }
+        Expect(TokenType.RParen, "Missing closing ')' in function call");
+
+        var lastToken = Previous;
+        var callExpr = callee is IdentifierExpr id
+            ? new CallExpr
+            {
+                NamespacePath = new List<string>(),
+                Name = id.Name,
+                TypeArguments = typeArguments ?? new List<TypeNode>(),
+                Args = args
+            }
+            : new CallExpr
+            {
+                Name = "",
+                TypeArguments = typeArguments ?? new List<TypeNode>(),
+                Args = args,
+                TargetExpr = callee
+            };
+
+        StampNode(callExpr, calleeLocation);
+        var totalSpan = calleeLocation.Line == lastToken.Line
+            ? (lastToken.Column + lastToken.Length) - calleeLocation.Column
+            : Math.Max(callExpr.Length, lastToken.Length);
+        callExpr.Length = Math.Max(callExpr.Length, totalSpan);
+        return callExpr;
     }
 
     private bool IsGenericCallStart()

@@ -10,15 +10,12 @@ public static class TypeHelpers
         if (operandType.ArraySize != null)
         {
             var pointerLevel = Math.Max(operandType.PointerLevel, operandType.IsPointer ? 1 : 0) + 1;
-            return new TypeNode
-            {
-                Name = operandType.Name,
-                NamespacePath = new List<string>(operandType.NamespacePath),
-                TypeArguments = operandType.TypeArguments.Select(t => t.Clone()).ToList(),
-                IsVolatile = operandType.IsVolatile,
-                IsPointer = true,
-                PointerLevel = pointerLevel
-            };
+            var arrayResult = operandType.Clone();
+            arrayResult.IsPointer = true;
+            arrayResult.PointerLevel = pointerLevel;
+            arrayResult.ArraySize = null;
+            arrayResult.ArraySizeExpr = null;
+            return arrayResult;
         }
 
         var result = operandType.Clone();
