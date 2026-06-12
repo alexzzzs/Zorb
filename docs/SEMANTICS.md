@@ -572,6 +572,9 @@ Meaning:
 - The error variable is introduced inside the catch body as an `i32`.
 - The catch body must either end with a fallback expression of type `T` or
   transfer control with `return`, `break`, or `continue`.
+- If a `catch` appears directly in expression-statement position and its
+  result is discarded, the catch body may fall through without a fallback
+  expression.
 - Inside function bodies, catch expressions may appear in general expression position.
 - Global initializers may not contain `catch` expressions.
 

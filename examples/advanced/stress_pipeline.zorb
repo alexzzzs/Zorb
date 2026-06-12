@@ -1,0 +1,701 @@
+import "std/io.zorb"
+import "std/os.zorb"
+import "std/mem.zorb"
+import "std/str.zorb"
+import "std/errors.zorb"
+
+// ============================================================
+// Error declarations
+// ============================================================
+
+error ParseError    = 100
+error EmptyInput    = 101
+error DivByZero     = 102
+error CapacityError = 103
+error StageError    = 104
+
+// ============================================================
+// Enums
+// ============================================================
+
+enum DataType: i32 {
+    Integer,
+    Float64,
+    Text,
+    Boolean
+}
+
+enum AggregateOp: i32 {
+    Sum,
+    Min,
+    Max,
+    Count
+}
+
+enum FilterOp: i32 {
+    GreaterThan,
+    LessThan,
+    EqualTo,
+    NotEqualTo
+}
+
+enum PipelineStatus: i32 {
+    Idle,
+    Running,
+    Done,
+    Failed
+}
+
+// ============================================================
+// Tagged unions
+// ============================================================
+
+union ScalarValue {
+    Int:  i64,
+    Bool: bool
+}
+
+union StageResult {
+    Ok:  i64,
+    Err: i32
+}
+
+// ============================================================
+// Structs
+// ============================================================
+
+struct Record {
+    id:       i64,
+    value:    i64,
+    label:    i32,
+    valid:    bool
+}
+
+struct RecordBatch {
+    data:     []Record,
+    count:    i64,
+    capacity: i64
+}
+
+struct FilterSpec {
+    op:        FilterOp,
+    threshold: i64
+}
+
+struct AggregateSpec {
+    op: AggregateOp
+}
+
+struct TransformSpec {
+    multiply_by: i64,
+    add_offset:  i64
+}
+
+struct PipelineConfig {
+    filter:    FilterSpec,
+    transform: TransformSpec,
+    aggregate: AggregateSpec,
+    max_records: i64
+}
+
+struct AggregateResult {
+    op:    AggregateOp,
+    value: i64,
+    count: i64
+}
+
+struct PipelineState {
+    status:        PipelineStatus,
+    records_in:    i64,
+    records_out:   i64,
+    errors:        i64
+}
+
+// ============================================================
+// Generic Box and Pair structs
+// ============================================================
+
+struct Box<T> {
+    value: T
+}
+
+struct Pair<T, U> {
+    first:  T,
+    second: U
+}
+
+struct Maybe<T> {
+    has_value: bool,
+    value:     T
+}
+
+// ============================================================
+// Utility: wrap / unwrap helpers using generic structs
+// ============================================================
+
+fn box_i64(v: i64) -> Box<i64> {
+    return Box<i64>{ value: v }
+}
+
+fn box_bool(v: bool) -> Box<bool> {
+    return Box<bool>{ value: v }
+}
+
+fn pair_i64_i64(a: i64, b: i64) -> Pair<i64, i64> {
+    return Pair<i64, i64>{ first: a, second: b }
+}
+
+fn maybe_some(v: i64) -> Maybe<i64> {
+    return Maybe<i64>{ has_value: true, value: v }
+}
+
+fn maybe_none() -> Maybe<i64> {
+    return Maybe<i64>{ has_value: false, value: 0 }
+}
+
+// ============================================================
+// Record helpers
+// ============================================================
+
+fn make_record(id: i64, value: i64, label: i32, valid: bool) -> Record {
+    return Record{ id: id, value: value, label: label, valid: valid }
+}
+
+fn record_describe(r: Record) {
+    std.io.print("  Record[id=")
+    std.io.print_i64(r.id)
+    std.io.print(" val=")
+    std.io.print_i64(r.value)
+    std.io.print(" label=")
+    std.io.print_i64(cast(i64, r.label))
+    std.io.print(" valid=")
+    std.io.print_bool(r.valid)
+    std.io.print("]\n")
+}
+
+// ============================================================
+// Filter stage
+// ============================================================
+
+fn apply_filter(r: Record, spec: FilterSpec) -> bool {
+    if !r.valid {
+        return false
+    }
+
+    match spec.op {
+        case FilterOp.GreaterThan {
+            return r.value > spec.threshold
+        }
+        case FilterOp.LessThan {
+            return r.value < spec.threshold
+        }
+        case FilterOp.EqualTo {
+            return r.value == spec.threshold
+        }
+        case FilterOp.NotEqualTo {
+            return r.value != spec.threshold
+        }
+    }
+}
+
+// ============================================================
+// Transform stage
+// ============================================================
+
+fn apply_transform(r: Record, spec: TransformSpec) -> Record {
+    new_val: i64 = r.value * spec.multiply_by + spec.add_offset
+    return Record{ id: r.id, value: new_val, label: r.label, valid: r.valid }
+}
+
+// ============================================================
+// Aggregate stage
+// ============================================================
+
+fn apply_aggregate(batch: RecordBatch, spec: AggregateSpec) !AggregateResult {
+    if batch.count == 0 {
+        return error.EmptyInput
+    }
+
+    result: AggregateResult
+    result.op    = spec.op
+    result.count = batch.count
+
+    switch spec.op {
+        case AggregateOp.Count {
+            result.value = batch.count
+            return result
+        }
+        case AggregateOp.Sum {
+            acc: i64 = 0
+            i: i64 = 0
+            while i < batch.count {
+                acc = acc + batch.data[i].value
+                i = i + 1
+            }
+            result.value = acc
+            return result
+        }
+        case AggregateOp.Min {
+            min_val: i64 = batch.data[0].value
+            i: i64 = 1
+            while i < batch.count {
+                if batch.data[i].value < min_val {
+                    min_val = batch.data[i].value
+                }
+                i = i + 1
+            }
+            result.value = min_val
+            return result
+        }
+        case AggregateOp.Max {
+            max_val: i64 = batch.data[0].value
+            i: i64 = 1
+            while i < batch.count {
+                if batch.data[i].value > max_val {
+                    max_val = batch.data[i].value
+                }
+                i = i + 1
+            }
+            result.value = max_val
+            return result
+        }
+    }
+}
+
+// ============================================================
+// Batch builder: allocates a RecordBatch from the heap
+// ============================================================
+
+fn build_batch(gpa: *std.mem.HeapAllocator, capacity: i64) !RecordBatch {
+    if capacity <= 0 {
+        return error.CapacityError
+    }
+
+    record_size: i64 = Builtin.sizeof(Record)
+    total_bytes: i64 = record_size * capacity
+
+    raw: *u8 = std.mem.HeapAllocator.alloc(gpa, total_bytes) catch |err| {
+        return error.CapacityError
+    }
+
+    batch: RecordBatch
+    batch.data.ptr  = cast(*Record, raw)
+    batch.data.len  = capacity
+    batch.count     = 0
+    batch.capacity  = capacity
+    return batch
+}
+
+fn batch_push(batch: *RecordBatch, r: Record) !i32 {
+    if batch.count >= batch.capacity {
+        return error.CapacityError
+    }
+    batch.data[batch.count] = r
+    batch.count = batch.count + 1
+    return 0
+}
+
+// ============================================================
+// Pipeline runner
+// ============================================================
+
+fn run_pipeline(
+    gpa:     *std.mem.HeapAllocator,
+    input:   RecordBatch,
+    config:  PipelineConfig,
+    state:   *PipelineState
+) !AggregateResult {
+
+    state.status     = PipelineStatus.Running
+    state.records_in = input.count
+    state.records_out = 0
+    state.errors     = 0
+
+    // Allocate output batch
+    out: RecordBatch = build_batch(gpa, config.max_records) catch |err| {
+        state.status = PipelineStatus.Failed
+        return error.StageError
+    }
+
+    // Filter + transform pass
+    i: i64 = 0
+    while i < input.count {
+        r: Record = input.data[i]
+
+        if apply_filter(r, config.filter) {
+            transformed: Record = apply_transform(r, config.transform)
+            push_result: i32 = batch_push(&out, transformed) catch |push_err| {
+                state.errors = state.errors + 1
+                i = i + 1
+                continue
+            }
+            state.records_out = state.records_out + 1
+        }
+
+        i = i + 1
+    }
+
+    state.status = PipelineStatus.Done
+
+    // Aggregate pass
+    agg: AggregateResult = apply_aggregate(out, config.aggregate) catch |err| {
+        return error.StageError
+    }
+
+    return agg
+}
+
+// ============================================================
+// ScalarValue helpers (tagged union demo)
+// ============================================================
+
+fn scalar_to_i64(sv: ScalarValue) -> i64 {
+    match sv {
+        case ScalarValue.Int(n) {
+            return n
+        }
+        case ScalarValue.Bool(b) {
+            if b {
+                return 1
+            }
+            return 0
+        }
+    }
+}
+
+fn describe_scalar(sv: ScalarValue) {
+    match sv {
+        case ScalarValue.Int(n) {
+            std.io.print("  scalar=Int(")
+            std.io.print_i64(n)
+            std.io.print(")\n")
+        }
+        case ScalarValue.Bool(b) {
+            std.io.print("  scalar=Bool(")
+            std.io.print_bool(b)
+            std.io.print(")\n")
+        }
+    }
+}
+
+// ============================================================
+// StageResult helpers
+// ============================================================
+
+fn stage_ok(v: i64) -> StageResult {
+    return StageResult{ Ok: v }
+}
+
+fn stage_err(code: i32) -> StageResult {
+    return StageResult{ Err: code }
+}
+
+fn describe_stage_result(sr: StageResult) {
+    match sr {
+        case StageResult.Ok(v) {
+            std.io.print("  stage=Ok(")
+            std.io.print_i64(v)
+            std.io.print(")\n")
+        }
+        case StageResult.Err(e) {
+            std.io.print("  stage=Err(")
+            std.io.print_i64(cast(i64, e))
+            std.io.print(")\n")
+        }
+    }
+}
+
+// ============================================================
+// Reporting
+// ============================================================
+
+fn print_separator() {
+    std.io.print("------------------------------------------\n")
+}
+
+fn print_state(state: PipelineState) {
+    std.io.print("Pipeline state:\n")
+    std.io.print("  records_in=")
+    std.io.print_i64(state.records_in)
+    std.io.print("\n  records_out=")
+    std.io.print_i64(state.records_out)
+    std.io.print("\n  errors=")
+    std.io.print_i64(state.errors)
+    std.io.print("\n  status=")
+
+    switch state.status {
+        case PipelineStatus.Idle    { std.io.print("Idle\n") }
+        case PipelineStatus.Running { std.io.print("Running\n") }
+        case PipelineStatus.Done    { std.io.print("Done\n") }
+        case PipelineStatus.Failed  { std.io.print("Failed\n") }
+    }
+}
+
+fn print_agg_result(agg: AggregateResult) {
+    std.io.print("Aggregate result:\n  op=")
+    switch agg.op {
+        case AggregateOp.Sum   { std.io.print("Sum") }
+        case AggregateOp.Min   { std.io.print("Min") }
+        case AggregateOp.Max   { std.io.print("Max") }
+        case AggregateOp.Count { std.io.print("Count") }
+    }
+    std.io.print("\n  value=")
+    std.io.print_i64(agg.value)
+    std.io.print("\n  count=")
+    std.io.print_i64(agg.count)
+    std.io.print("\n")
+}
+
+// ============================================================
+// Generic struct round-trip tests
+// ============================================================
+
+fn test_generics() {
+    print_separator()
+    std.io.print("Generic struct tests:\n")
+
+    b: Box<i64> = box_i64(42)
+    std.io.print("  Box<i64>.value=")
+    std.io.print_i64(b.value)
+    std.io.print("\n")
+
+    bf: Box<bool> = box_bool(true)
+    std.io.print("  Box<bool>.value=")
+    std.io.print_bool(bf.value)
+    std.io.print("\n")
+
+    p: Pair<i64, i64> = pair_i64_i64(10, 20)
+    std.io.print("  Pair<i64,i64>=(")
+    std.io.print_i64(p.first)
+    std.io.print(", ")
+    std.io.print_i64(p.second)
+    std.io.print(")\n")
+
+    some: Maybe<i64> = maybe_some(99)
+    none: Maybe<i64> = maybe_none()
+    std.io.print("  Maybe some has_value=")
+    std.io.print_bool(some.has_value)
+    std.io.print(" value=")
+    std.io.print_i64(some.value)
+    std.io.print("\n")
+    std.io.print("  Maybe none has_value=")
+    std.io.print_bool(none.has_value)
+    std.io.print("\n")
+
+    // Nested generic
+    nested: Box<Pair<i64, i64>> = Box<Pair<i64, i64>>{ value: p }
+    std.io.print("  Box<Pair<i64,i64>>.value.first=")
+    std.io.print_i64(nested.value.first)
+    std.io.print("\n")
+}
+
+// ============================================================
+// Tagged union tests
+// ============================================================
+
+fn test_unions() {
+    print_separator()
+    std.io.print("Tagged union tests:\n")
+
+    sv1: ScalarValue = ScalarValue{ Int: 777 }
+    sv2: ScalarValue = ScalarValue{ Bool: false }
+
+    describe_scalar(sv1)
+    describe_scalar(sv2)
+
+    std.io.print("  scalar_to_i64(Int(777))=")
+    std.io.print_i64(scalar_to_i64(sv1))
+    std.io.print("\n")
+    std.io.print("  scalar_to_i64(Bool(false))=")
+    std.io.print_i64(scalar_to_i64(sv2))
+    std.io.print("\n")
+
+    sr1: StageResult = stage_ok(42)
+    sr2: StageResult = stage_err(5)
+    describe_stage_result(sr1)
+    describe_stage_result(sr2)
+}
+
+// ============================================================
+// Main pipeline test with synthetic data
+// ============================================================
+
+fn run_test_pipeline(gpa: *std.mem.HeapAllocator, label: string, config: PipelineConfig) {
+    print_separator()
+    std.io.print("Pipeline test: ")
+    std.io.print(label)
+    std.io.print("\n")
+
+    input: RecordBatch = build_batch(gpa, 32) catch |err| {
+        std.io.print("  ERROR: failed to build input batch\n")
+        return
+    }
+
+    // Seed synthetic records
+    id: i64 = 0
+    while id < 20 {
+        valid: bool = true
+        if id % 5 == 0 { valid = false }
+
+        lbl: i32 = cast(i32, id % 4)
+        val: i64 = id * 3 - 10
+        r: Record = make_record(id, val, lbl, valid)
+        batch_push(&input, r) catch |err| {
+            std.io.print("  WARN: push failed\n")
+        }
+        id = id + 1
+    }
+
+    std.io.print("  Input records loaded: ")
+    std.io.print_i64(input.count)
+    std.io.print("\n")
+
+    state: PipelineState
+    state.status     = PipelineStatus.Idle
+    state.records_in = 0
+    state.records_out = 0
+    state.errors     = 0
+
+    agg: AggregateResult = run_pipeline(gpa, input, config, &state) catch |err| {
+        std.io.print("  Pipeline failed with error=")
+        std.io.print_i64(cast(i64, err))
+        std.io.print("\n")
+        print_state(state)
+        return
+    }
+
+    print_state(state)
+    print_agg_result(agg)
+}
+
+// ============================================================
+// Platform info
+// ============================================================
+
+fn print_platform_info() {
+    print_separator()
+    std.io.print("Platform: ")
+    std.io.print(std.os.platform_name())
+    std.io.print(" / ")
+    std.io.print(std.os.arch_name())
+    std.io.print("\n")
+    std.io.print("Builtin.sizeof(Record)=")
+    std.io.print_i64(Builtin.sizeof(Record))
+    std.io.print("\n")
+    std.io.print("Builtin.sizeof(RecordBatch)=")
+    std.io.print_i64(Builtin.sizeof(RecordBatch))
+    std.io.print("\n")
+    std.io.print("Builtin.sizeof(Fiber)=")
+    std.io.print_i64(Builtin.sizeof(AggregateResult))
+    std.io.print("\n")
+}
+
+// ============================================================
+// Const and compile-time integer expression tests
+// ============================================================
+
+const HEAP_SIZE: i64   = 1024 * 256
+const BATCH_CAP: i64   = 64
+const SCALE_FACTOR: i64 = 3
+const BASE_OFFSET: i64  = 100
+
+// Array sized by const
+const LABEL_COUNT: i64 = 4
+label_names: [4]string = [4]string{ "alpha", "beta", "gamma", "delta" }
+
+fn print_labels() {
+    print_separator()
+    std.io.print("Label names:\n")
+    i: i64 = 0
+    while i < LABEL_COUNT {
+        std.io.print("  [")
+        std.io.print_i64(i)
+        std.io.print("] ")
+        std.io.print(label_names[i])
+        std.io.print("\n")
+        i = i + 1
+    }
+}
+
+// ============================================================
+// Entry point
+// ============================================================
+
+fn _start() {
+    std.io.print("==========================================\n")
+    std.io.print("  Zorb Data Pipeline Compiler Stress Test\n")
+    std.io.print("==========================================\n")
+
+    print_platform_info()
+    print_labels()
+    test_generics()
+    test_unions()
+
+    // Heap init
+    print_separator()
+    std.io.print("Initializing heap (" )
+    std.io.print_i64(HEAP_SIZE)
+    std.io.print(" bytes)...\n")
+
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(HEAP_SIZE) catch |err| {
+        std.io.eprint("FATAL: heap init failed, error=")
+        std.io.eprint_i64(cast(i64, err))
+        std.io.eprint("\n")
+        std.os.exit(1)
+        return
+    }
+
+    std.io.print("  heap.len=")
+    std.io.print_i64(heap.len)
+    std.io.print("\n")
+
+    // --- Test 1: Sum of values > 0, scaled ---
+    cfg1: PipelineConfig
+    cfg1.filter.op          = FilterOp.GreaterThan
+    cfg1.filter.threshold   = 0
+    cfg1.transform.multiply_by = SCALE_FACTOR
+    cfg1.transform.add_offset  = BASE_OFFSET
+    cfg1.aggregate.op       = AggregateOp.Sum
+    cfg1.max_records        = BATCH_CAP
+    run_test_pipeline(&heap, "Sum of (val>0), scale*3+100", cfg1)
+
+    // --- Test 2: Max of values != -10, no scale ---
+    cfg2: PipelineConfig
+    cfg2.filter.op          = FilterOp.NotEqualTo
+    cfg2.filter.threshold   = -10
+    cfg2.transform.multiply_by = 1
+    cfg2.transform.add_offset  = 0
+    cfg2.aggregate.op       = AggregateOp.Max
+    cfg2.max_records        = BATCH_CAP
+    run_test_pipeline(&heap, "Max of (val != -10), identity transform", cfg2)
+
+    // --- Test 3: Count of values < 20 ---
+    cfg3: PipelineConfig
+    cfg3.filter.op          = FilterOp.LessThan
+    cfg3.filter.threshold   = 20
+    cfg3.transform.multiply_by = 2
+    cfg3.transform.add_offset  = -5
+    cfg3.aggregate.op       = AggregateOp.Count
+    cfg3.max_records        = BATCH_CAP
+    run_test_pipeline(&heap, "Count of (val<20), scale*2-5", cfg3)
+
+    // --- Test 4: Min of all valid records ---
+    cfg4: PipelineConfig
+    cfg4.filter.op          = FilterOp.GreaterThan
+    cfg4.filter.threshold   = -999
+    cfg4.transform.multiply_by = 1
+    cfg4.transform.add_offset  = 0
+    cfg4.aggregate.op       = AggregateOp.Min
+    cfg4.max_records        = BATCH_CAP
+    run_test_pipeline(&heap, "Min of all valid records", cfg4)
+
+    // Done
+    print_separator()
+    std.io.print("Heap usage: ")
+    std.io.print_i64(heap.pos)
+    std.io.print(" / ")
+    std.io.print_i64(heap.len)
+    std.io.print(" bytes\n")
+    std.io.print("All tests complete.\n")
+    std.os.exit(0)
+}

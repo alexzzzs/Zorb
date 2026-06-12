@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Direct expression-statement `catch` bodies may now fall through without a
+  fallback value when the result is discarded, while value-producing `catch`
+  expressions still require a fallback or control transfer.
+
 ## [0.2.0] - June 12, 2026
 
 ### Breaking

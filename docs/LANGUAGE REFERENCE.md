@@ -956,6 +956,8 @@ The left side must have error-union type `!T`. The catch expression itself has t
 The catch body runs only if the error code is nonzero. The named error variable is an `i32` scoped to the catch body.
 The body must either end with a fallback expression assignable to `T` or
 transfer control with `return`, `break`, or `continue`.
+When a `catch` appears directly as an expression statement and its result is discarded,
+the body may also fall through without a fallback value.
 
 Global initializers may not contain `catch`.
 

@@ -405,6 +405,7 @@ public sealed class ZigBackendIrWriter
         {
             null => new BackendConstant { Kind = "zero" },
             NumberExpr number => new BackendConstant { Kind = "integer", Integer = number.Value },
+            StringExpr text => new BackendConstant { Kind = "string", Text = text.Value },
             BuiltinExpr builtin when builtin.Name == "true"
                 => new BackendConstant { Kind = "integer", Integer = 1 },
             BuiltinExpr builtin when builtin.Name == "false"
@@ -572,7 +573,10 @@ public sealed class ZigBackendIrWriter
                     return;
 
                 case ExpressionStatement expressionStatement:
-                    _ = LowerExpression(expressionStatement.Expression);
+                    if (expressionStatement.Expression is CatchExpr catchExpression)
+                        _ = LowerCatch(catchExpression, discardResult: true);
+                    else
+                        _ = LowerExpression(expressionStatement.Expression);
                     return;
 
                 case VariableDeclarationNode variable:
@@ -1871,7 +1875,7 @@ public sealed class ZigBackendIrWriter
             return EmitInstruction("load", global.TypeName, lhs: address);
         }
 
-        private uint LowerCatch(CatchExpr expression)
+        private uint LowerCatch(CatchExpr expression, bool discardResult = false)
         {
             var errorUnionType = GetCheckedType(expression.Left);
             if (!errorUnionType.IsErrorUnion)
@@ -1920,7 +1924,7 @@ public sealed class ZigBackendIrWriter
             var errorAddress = EmitInstruction("alloca", errorType);
             _ = EmitInstruction("store", errorType, lhs: errorAddress, rhs: errorValue);
             DeclareLocal(expression.ErrorVar, errorType, errorAddress, isCatchError: true);
-            var fallbackExpression = expression.CatchBody.LastOrDefault() is ExpressionStatement fallback
+            var fallbackExpression = !discardResult && expression.CatchBody.LastOrDefault() is ExpressionStatement fallback
                 ? fallback.Expression
                 : null;
             var statements = fallbackExpression == null
@@ -1936,6 +1940,10 @@ public sealed class ZigBackendIrWriter
                     ? LowerIntegerOperand(fallbackExpression, fallbackType, successType)
                     : LowerExpression(fallbackExpression, successType);
                 fallbackBlock = _currentBlock.Id;
+                Terminate(new BackendTerminator { Op = "branch", Target = mergeBlock.Id });
+            }
+            else if (_currentBlock != null && discardResult)
+            {
                 Terminate(new BackendTerminator { Op = "branch", Target = mergeBlock.Id });
             }
             PopScope();

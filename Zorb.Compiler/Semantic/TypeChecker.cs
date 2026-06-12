@@ -1035,7 +1035,10 @@ public class TypeChecker
                 return FlowOutcome.FallsThrough;
 
             case ExpressionStatement exprStmt:
-                CheckExpression(exprStmt.Expression);
+                if (exprStmt.Expression is CatchExpr catchExpr)
+                    CheckCatchExpression(catchExpr, allowStatementFallthroughWithoutValue: true);
+                else
+                    CheckExpression(exprStmt.Expression);
                 return FlowOutcome.FallsThrough;
 
             case AssignStmt assign:
@@ -1985,53 +1988,7 @@ public class TypeChecker
                 break;
 
             case CatchExpr catchExpr:
-                CheckExpression(catchExpr.Left);
-                var catchType = GetExpressionType(catchExpr.Left);
-                if (catchType == null || !catchType.IsErrorUnion)
-                {
-                    _errors.Error(catchExpr, "Catch requires an error-union expression");
-                    break;
-                }
-
-                PushScopedState();
-                try
-                {
-                    _symbolTable.DefineVariable(catchExpr.ErrorVar, new TypeNode { Name = "i32" });
-                    _catchErrorVarScopes.Peek().Add(catchExpr.ErrorVar);
-                    var catchFlow = FlowOutcome.FallsThrough;
-                    foreach (var stmt in catchExpr.CatchBody)
-                    {
-                        if (catchFlow != FlowOutcome.FallsThrough)
-                        {
-                            _errors.Warning(stmt, "Unreachable statement.");
-                            break;
-                        }
-
-                        catchFlow = CheckStatement(stmt);
-                    }
-
-                    if (catchFlow == FlowOutcome.FallsThrough)
-                    {
-                        if (catchExpr.CatchBody.LastOrDefault() is not ExpressionStatement fallback)
-                        {
-                            _errors.Error(catchExpr, "Catch body must end with a fallback expression or transfer control with return, break, or continue.");
-                            break;
-                        }
-
-                        var successType = catchType.ErrorInnerType ?? catchType;
-                        var fallbackType = GetExpressionType(fallback.Expression);
-                        if (!IsAssignableTo(successType, fallback.Expression, fallbackType))
-                        {
-                            _errors.Error(
-                                fallback.Expression,
-                                $"Catch fallback expression of type '{FormatType(fallbackType)}' is not assignable to '{FormatType(successType)}'.");
-                        }
-                    }
-                }
-                finally
-                {
-                    PopScopedState();
-                }
+                CheckCatchExpression(catchExpr);
                 break;
 
             case SizeofExpr sizeofExpr:
@@ -2048,6 +2005,57 @@ public class TypeChecker
 
             case InvalidExpr:
                 break;
+        }
+    }
+
+    private void CheckCatchExpression(CatchExpr catchExpr, bool allowStatementFallthroughWithoutValue = false)
+    {
+        CheckExpression(catchExpr.Left);
+        var catchType = GetExpressionType(catchExpr.Left);
+        if (catchType == null || !catchType.IsErrorUnion)
+        {
+            _errors.Error(catchExpr, "Catch requires an error-union expression");
+            return;
+        }
+
+        PushScopedState();
+        try
+        {
+            _symbolTable.DefineVariable(catchExpr.ErrorVar, new TypeNode { Name = "i32" });
+            _catchErrorVarScopes.Peek().Add(catchExpr.ErrorVar);
+            var catchFlow = FlowOutcome.FallsThrough;
+            foreach (var stmt in catchExpr.CatchBody)
+            {
+                if (catchFlow != FlowOutcome.FallsThrough)
+                {
+                    _errors.Warning(stmt, "Unreachable statement.");
+                    break;
+                }
+
+                catchFlow = CheckStatement(stmt);
+            }
+
+            if (catchFlow != FlowOutcome.FallsThrough || allowStatementFallthroughWithoutValue)
+                return;
+
+            if (catchExpr.CatchBody.LastOrDefault() is not ExpressionStatement fallback)
+            {
+                _errors.Error(catchExpr, "Catch body must end with a fallback expression or transfer control with return, break, or continue.");
+                return;
+            }
+
+            var successType = catchType.ErrorInnerType ?? catchType;
+            var fallbackType = GetExpressionType(fallback.Expression);
+            if (!IsAssignableTo(successType, fallback.Expression, fallbackType))
+            {
+                _errors.Error(
+                    fallback.Expression,
+                    $"Catch fallback expression of type '{FormatType(fallbackType)}' is not assignable to '{FormatType(successType)}'.");
+            }
+        }
+        finally
+        {
+            PopScopedState();
         }
     }
 
