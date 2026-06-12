@@ -13,21 +13,24 @@ public static class ExternalTools
 
     public static IReadOnlyList<string> GetWindowsCompileArgumentList(string compiler, string cSourcePath, string outputPath)
     {
-        return compiler switch
-        {
-            "clang-cl" or "cl" => ["/nologo", "/TC", "/O2", cSourcePath, $"/Fe:{outputPath}", "/link", "kernel32.lib"],
-            _ => throw new ZorbCompilerException($"Unsupported Windows compiler '{compiler}'.")
-        };
+        return GetWindowsCompileAndLinkArgumentList(compiler, cSourcePath, [], outputPath);
     }
 
-    public static IReadOnlyList<string> GetWindowsLinkArgumentList(string compiler, string objectPath, string outputPath)
+    public static IReadOnlyList<string> GetWindowsCompileAndLinkArgumentList(
+        string compiler,
+        string cSourcePath,
+        IReadOnlyList<string> additionalInputs,
+        string outputPath)
     {
         return compiler switch
         {
             "clang-cl" or "cl" => [
                 "/nologo",
+                "/TC",
+                "/O2",
                 "/MD",
-                objectPath,
+                cSourcePath,
+                .. additionalInputs,
                 $"/Fe:{outputPath}",
                 "/link",
                 "/subsystem:console",

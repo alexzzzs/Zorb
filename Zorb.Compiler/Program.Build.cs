@@ -57,9 +57,15 @@ partial class Program
             else
             {
                 var compiler = EnsureToolAvailable("clang-cl", "cl");
+                var linkStubPath = Path.Combine(tempDir, "zorb_link_stub.c");
+                File.WriteAllText(linkStubPath, "int __zorb_link_stub = 0;\n");
                 var link = RunProcess(
                     compiler,
-                    ExternalTools.GetWindowsLinkArgumentList(compiler, objectPath, fullOutputPath)
+                    ExternalTools.GetWindowsCompileAndLinkArgumentList(
+                        compiler,
+                        linkStubPath,
+                        [objectPath],
+                        fullOutputPath)
                         .Concat(ExternalTools.SplitCommandLine(nativeFlags))
                         .ToArray(),
                     tempDir);
