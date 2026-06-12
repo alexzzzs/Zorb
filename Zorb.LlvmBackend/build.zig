@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
         []const u8,
         "llvm-include-dir",
         "LLVM include directory containing llvm-c headers",
-    ) orelse b.pathJoin(&.{ llvm_prefix, "include" });
+    ) orelse "include";
     const llvm_lib_dir = b.option(
         []const u8,
         "llvm-lib-dir",

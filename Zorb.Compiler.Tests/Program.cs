@@ -819,7 +819,8 @@ static void RunBareMetalCliBuildTests(string fixtureRoot)
         RuntimeInformation.ProcessArchitecture != Architecture.X64)
         return;
 
-    EnsureToolAvailable("ld.lld");
+    if (!IsBareMetalLinkerAvailable())
+        return;
 
     var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
     var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
@@ -1498,6 +1499,18 @@ static bool IsAnyToolAvailable(params string[] toolNames)
     }
 
     return false;
+}
+
+static bool IsBareMetalLinkerAvailable()
+{
+    var configured = Environment.GetEnvironmentVariable("ZORB_LLD");
+    if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
+        return true;
+
+    if (ExternalTools.IsToolAvailable("ld.lld"))
+        return true;
+
+    return ExternalTools.FindAvailableToolByPrefix("ld.lld-") != null;
 }
 
 static string FindAncestorContainingFile(string startPath, string fileName)
