@@ -28,7 +28,7 @@ The compiler supports a focused language subset:
 - target-facing attributes such as `section("...")`, `packed`, `layout(explicit)`, `offset(N)`, `abi(...)`, and `volatile`
 - builtins such as `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`, and `Builtin.sizeof(...)`
 
-The current semantic source of truth is [SEMANTICS.md](./SEMANTICS.md).
+The current semantic source of truth is [SEMANTICS.md](docs/SEMANTICS.md).
 
 ## Supported Parity
 

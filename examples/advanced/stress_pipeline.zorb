@@ -1,8 +1,8 @@
-import "std/io.zorb"
-import "std/os.zorb"
-import "std/mem.zorb"
-import "std/str.zorb"
-import "std/errors.zorb"
+import "../../std/io.zorb"
+import "../../std/os.zorb"
+import "../../std/mem.zorb"
+import "../../std/str.zorb"
+import "../../std/errors.zorb"
 
 // ============================================================
 // Error declarations
