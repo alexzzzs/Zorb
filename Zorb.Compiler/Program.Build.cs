@@ -1,10 +1,258 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.Json.Nodes;
 using Zorb.Compiler.Codegen;
 using Zorb.Compiler.Utils;
 
 partial class Program
 {
+    private static int BuildExecutableFromBackend(
+        string backendIr,
+        string outputPath,
+        string? linkerScriptPath,
+        string? emitLinkerScriptPath,
+        string nativeFlags,
+        CompilationTarget target,
+        bool reportSuccess = true)
+    {
+        var fullOutputPath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory());
+        var tempDir = CreateTempWorkDir("zorb-llvm-build", Path.GetFileNameWithoutExtension(fullOutputPath));
+        try
+        {
+            var objectPath = Path.Combine(tempDir, "module.o");
+            var emitResult = EmitBackendObject(backendIr, objectPath);
+            if (emitResult != 0)
+                return emitResult;
+
+            if (target == CompilationTarget.BareMetalX86_64)
+            {
+                var linker = ResolveBareMetalLinker();
+                var linkerScript = ResolveBareMetalLinkerScript(linkerScriptPath, tempDir);
+                if (emitLinkerScriptPath != null)
+                    EmitBareMetalLinkerScript(linkerScript.Content, emitLinkerScriptPath);
+                var link = RunProcess(
+                    linker,
+                    ["-m", "elf_x86_64", "-T", linkerScript.Path, "-z", "max-page-size=0x1000", "-o", fullOutputPath, objectPath],
+                    tempDir);
+                if (link.ExitCode != 0)
+                    return ReportFailedProcess("Bare-metal link failed.", link);
+            }
+            else if (target is CompilationTarget.HostLinux or CompilationTarget.FreestandingLinux)
+            {
+                EnsureToolAvailable("gcc");
+                var args = new List<string>();
+                if (target == CompilationTarget.FreestandingLinux)
+                    args.AddRange(["-nostdlib", "-fno-pie", "-no-pie", "-z", "execstack", "-fno-builtin"]);
+                else
+                    args.Add("-no-pie");
+                args.Add(objectPath);
+                args.Add("-o");
+                args.Add(fullOutputPath);
+                args.AddRange(ExternalTools.SplitCommandLine(nativeFlags));
+                var link = RunProcess("gcc", args, tempDir);
+                if (link.ExitCode != 0)
+                    return ReportFailedProcess("Native link failed.", link);
+            }
+            else
+            {
+                var compiler = EnsureToolAvailable("clang-cl", "cl");
+                var linkStubPath = Path.Combine(tempDir, "zorb_link_stub.c");
+                File.WriteAllText(linkStubPath, "int __zorb_link_stub = 0;\n");
+                var link = RunProcess(
+                    compiler,
+                    ExternalTools.GetWindowsCompileAndLinkArgumentList(
+                        compiler,
+                        linkStubPath,
+                        [objectPath],
+                        fullOutputPath)
+                        .Concat(ExternalTools.SplitCommandLine(nativeFlags))
+                        .ToArray(),
+                    tempDir);
+                if (link.ExitCode != 0)
+                    return ReportFailedProcess("Native link failed.", link);
+            }
+
+            if (reportSuccess && target == CompilationTarget.BareMetalX86_64)
+            {
+                Console.WriteLine($"Bare-metal kernel image built at {fullOutputPath}");
+                Console.WriteLine(linkerScriptPath != null
+                    ? $"Linker script: {Path.GetFullPath(linkerScriptPath)}"
+                    : "Linker script: bundled bare-metal-x86_64 default");
+                if (emitLinkerScriptPath != null)
+                    Console.WriteLine($"Emitted linker script to {Path.GetFullPath(emitLinkerScriptPath)}");
+            }
+            else if (reportSuccess)
+            {
+                Console.WriteLine($"Executable built at {fullOutputPath}");
+            }
+            return 0;
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static int RunExecutableFromBackend(
+        string inputPath,
+        string backendIr,
+        string nativeFlags,
+        CompilationTarget target)
+    {
+        if (target == CompilationTarget.BareMetalX86_64)
+        {
+            Console.Error.WriteLine($"Run does not support target '{FormatTarget(target)}'.");
+            return 1;
+        }
+
+        var tempDir = CreateTempWorkDir("zorb-llvm-run", Path.GetFileNameWithoutExtension(inputPath));
+        try
+        {
+            var binaryPath = Path.Combine(
+                tempDir,
+                OperatingSystem.IsWindows() ? "program.exe" : "program");
+            var buildResult = BuildExecutableFromBackend(
+                backendIr,
+                binaryPath,
+                null,
+                null,
+                nativeFlags,
+                target,
+                reportSuccess: false);
+            if (buildResult != 0)
+                return buildResult;
+            var execution = RunProcessWithTimeout(
+                binaryPath,
+                Array.Empty<string>(),
+                tempDir,
+                RunTimeoutMilliseconds);
+            if (!string.IsNullOrEmpty(execution.StdOut))
+                Console.Write(execution.StdOut);
+            if (!string.IsNullOrEmpty(execution.StdErr))
+                Console.Error.Write(execution.StdErr);
+            return execution.ExitCode;
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static int EmitBackendObject(string backendIr, string objectPath)
+    {
+        var root = JsonNode.Parse(backendIr)?.AsObject()
+            ?? throw new ZorbCompilerException("The Zig backend IR document is invalid.");
+        root["output_kind"] = "object";
+        root["output_path"] = Path.GetFullPath(objectPath);
+        var tempDir = CreateTempWorkDir("zorb-llvm-object", Path.GetFileNameWithoutExtension(objectPath));
+        try
+        {
+            var irPath = Path.Combine(tempDir, "module.json");
+            File.WriteAllText(irPath, root.ToJsonString());
+            var process = RunProcess(
+                ResolveZigBackendExecutable(),
+                [irPath],
+                Directory.GetCurrentDirectory());
+            return process.ExitCode == 0
+                ? 0
+                : ReportFailedProcess("LLVM object emission failed.", process);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static string ResolveBareMetalLinker()
+    {
+        var configuredPath = Environment.GetEnvironmentVariable(BareMetalLinkerEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            if (File.Exists(configuredPath))
+                return Path.GetFullPath(configuredPath);
+            throw new ZorbCompilerException(
+                $"{BareMetalLinkerEnvironmentVariable} points to a missing file: {Path.GetFullPath(configuredPath)}");
+        }
+
+        var packagedTool = ResolvePackagedToolIfPresent(BareMetalLinkerExecutableName, null);
+        if (packagedTool != null)
+            return packagedTool;
+
+        var pathCandidate = ExternalTools.FindAvailableTool(BareMetalLinkerExecutableName);
+        if (pathCandidate != null)
+            return pathCandidate;
+
+        var versionedPathCandidate = ExternalTools.FindAvailableToolByPrefix(BareMetalLinkerExecutableName + "-");
+        if (versionedPathCandidate != null)
+            return versionedPathCandidate;
+
+        throw new ZorbCompilerException(
+            $"Unable to find {BareMetalLinkerExecutableName}. Set {BareMetalLinkerEnvironmentVariable} to its path. Install LLVM LLD 20 or reinstall the compiler package.");
+    }
+
+    private static string? ResolvePackagedToolIfPresent(
+        string executableName,
+        string? repositoryRelativeDirectory)
+    {
+        var platformExecutableName = OperatingSystem.IsWindows()
+            ? executableName + ".exe"
+            : executableName;
+        var packagedCandidate = Path.Combine(AppContext.BaseDirectory, platformExecutableName);
+        if (File.Exists(packagedCandidate))
+            return packagedCandidate;
+
+        if (repositoryRelativeDirectory != null)
+        {
+            var searchDirectory = new DirectoryInfo(Directory.GetCurrentDirectory());
+            while (searchDirectory != null)
+            {
+                var candidate = Path.Combine(
+                    searchDirectory.FullName,
+                    repositoryRelativeDirectory,
+                    platformExecutableName);
+                if (File.Exists(candidate))
+                    return candidate;
+                searchDirectory = searchDirectory.Parent;
+            }
+        }
+
+        return null;
+    }
+
+    private static string ResolvePackagedTool(
+        string environmentVariable,
+        string executableName,
+        string? repositoryRelativeDirectory,
+        string failureHint)
+    {
+        var configuredPath = Environment.GetEnvironmentVariable(environmentVariable);
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            if (File.Exists(configuredPath))
+                return Path.GetFullPath(configuredPath);
+            throw new ZorbCompilerException(
+                $"{environmentVariable} points to a missing file: {Path.GetFullPath(configuredPath)}");
+        }
+
+        var packagedCandidate = ResolvePackagedToolIfPresent(executableName, repositoryRelativeDirectory);
+        if (packagedCandidate != null)
+            return packagedCandidate;
+
+        var platformExecutableName = OperatingSystem.IsWindows()
+            ? executableName + ".exe"
+            : executableName;
+        var pathCandidate = ExternalTools.FindAvailableTool(platformExecutableName);
+        if (pathCandidate != null)
+            return pathCandidate;
+
+        throw new ZorbCompilerException(
+            $"Unable to find {platformExecutableName}. Set {environmentVariable} to its path. {failureHint}");
+    }
+
     private static string CreateTempWorkDir(string prefix, string name)
     {
         var tempDir = Path.Combine(
@@ -15,20 +263,6 @@ partial class Program
         return tempDir;
     }
 
-    private static string ResolveCSourcePath(string outputOrTempDir, string? keepCPath, string fallbackName)
-    {
-        var cSourcePath = keepCPath != null
-            ? Path.GetFullPath(keepCPath)
-            : Path.Combine(outputOrTempDir, fallbackName);
-        Directory.CreateDirectory(Path.GetDirectoryName(cSourcePath) ?? outputOrTempDir);
-        return cSourcePath;
-    }
-
-    private static void WriteCSource(string cSourcePath, string cCode)
-    {
-        File.WriteAllText(cSourcePath, cCode);
-    }
-
     private static int ReportFailedProcess(string banner, ProcessResult process)
     {
         Console.Error.WriteLine(banner);
@@ -37,103 +271,6 @@ partial class Program
         if (!string.IsNullOrWhiteSpace(process.StdOut))
             Console.Error.Write(process.StdOut);
         return process.ExitCode;
-    }
-
-    private static int BuildExecutable(string inputPath, string cCode, string outputPath, string? keepCPath, string? linkerScriptPath, string? emitLinkerScriptPath, string nativeFlags, CompilationTarget target)
-    {
-        if (target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux)
-            return BuildExecutableOnLinux(cCode, outputPath, keepCPath, UsesNoStdLib(target), nativeFlags);
-
-        if (target == CompilationTarget.BareMetalX86_64)
-            return BuildBareMetalImageOnLinux(cCode, outputPath, keepCPath, linkerScriptPath, emitLinkerScriptPath);
-
-        if (target == CompilationTarget.HostWindows)
-            return BuildExecutableOnWindows(cCode, outputPath, keepCPath);
-
-        Console.Error.WriteLine($"Build does not support target '{FormatTarget(target)}'.");
-        return 1;
-    }
-
-    private static int BuildExecutableOnLinux(string cCode, string outputPath, string? keepCPath, bool noStdLib, string nativeFlags)
-    {
-        EnsureToolAvailable("gcc");
-
-        var fullOutputPath = Path.GetFullPath(outputPath);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory());
-
-        var cSourcePath = ResolveCSourcePath(
-            Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory(),
-            keepCPath,
-            Path.GetFileNameWithoutExtension(fullOutputPath) + ".c");
-        WriteCSource(cSourcePath, cCode);
-
-        var compile = RunProcess(
-            "gcc",
-            GetLinuxCompileArguments(noStdLib, cSourcePath, fullOutputPath, nativeFlags),
-            Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
-
-        if (compile.ExitCode != 0)
-            return ReportFailedProcess("Native build failed.", compile);
-
-        Console.WriteLine($"Executable built at {fullOutputPath}");
-        Console.WriteLine($"Intermediate C written to {cSourcePath}");
-        return 0;
-    }
-
-    private static int BuildBareMetalImageOnLinux(string cCode, string outputPath, string? keepCPath, string? linkerScriptPath, string? emitLinkerScriptPath)
-    {
-        EnsureToolAvailable("gcc");
-        EnsureToolAvailable("ld");
-
-        var fullOutputPath = Path.GetFullPath(outputPath);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory());
-
-        var cSourcePath = ResolveCSourcePath(
-            Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory(),
-            keepCPath,
-            Path.GetFileNameWithoutExtension(fullOutputPath) + ".c");
-        WriteCSource(cSourcePath, cCode);
-
-        var tempDir = CreateTempWorkDir("zorb-bare-metal-build", Path.GetFileNameWithoutExtension(fullOutputPath));
-
-        try
-        {
-            var objectPath = Path.Combine(tempDir, Path.GetFileNameWithoutExtension(fullOutputPath) + ".o");
-            var linkerScript = ResolveBareMetalLinkerScript(linkerScriptPath, tempDir);
-
-            if (emitLinkerScriptPath != null)
-                EmitBareMetalLinkerScript(linkerScript.Content, emitLinkerScriptPath);
-
-            var compile = RunProcess(
-                "gcc",
-                BuildArgumentList(SplitCompileFlags(BareMetalX86_64ObjectCompileFlags), cSourcePath, "-o", objectPath),
-                Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
-
-            if (compile.ExitCode != 0)
-                return ReportFailedProcess("Bare-metal object build failed.", compile);
-
-            var link = RunProcess(
-                "ld",
-                ["-m", "elf_x86_64", "-T", linkerScript.Path, "-z", "max-page-size=0x1000", "-o", fullOutputPath, objectPath],
-                tempDir);
-
-            if (link.ExitCode != 0)
-                return ReportFailedProcess("Bare-metal link failed.", link);
-
-            Console.WriteLine($"Bare-metal kernel image built at {fullOutputPath}");
-            Console.WriteLine($"Intermediate C written to {cSourcePath}");
-            Console.WriteLine(linkerScriptPath != null
-                ? $"Linker script: {Path.GetFullPath(linkerScriptPath)}"
-                : "Linker script: bundled bare-metal-x86_64 default");
-            if (emitLinkerScriptPath != null)
-                Console.WriteLine($"Emitted linker script to {Path.GetFullPath(emitLinkerScriptPath)}");
-            return 0;
-        }
-        finally
-        {
-            if (Directory.Exists(tempDir))
-                Directory.Delete(tempDir, recursive: true);
-        }
     }
 
     private static ResolvedLinkerScript ResolveBareMetalLinkerScript(string? linkerScriptPath, string tempDir)
@@ -158,121 +295,6 @@ partial class Program
         File.WriteAllText(fullEmitPath, linkerScriptContent);
     }
 
-    private static int BuildExecutableOnWindows(string cCode, string outputPath, string? keepCPath)
-    {
-        var compiler = EnsureToolAvailable("clang-cl", "cl");
-        var fullOutputPath = NormalizeWindowsExecutablePath(Path.GetFullPath(outputPath));
-        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory());
-
-        var cSourcePath = ResolveCSourcePath(
-            Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory(),
-            keepCPath,
-            Path.GetFileNameWithoutExtension(fullOutputPath) + ".c");
-        WriteCSource(cSourcePath, cCode);
-
-        var compile = RunProcess(
-            compiler,
-            GetWindowsCompileArgumentList(compiler, cSourcePath, fullOutputPath),
-            Path.GetDirectoryName(cSourcePath) ?? Directory.GetCurrentDirectory());
-
-        if (compile.ExitCode != 0)
-            return ReportFailedProcess("Native build failed.", compile);
-
-        Console.WriteLine($"Executable built at {fullOutputPath}");
-        Console.WriteLine($"Intermediate C written to {cSourcePath}");
-        Console.WriteLine($"Windows toolchain: {compiler}");
-        return 0;
-    }
-
-    private static int RunExecutable(string inputPath, string cCode, string? keepCPath, string nativeFlags, CompilationTarget target)
-    {
-        if (target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux)
-            return RunExecutableOnLinux(inputPath, cCode, keepCPath, UsesNoStdLib(target), nativeFlags);
-
-        if (target == CompilationTarget.BareMetalX86_64)
-        {
-            Console.Error.WriteLine($"Run does not support target '{FormatTarget(target)}'. Build the object file and link it with your kernel or bootloader toolchain.");
-            return 1;
-        }
-
-        if (target == CompilationTarget.HostWindows)
-            return RunExecutableOnWindows(inputPath, cCode, keepCPath);
-
-        Console.Error.WriteLine($"Run does not support target '{FormatTarget(target)}'.");
-        return 1;
-    }
-
-    private static int RunExecutableOnLinux(string inputPath, string cCode, string? keepCPath, bool noStdLib, string nativeFlags)
-    {
-        EnsureToolAvailable("gcc");
-
-        var tempDir = CreateTempWorkDir("zorb-run", Path.GetFileNameWithoutExtension(inputPath));
-
-        try
-        {
-            var binaryPath = Path.Combine(tempDir, Path.GetFileNameWithoutExtension(inputPath));
-            var cSourcePath = ResolveCSourcePath(tempDir, keepCPath, "out.c");
-            WriteCSource(cSourcePath, cCode);
-
-            var compile = RunProcess(
-                "gcc",
-                GetLinuxCompileArguments(noStdLib, cSourcePath, binaryPath, nativeFlags),
-                Path.GetDirectoryName(cSourcePath) ?? tempDir);
-
-            if (compile.ExitCode != 0)
-                return ReportFailedProcess("Native build failed.", compile);
-
-            var execution = RunProcessWithTimeout(binaryPath, Array.Empty<string>(), tempDir, RunTimeoutMilliseconds);
-            if (!string.IsNullOrEmpty(execution.StdOut))
-                Console.Write(execution.StdOut);
-            if (!string.IsNullOrEmpty(execution.StdErr))
-                Console.Error.Write(execution.StdErr);
-
-            return execution.ExitCode;
-        }
-        finally
-        {
-            if (keepCPath == null && Directory.Exists(tempDir))
-                Directory.Delete(tempDir, recursive: true);
-        }
-    }
-
-    private static int RunExecutableOnWindows(string inputPath, string cCode, string? keepCPath)
-    {
-        var compiler = EnsureToolAvailable("clang-cl", "cl");
-
-        var tempDir = CreateTempWorkDir("zorb-run", Path.GetFileNameWithoutExtension(inputPath));
-
-        try
-        {
-            var binaryFileName = Path.GetFileNameWithoutExtension(inputPath) + ".exe";
-            var binaryPath = Path.Combine(tempDir, binaryFileName);
-            var cSourcePath = ResolveCSourcePath(tempDir, keepCPath, "out.c");
-            WriteCSource(cSourcePath, cCode);
-
-            var compile = RunProcess(
-                compiler,
-                GetWindowsCompileArgumentList(compiler, cSourcePath, binaryPath),
-                Path.GetDirectoryName(cSourcePath) ?? tempDir);
-
-            if (compile.ExitCode != 0)
-                return ReportFailedProcess("Native build failed.", compile);
-
-            var execution = RunProcessWithTimeout(binaryPath, Array.Empty<string>(), tempDir, RunTimeoutMilliseconds);
-            if (!string.IsNullOrEmpty(execution.StdOut))
-                Console.Write(execution.StdOut);
-            if (!string.IsNullOrEmpty(execution.StdErr))
-                Console.Error.Write(execution.StdErr);
-
-            return execution.ExitCode;
-        }
-        finally
-        {
-            if (keepCPath == null && Directory.Exists(tempDir))
-                Directory.Delete(tempDir, recursive: true);
-        }
-    }
-
     private static CompilationTarget ResolveCompilationTarget(Options options)
     {
         if (options.Target.HasValue)
@@ -295,37 +317,6 @@ partial class Program
         };
     }
 
-    private static IReadOnlyList<string> GetLinuxCompileArguments(bool noStdLib, string cSourcePath, string outputPath, string nativeFlags)
-    {
-        var args = new List<string>(SplitCompileFlags(GetLinuxCompileFlags(noStdLib)))
-        {
-            cSourcePath,
-            "-o",
-            outputPath
-        };
-        args.AddRange(ExternalTools.SplitCommandLine(nativeFlags));
-        return args;
-    }
-
-    private static IReadOnlyList<string> SplitCompileFlags(string flags)
-    {
-        return ExternalTools.SplitCommandLine(flags);
-    }
-
-    private static IReadOnlyList<string> BuildArgumentList(params object[] parts)
-    {
-        var args = new List<string>();
-        foreach (var part in parts)
-        {
-            if (part is IEnumerable<string> sequence)
-                args.AddRange(sequence);
-            else
-                args.Add(part.ToString() ?? "");
-        }
-
-        return args;
-    }
-
     private static void EnsureTargetSupportedForCurrentHost(CommandMode mode, CompilationTarget target)
     {
         if (mode != CommandMode.Build && mode != CommandMode.Run)
@@ -344,9 +335,12 @@ partial class Program
         {
             if (mode == CommandMode.Run)
                 return;
-
-            if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
-                throw new ZorbCompilerException($"Target 'bare-metal-x86_64' currently requires a Linux x86_64 host for build. Current host: {DescribeCurrentHost()}.");
+            if ((!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows()) ||
+                RuntimeInformation.ProcessArchitecture != Architecture.X64)
+            {
+                throw new ZorbCompilerException(
+                    $"Target 'bare-metal-x86_64' currently requires a Linux or Windows x86_64 host for build. Current host: {DescribeCurrentHost()}.");
+            }
             return;
         }
 
@@ -385,19 +379,32 @@ partial class Program
         return $"{os} {arch}";
     }
 
-    private static bool UsesNoStdLib(CompilationTarget target)
+    private static ZigBackendTarget GetZigBackendTarget(CompilationTarget target)
     {
-        return target == CompilationTarget.FreestandingLinux;
-    }
-
-    private static bool PreservesStart(CompilationTarget target)
-    {
-        return target == CompilationTarget.FreestandingLinux || target == CompilationTarget.BareMetalX86_64;
+        return target switch
+        {
+            CompilationTarget.HostLinux or CompilationTarget.FreestandingLinux
+                when RuntimeInformation.ProcessArchitecture == Architecture.X64
+                => new ZigBackendTarget("x86_64-pc-linux-gnu"),
+            CompilationTarget.HostLinux or CompilationTarget.FreestandingLinux
+                when RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+                => new ZigBackendTarget("aarch64-unknown-linux-gnu"),
+            CompilationTarget.BareMetalX86_64
+                => new ZigBackendTarget("x86_64-unknown-none-elf"),
+            CompilationTarget.HostWindows
+                when RuntimeInformation.ProcessArchitecture == Architecture.X64
+                => new ZigBackendTarget("x86_64-pc-windows-msvc"),
+            CompilationTarget.HostWindows
+                when RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+                => new ZigBackendTarget("aarch64-pc-windows-msvc"),
+            _ => throw new ZorbCompilerException(
+                $"The Zig LLVM backend does not support target '{FormatTarget(target)}' on {DescribeCurrentHost()}.")
+        };
     }
 
     private static string ResolveOutputPath(Options options, CompilationTarget target)
     {
-        if (options.OutputPathExplicitlySet || options.Mode == CommandMode.EmitC)
+        if (options.OutputPathExplicitlySet || options.Mode == CommandMode.EmitLlvmIr)
             return options.OutputPath;
 
         if ((options.Mode == CommandMode.Build || options.Mode == CommandMode.Run) && target == CompilationTarget.HostWindows)
@@ -426,40 +433,4 @@ partial class Program
         return true;
     }
 
-    private static void ConfigureGeneratorForTarget(CGenerator generator, CompilationTarget target)
-    {
-        switch (target)
-        {
-            case CompilationTarget.HostLinux:
-            case CompilationTarget.FreestandingLinux:
-                generator.BuiltinIsLinux = true;
-                generator.BuiltinIsWindows = false;
-                generator.BuiltinIsBareMetal = false;
-                generator.BuiltinIsX86_64 = null;
-                generator.BuiltinIsAArch64 = null;
-                generator.EmitLinuxSyscallWrapper = true;
-                break;
-
-            case CompilationTarget.BareMetalX86_64:
-                generator.BuiltinIsLinux = false;
-                generator.BuiltinIsWindows = false;
-                generator.BuiltinIsBareMetal = true;
-                generator.BuiltinIsX86_64 = true;
-                generator.BuiltinIsAArch64 = false;
-                generator.EmitLinuxSyscallWrapper = false;
-                break;
-
-            case CompilationTarget.HostWindows:
-                generator.BuiltinIsLinux = false;
-                generator.BuiltinIsWindows = true;
-                generator.BuiltinIsBareMetal = false;
-                generator.BuiltinIsX86_64 = null;
-                generator.BuiltinIsAArch64 = null;
-                generator.EmitLinuxSyscallWrapper = true;
-                break;
-
-            default:
-                throw new ArgumentOutOfRangeException(nameof(target), target, null);
-        }
-    }
 }

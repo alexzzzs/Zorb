@@ -9,10 +9,11 @@ using Zorb.Compiler.Utils;
 
 partial class Program
 {
-    private const string BareMetalX86_64ObjectCompileFlags = "-O2 -ffreestanding -fno-pie -no-pie -fno-builtin -fno-stack-protector -m64 -mno-red-zone -c";
-    private const string HostLinuxFreestandingCompileFlags = "-O2 -nostdlib -fno-pie -no-pie -z execstack -fno-builtin";
-    private const string HostLinuxHostedCompileFlags = "-O2";
     private const int RunTimeoutMilliseconds = 30_000;
+    private const string LlvmBackendEnvironmentVariable = "ZORB_LLVM_BACKEND";
+    private const string BareMetalLinkerEnvironmentVariable = "ZORB_LLD";
+    private const string LlvmBackendExecutableName = "zorb-llvm-backend";
+    private const string BareMetalLinkerExecutableName = "ld.lld";
     private const string BareMetalX86_64DefaultLinkerScript = """
 OUTPUT_FORMAT(elf64-x86-64)
 OUTPUT_ARCH(i386:x86-64)
@@ -54,7 +55,7 @@ SECTIONS
 
     private enum CommandMode
     {
-        EmitC,
+        EmitLlvmIr,
         Build,
         Run
     }
@@ -69,11 +70,10 @@ SECTIONS
 
     private sealed class Options
     {
-        public CommandMode Mode { get; set; } = CommandMode.EmitC;
+        public CommandMode Mode { get; set; } = CommandMode.EmitLlvmIr;
         public CompilationTarget? Target { get; set; }
         public string InputPath { get; set; } = "";
-        public string OutputPath { get; set; } = "out.c";
-        public string? KeepCPath { get; set; }
+        public string OutputPath { get; set; } = "out.ll";
         public string? LinkerScriptPath { get; set; }
         public string? EmitLinkerScriptPath { get; set; }
         public string NativeFlags { get; set; } = "";
@@ -111,7 +111,7 @@ SECTIONS
             EnsureTargetSupportedForCurrentHost(options.Mode, target);
 
             var outputPath = ResolveOutputPath(options, target);
-            var compilation = CompileInput(options, target);
+            var compilation = CompileInput(options, target, outputPath);
             if (compilation == null)
                 return 1;
 
@@ -123,9 +123,9 @@ SECTIONS
 
             return options.Mode switch
             {
-                CommandMode.EmitC => EmitCOutput(compilation.GeneratedCode, outputPath),
-                CommandMode.Build => BuildExecutable(compilation.InputPath, compilation.GeneratedCode, outputPath, options.KeepCPath, options.LinkerScriptPath, options.EmitLinkerScriptPath, options.NativeFlags, target),
-                CommandMode.Run => RunExecutable(compilation.InputPath, compilation.GeneratedCode, options.KeepCPath, options.NativeFlags, target),
+                CommandMode.EmitLlvmIr => EmitLlvmOutput(compilation.GeneratedCode, outputPath),
+                CommandMode.Build => BuildExecutableFromBackend(compilation.GeneratedCode, outputPath, options.LinkerScriptPath, options.EmitLinkerScriptPath, options.NativeFlags, target),
+                CommandMode.Run => RunExecutableFromBackend(compilation.InputPath, compilation.GeneratedCode, options.NativeFlags, target),
                 _ => 1
             };
         }
@@ -143,7 +143,7 @@ SECTIONS
         }
     }
 
-    private static CompiledProgram? CompileInput(Options options, CompilationTarget target)
+    private static CompiledProgram? CompileInput(Options options, CompilationTarget target, string outputPath)
     {
         var inputPath = Path.GetFullPath(options.InputPath);
         var currentDir = Path.GetDirectoryName(inputPath) ?? ".";
@@ -174,19 +174,28 @@ SECTIONS
 
         try
         {
-            var generator = new CGenerator(currentDir, typeChecker.SymbolTable)
-            {
-                PreserveStart = PreservesStart(target),
-                NoStdLib = UsesNoStdLib(target)
-            };
-            ConfigureGeneratorForTarget(generator, target);
+            string generatedCode;
+            var backendNodes = parseResult.Files.Values
+                .SelectMany(nodes => nodes)
+                .Distinct<Node>(ReferenceEqualityComparer.Instance)
+                .ToList();
+            generatedCode = new ZigBackendIrWriter(typeChecker).Write(
+                backendNodes,
+                Path.GetFileNameWithoutExtension(inputPath),
+                GetZigBackendTarget(target),
+                options.Mode == CommandMode.EmitLlvmIr
+                    ? ZigBackendOutputKind.LlvmIr
+                    : ZigBackendOutputKind.Object,
+                Path.GetFullPath(outputPath),
+                addFreestandingEntryShim: target is CompilationTarget.FreestandingLinux or CompilationTarget.BareMetalX86_64,
+                addHostedEntryShim: target is CompilationTarget.HostLinux or CompilationTarget.HostWindows);
 
             return new CompiledProgram(
                 inputPath,
                 currentDir,
                 ast,
                 typeChecker,
-                generator.Generate(ast, parseResult.Files));
+                generatedCode);
         }
         catch (Exception ex)
         {
@@ -204,12 +213,35 @@ SECTIONS
         DumpTokens(tokens);
     }
 
-    private static int EmitCOutput(string cCode, string outputPath)
+    private static int EmitLlvmOutput(string backendIr, string outputPath)
     {
-        var fullOutputPath = Path.GetFullPath(outputPath);
-        File.WriteAllText(fullOutputPath, cCode);
-        Console.WriteLine($"C code generated to {fullOutputPath}");
-        return 0;
+        var backendPath = ResolveZigBackendExecutable();
+        var tempDir = CreateTempWorkDir("zorb-llvm-ir", Path.GetFileNameWithoutExtension(outputPath));
+        try
+        {
+            var backendIrPath = Path.Combine(tempDir, "module.json");
+            File.WriteAllText(backendIrPath, backendIr);
+            var process = RunProcess(backendPath, [backendIrPath], Directory.GetCurrentDirectory());
+            if (process.ExitCode != 0)
+                return ReportFailedProcess("LLVM backend failed.", process);
+
+            Console.WriteLine($"LLVM IR generated to {Path.GetFullPath(outputPath)}");
+            return 0;
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static string ResolveZigBackendExecutable()
+    {
+        return ResolvePackagedTool(
+            LlvmBackendEnvironmentVariable,
+            LlvmBackendExecutableName,
+            Path.Combine("Zorb.LlvmBackend", "zig-out", "bin"),
+            "Build Zorb.LlvmBackend with Zig 0.16 or reinstall the compiler package.");
     }
 
     private sealed record CompiledProgram(

@@ -1,1 +1,0 @@
-return ((int64_t)sizeof(struct Pair));

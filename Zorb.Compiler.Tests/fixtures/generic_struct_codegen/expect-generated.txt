@@ -1,4 +1,0 @@
-struct Box_g1_6_n3_i64 {
-    int64_t value;
-};
-return (struct Box_g1_6_n3_i64){ .value = 42 };

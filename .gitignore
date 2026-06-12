@@ -1,6 +1,8 @@
 bin/
 obj/
 artifacts/
+.zig-cache/
+zig-out/
 
 out
 out.c

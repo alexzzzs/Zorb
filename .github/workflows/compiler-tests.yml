@@ -21,7 +21,29 @@ jobs:
       - name: Install runtime test toolchains
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user
+          sudo apt-get install -y llvm-20-dev lld-20 g++
+
+      - name: Install Zig 0.16
+        run: |
+          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Cache Zig build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            Zorb.LlvmBackend/.zig-cache
+            ~/.cache/zig
+          key: ${{ runner.os }}-zig-0.16.0-llvm20-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-0.16.0-llvm20-
+
+      - name: Build LLVM backend
+        run: |
+          cd Zorb.LlvmBackend
+          zig build test
+          zig build -Dstatic-llvm=true -Dcxx-runtime="$(g++ -print-file-name=libstdc++.so)" -Doptimize=ReleaseSafe
 
       - name: Restore
         run: dotnet restore Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj
@@ -47,6 +69,50 @@ jobs:
 
       - name: Setup MSVC developer command prompt
         uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install LLVM 20 and Zig 0.16
+        shell: pwsh
+        run: |
+          choco install llvm --version=20.1.8 -y --no-progress
+          Invoke-WebRequest https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip -OutFile zig.zip
+          Expand-Archive zig.zip -DestinationPath .
+          "$PWD/zig-x86_64-windows-0.16.0" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$env:ProgramFiles\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Cache Zig build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            Zorb.LlvmBackend/.zig-cache
+            ~\AppData\Local\zig
+          key: ${{ runner.os }}-zig-0.16.0-llvm20-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-0.16.0-llvm20-
+
+      - name: Discover LLVM library paths
+        shell: pwsh
+        run: |
+          $llvmPrefix = if (Test-Path "$env:ProgramFiles\LLVM") {
+            Resolve-Path "$env:ProgramFiles\LLVM"
+          } else {
+            throw "LLVM install root was not found under $env:ProgramFiles\LLVM"
+          }
+
+          $llvmLib = Get-ChildItem -Path $llvmPrefix -Filter LLVM-C.lib -Recurse -File -ErrorAction Stop |
+            Select-Object -First 1
+          if ($null -eq $llvmLib) {
+            throw "Unable to find LLVM-C.lib under $llvmPrefix"
+          }
+
+          "LLVM_PREFIX=$llvmPrefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LLVM_LIB_DIR=$(Split-Path $llvmLib.FullName -Parent)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build LLVM backend
+        shell: pwsh
+        run: |
+          Set-Location Zorb.LlvmBackend
+          zig build test
+          zig build "-Dllvm-prefix=$env:LLVM_PREFIX" "-Dllvm-lib-dir=$env:LLVM_LIB_DIR" "-Dllvm-library=LLVM-C" "-Doptimize=ReleaseSafe"
 
       - name: Restore
         run: dotnet restore Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj
@@ -83,6 +149,25 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+
+      - name: Install release toolchain
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-20-dev lld-20 g++
+          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Install release toolchain
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install llvm --version=20.1.8 -y --no-progress
+          Invoke-WebRequest https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip -OutFile zig.zip
+          Expand-Archive zig.zip -DestinationPath .
+          "$PWD/zig-x86_64-windows-0.16.0" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$env:ProgramFiles\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Compute version metadata
         id: version
@@ -129,6 +214,22 @@ jobs:
           commit=${GITHUB_SHA}
           ref=${GITHUB_REF}
           EOF
+
+      - name: Smoke test published compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            compiler="artifacts/compiler/linux-x64/Zorb.Compiler"
+            output="/tmp/zorb-release-smoke.elf"
+          else
+            compiler="artifacts/compiler/win-x64/Zorb.Compiler.exe"
+            output="$RUNNER_TEMP/zorb-release-smoke.elf"
+          fi
+          "$compiler" --emit-llvm Zorb.Compiler.Tests/fixtures/runtime_hello_world/main.zorb -o "$RUNNER_TEMP/zorb-release-smoke.ll"
+          "$compiler" build Zorb.Compiler.Tests/fixtures/bare_metal_debug_port/main.zorb --target bare-metal-x86_64 -o "$output"
+          test -s "$RUNNER_TEMP/zorb-release-smoke.ll"
+          test -s "$output"
 
       - name: Upload standalone compiler artifact
         uses: actions/upload-artifact@v4

@@ -1,6 +1,0 @@
-int64_t id(int64_t auto__z2, int64_t auto__z2__z2);
-int64_t id(int64_t auto__z2, int64_t auto__z2__z2) {
-return (auto__z2 + auto__z2__z2);
-int64_t auto__z2 = 1;
-int64_t auto__z2__z2 = 2;
-return id(auto__z2, auto__z2__z2);

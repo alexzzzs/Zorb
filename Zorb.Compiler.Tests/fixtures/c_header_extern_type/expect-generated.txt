@@ -1,2 +1,0 @@
-#include <string.h>
-return (int64_t)strlen("abc");

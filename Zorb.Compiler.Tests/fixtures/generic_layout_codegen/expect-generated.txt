@@ -1,8 +1,0 @@
-struct __attribute__((packed)) PackedBox_g1_6_n3_i64 {
-struct __attribute__((aligned(16))) AlignedBox_g1_6_n3_i64 {
-struct __attribute__((packed)) ExplicitBox_g1_6_n3_i64 {
-uint8_t __zorb_pad_0[4];
-_Static_assert(offsetof(struct ExplicitBox_g1_6_n3_i64, value) == 8
-((int64_t)sizeof(struct PackedBox_g1_6_n3_i64))
-((int64_t)sizeof(struct AlignedBox_g1_6_n3_i64))
-((int64_t)sizeof(struct ExplicitBox_g1_6_n3_i64))

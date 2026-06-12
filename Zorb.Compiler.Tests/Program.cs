@@ -15,7 +15,6 @@ var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb
 var fixtureRoot = Path.Combine(testProjectRoot, "fixtures");
 var fixtureDirs = Directory.GetDirectories(fixtureRoot).OrderBy(path => path, StringComparer.Ordinal).ToList();
 var failures = new List<string>();
-var updateSnapshots = args.Contains("--update-snapshots", StringComparer.Ordinal);
 
 foreach (var fixtureDir in fixtureDirs)
 {
@@ -23,7 +22,7 @@ foreach (var fixtureDir in fixtureDirs)
 
     try
     {
-        RunFixture(fixtureDir, updateSnapshots);
+        RunFixture(fixtureDir);
         Console.WriteLine($"PASS {fixtureName}");
     }
     catch (Exception ex)
@@ -90,13 +89,24 @@ catch (Exception ex)
 
 try
 {
-    RunGeneratorStateResetTests();
-    Console.WriteLine("PASS generator_state_reset");
+    RunLlvmWriterStateResetTests(fixtureRoot);
+    Console.WriteLine("PASS llvm_writer_state_reset");
 }
 catch (Exception ex)
 {
-    failures.Add($"generator_state_reset: {ex.Message}");
-    Console.WriteLine("FAIL generator_state_reset");
+    failures.Add($"llvm_writer_state_reset: {ex.Message}");
+    Console.WriteLine("FAIL llvm_writer_state_reset");
+}
+
+try
+{
+    RunLlvmBackendOutputModeTests(fixtureRoot);
+    Console.WriteLine("PASS llvm_backend_output_modes");
+}
+catch (Exception ex)
+{
+    failures.Add($"llvm_backend_output_modes: {ex.Message}");
+    Console.WriteLine("FAIL llvm_backend_output_modes");
 }
 
 try
@@ -298,46 +308,135 @@ static void RunSemanticDiagnosticOutputTests(string fixtureRoot)
     }
 }
 
-static void RunGeneratorStateResetTests()
+static void RunLlvmWriterStateResetTests(string fixtureRoot)
 {
-    WithTempDirectory("zorb-generator-state", tempDir =>
+    var fixtureDir = Path.Combine(fixtureRoot, "runtime_hello_world");
+    var mainPath = Path.Combine(fixtureDir, "main.zorb");
+    var parseResult = ParseFile(mainPath);
+    AssertNoErrors(parseResult.Errors);
+
+    var checker = new TypeChecker();
+    checker.Check(parseResult.EntryNodes, fixtureDir, parseResult.Files);
+    AssertNoErrors(checker.Errors.Errors);
+
+    var start = parseResult.EntryNodes
+        .OfType<FunctionDecl>()
+        .Single(function => string.Equals(function.Name, "_start", StringComparison.Ordinal));
+    var backendNodes = parseResult.Files.Values
+        .SelectMany(nodes => nodes)
+        .Distinct<Node>(ReferenceEqualityComparer.Instance)
+        .ToList();
+    var writer = new ZigBackendIrWriter(checker);
+    var target = new ZigBackendTarget("x86_64-pc-linux-gnu");
+
+    _ = writer.Write(
+        backendNodes,
+        "writer_state_first",
+        target,
+        ZigBackendOutputKind.Object,
+        "writer-state-first.o",
+        addHostedEntryShim: true);
+    if (!string.Equals(start.Name, "_start", StringComparison.Ordinal))
+        throw new Exception("Hosted LLVM entry lowering mutated the checked _start declaration.");
+
+    _ = writer.Write(
+        backendNodes,
+        "writer_state_second",
+        target,
+        ZigBackendOutputKind.Object,
+        "writer-state-second.o",
+        addHostedEntryShim: true);
+    if (!string.Equals(start.Name, "_start", StringComparison.Ordinal))
+        throw new Exception("Repeated hosted LLVM entry lowering mutated the checked _start declaration.");
+}
+
+static void RunLlvmBackendOutputModeTests(string fixtureRoot)
+{
+    var fixtureDir = Path.Combine(fixtureRoot, "snapshot_minimal_program");
+    var mainPath = Path.Combine(fixtureDir, "main.zorb");
+    var parseResult = ParseFile(mainPath);
+    AssertNoErrors(parseResult.Errors);
+
+    var checker = new TypeChecker();
+    checker.Check(parseResult.EntryNodes, fixtureDir, parseResult.Files);
+    AssertNoErrors(checker.Errors.Errors);
+
+    var backendNodes = parseResult.Files.Values
+        .SelectMany(nodes => nodes)
+        .Distinct<Node>(ReferenceEqualityComparer.Instance)
+        .ToList();
+    var writer = new ZigBackendIrWriter(checker);
+    var target = new ZigBackendTarget(GetNativeLlvmTriple());
+    var backendPath = GetLlvmBackendPath();
+
+    WithTempDirectory("zorb-llvm-output-modes", tempDir =>
     {
-        var firstPath = Path.Combine(tempDir, "first.zorb");
-        var secondPath = Path.Combine(tempDir, "second.zorb");
+        var outputModes = new[]
+        {
+            (Kind: ZigBackendOutputKind.LlvmIr, Extension: ".ll"),
+            (Kind: ZigBackendOutputKind.Bitcode, Extension: ".bc"),
+            (Kind: ZigBackendOutputKind.Object, Extension: OperatingSystem.IsWindows() ? ".obj" : ".o"),
+            (Kind: ZigBackendOutputKind.Assembly, Extension: ".s")
+        };
 
-        File.WriteAllText(firstPath, """
-import c "stddef.h"
+        foreach (var outputMode in outputModes)
+        {
+            var outputPath = Path.Combine(tempDir, "out" + outputMode.Extension);
+            var backendIrPath = Path.Combine(tempDir, outputMode.Kind + ".json");
+            var backendIr = writer.Write(
+                backendNodes,
+                "output_mode_" + outputMode.Kind,
+                target,
+                outputMode.Kind,
+                outputPath);
+            File.WriteAllText(backendIrPath, backendIr, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-fn first() -> i32 {
-    return 1
-}
-""");
+            var emission = RunProcessWithTimeoutArgs(
+                backendPath,
+                [backendIrPath],
+                tempDir,
+                TimeSpan.FromSeconds(30));
+            if (emission.ExitCode != 0)
+            {
+                throw new Exception(
+                    $"Backend {outputMode.Kind} emission failed with exit code {emission.ExitCode}.{Environment.NewLine}{emission.StdErr}{emission.StdOut}".Trim());
+            }
 
-        File.WriteAllText(secondPath, """
-fn second() -> i32 {
-    return 2
-}
-""");
-
-        var firstCompilation = CompileFixture(firstPath, tempDir);
-        AssertPhase(firstCompilation.Phase, FixturePhase.Success, firstCompilation.FailureMessage);
-        AssertNoErrors(firstCompilation.ParseErrors);
-        AssertNoErrors(firstCompilation.Checker.Errors.Errors);
-
-        var generator = new CGenerator(tempDir, firstCompilation.Checker.SymbolTable);
-        var firstGenerated = generator.Generate(firstCompilation.Ast, ParseFile(firstPath).Files);
-        if (!firstGenerated.Contains("#include <stddef.h>", StringComparison.Ordinal))
-            throw new Exception("First generation did not include the imported C header.");
-
-        var secondCompilation = CompileFixture(secondPath, tempDir);
-        AssertPhase(secondCompilation.Phase, FixturePhase.Success, secondCompilation.FailureMessage);
-        AssertNoErrors(secondCompilation.ParseErrors);
-        AssertNoErrors(secondCompilation.Checker.Errors.Errors);
-
-        var secondGenerated = generator.Generate(secondCompilation.Ast, ParseFile(secondPath).Files);
-        if (secondGenerated.Contains("#include <stddef.h>", StringComparison.Ordinal))
-            throw new Exception("CGenerator leaked imported headers across Generate() calls.");
+            if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
+                throw new Exception($"Backend {outputMode.Kind} emission did not produce non-empty output.");
+        }
     });
+}
+
+static string GetNativeLlvmTriple()
+{
+    var architecture = RuntimeInformation.ProcessArchitecture switch
+    {
+        Architecture.X64 => "x86_64",
+        Architecture.Arm64 => "aarch64",
+        _ => throw new Exception($"LLVM backend output-mode tests do not support architecture '{RuntimeInformation.ProcessArchitecture}'.")
+    };
+
+    if (OperatingSystem.IsLinux())
+        return $"{architecture}-pc-linux-gnu";
+    if (OperatingSystem.IsWindows())
+        return $"{architecture}-pc-windows-msvc";
+
+    throw new Exception("LLVM backend output-mode tests require Linux or Windows.");
+}
+
+static string GetLlvmBackendPath()
+{
+    var configuredPath = Environment.GetEnvironmentVariable("ZORB_LLVM_BACKEND");
+    if (!string.IsNullOrWhiteSpace(configuredPath) && File.Exists(configuredPath))
+        return Path.GetFullPath(configuredPath);
+
+    var executableName = OperatingSystem.IsWindows() ? "zorb-llvm-backend.exe" : "zorb-llvm-backend";
+    var candidate = Path.Combine(GetProjectRoot(), "Zorb.LlvmBackend", "zig-out", "bin", executableName);
+    if (File.Exists(candidate))
+        return candidate;
+
+    throw new Exception("LLVM backend executable was not found. Build Zorb.LlvmBackend or set ZORB_LLVM_BACKEND.");
 }
 
 static void RunTypeCheckerStateResetTests()
@@ -650,12 +749,6 @@ static CliArgumentCase[] GetCliArgumentCases(string sampleInput, string tempDir,
             "Usage:",
             "Unexpected extra input path:"),
         new CliArgumentCase(
-            "keep_c_emit_c_mode",
-            $"\"{sampleInput}\" --keep-c out.c",
-            1,
-            "Usage:",
-            "Option --keep-c is only valid with build or run."),
-        new CliArgumentCase(
             "missing_linker_script_value",
             $"build \"{sampleInput}\" --target bare-metal-x86_64 --linker-script",
             1,
@@ -685,6 +778,12 @@ static CliArgumentCase[] GetCliArgumentCases(string sampleInput, string tempDir,
             1,
             "Usage:",
             "Option --check cannot be combined with build or run."),
+        new CliArgumentCase(
+            "run_emit_llvm_rejected",
+            $"run \"{sampleInput}\" --emit-llvm",
+            1,
+            "Usage:",
+            "Option --emit-llvm cannot be combined with build or run."),
         new CliArgumentCase(
             "bare_metal_run_rejected",
             $"run \"{sampleInput}\" --target bare-metal-x86_64",
@@ -716,11 +815,12 @@ static CliArgumentCase[] GetCliArgumentCases(string sampleInput, string tempDir,
 
 static void RunBareMetalCliBuildTests(string fixtureRoot)
 {
-    if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
+    if ((!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows()) ||
+        RuntimeInformation.ProcessArchitecture != Architecture.X64)
         return;
 
-    EnsureToolAvailable("gcc");
-    EnsureToolAvailable("ld");
+    if (!IsBareMetalLinkerAvailable())
+        return;
 
     var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
     var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
@@ -735,13 +835,12 @@ static void RunBareMetalCliBuildTests(string fixtureRoot)
     try
     {
         var imagePath = Path.Combine(tempDir, "kernel.elf");
-        var keptCPath = Path.Combine(tempDir, "kernel.c");
         var emittedBundledLinkerScriptPath = Path.Combine(tempDir, "bundled.ld");
         var bundledBuild = RunProcessWithTimeoutArgs(
             compilerInvocation.FileName,
             BuildCommandArguments(
                 compilerInvocation,
-                "build", mainPath, "--target", "bare-metal-x86_64", "-o", imagePath, "--keep-c", keptCPath, "--emit-linker-script", emittedBundledLinkerScriptPath),
+                "build", mainPath, "--target", "bare-metal-x86_64", "-o", imagePath, "--emit-linker-script", emittedBundledLinkerScriptPath),
             projectRoot,
             TimeSpan.FromSeconds(30));
 
@@ -750,9 +849,6 @@ static void RunBareMetalCliBuildTests(string fixtureRoot)
 
         if (!File.Exists(imagePath))
             throw new Exception("Bare-metal CLI build did not produce the requested kernel image.");
-
-        if (!File.Exists(keptCPath))
-            throw new Exception("Bare-metal CLI build did not keep the requested C output.");
 
         if (!File.Exists(emittedBundledLinkerScriptPath))
             throw new Exception("Bare-metal CLI build did not emit the bundled linker script.");
@@ -763,22 +859,7 @@ static void RunBareMetalCliBuildTests(string fixtureRoot)
         if (!bundledBuild.StdOut.Contains($"Emitted linker script to {emittedBundledLinkerScriptPath}", StringComparison.Ordinal))
             throw new Exception("Bare-metal CLI build did not report the emitted linker script path.");
 
-        var keptC = NormalizeNewlines(File.ReadAllText(keptCPath, Encoding.UTF8));
         var emittedBundledLinkerScript = NormalizeNewlines(File.ReadAllText(emittedBundledLinkerScriptPath, Encoding.UTF8));
-        var expectedSnippets = new[]
-        {
-            "#define __zorb_builtin_is_bare_metal 1",
-            "#define __zorb_builtin_is_linux 0",
-            "#define __zorb_builtin_is_x86_64 1",
-            "outb %b0, $0xE9"
-        };
-
-        foreach (var snippet in expectedSnippets)
-        {
-            if (!keptC.Contains(snippet, StringComparison.Ordinal))
-                throw new Exception($"Bare-metal CLI build output did not contain expected snippet '{snippet}'.");
-        }
-
         if (!emittedBundledLinkerScript.Contains("ENTRY(_start)", StringComparison.Ordinal) ||
             !emittedBundledLinkerScript.Contains(". = 1M;", StringComparison.Ordinal))
         {
@@ -915,11 +996,10 @@ static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string 
 
     var outputFileName = OperatingSystem.IsWindows() ? $"{fixtureName}.exe" : fixtureName;
     var builtBinaryPath = Path.Combine(fixtureTempDir, outputFileName);
-    var keptCPath = Path.Combine(fixtureTempDir, $"{fixtureName}.c");
 
     var build = RunProcessWithTimeoutArgs(
         compilerInvocation.FileName,
-        BuildCommandArguments(compilerInvocation, "build", mainPath, "--target", cliTargetName, "-o", builtBinaryPath, "--keep-c", keptCPath),
+        BuildCommandArguments(compilerInvocation, "build", mainPath, "--target", cliTargetName, "-o", builtBinaryPath),
         projectRoot,
         TimeSpan.FromSeconds(30));
 
@@ -928,9 +1008,6 @@ static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string 
 
     if (!File.Exists(builtBinaryPath))
         throw new Exception($"CLI build for fixture '{fixtureName}' did not produce the requested binary.");
-
-    if (!File.Exists(keptCPath))
-        throw new Exception($"CLI build for fixture '{fixtureName}' did not keep the requested C output.");
 
     var builtExecution = RunBuiltCliBinary(builtBinaryPath, fixtureTempDir);
     if (builtExecution.ExitCode != expectedExit)
@@ -1029,9 +1106,10 @@ static void RunExampleCompilationTest(string examplePath)
     AssertPhase(compilation.Phase, FixturePhase.Success, diagnosticsText);
     AssertNoErrors(allErrors);
     AssertNoWarnings(compilation.Checker.Errors.Warnings);
+    RunLlvmEmissionTest(exampleDir, examplePath);
 }
 
-static void RunFixture(string fixtureDir, bool updateSnapshots)
+static void RunFixture(string fixtureDir)
 {
     var mainPath = Path.Combine(fixtureDir, "main.zorb");
     if (!File.Exists(mainPath))
@@ -1068,51 +1146,11 @@ static void RunFixture(string fixtureDir, bool updateSnapshots)
     if (expectedWarnings.Count == 0)
         AssertNoWarnings(allWarnings);
 
-    var generated = compilation.Result.Generated;
-
-    foreach (var expected in ReadExpectationLinesForCurrentHost(fixtureDir, "expect-generated.txt"))
-        AssertTextContains(generated, expected);
-
-    var snapshotPath = ResolveExpectationPathForCurrentHost(fixtureDir, "expect-generated-full.c");
-    if (File.Exists(snapshotPath))
-    {
-        if (updateSnapshots)
-        {
-            File.WriteAllText(snapshotPath, generated, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        }
-        else
-        {
-            var expectedSnapshot = File.ReadAllText(snapshotPath, Encoding.UTF8);
-            if (!string.Equals(NormalizeNewlines(generated), NormalizeNewlines(expectedSnapshot), StringComparison.Ordinal))
-                throw new Exception($"Generated output did not match snapshot '{Path.GetFileName(snapshotPath)}'.");
-        }
-    }
-
-    foreach (var line in ReadExpectationLinesForCurrentHost(fixtureDir, "expect-generated-counts.txt"))
-    {
-        var separatorIndex = line.LastIndexOf("=>", StringComparison.Ordinal);
-        if (separatorIndex < 0)
-            throw new Exception($"Invalid count expectation '{line}'");
-
-        var needle = line[..separatorIndex].Trim();
-        var countText = line[(separatorIndex + 2)..].Trim();
-        if (!int.TryParse(countText, out var expectedCount))
-            throw new Exception($"Invalid count in expectation '{line}'");
-
-        var actualCount = CountOccurrences(generated, needle);
-        if (actualCount != expectedCount)
-            throw new Exception($"Expected '{needle}' {expectedCount} time(s), got {actualCount}.");
-    }
-
+    RunLlvmEmissionTest(fixtureDir, mainPath);
     RunRuntimeExpectationsIfPresent(fixtureDir, mainPath);
 }
 
 static FixtureCompilation CompileFixture(string mainPath, string fixtureDir)
-{
-    return CompileFixtureCore(mainPath, fixtureDir, _ => { });
-}
-
-static FixtureCompilation CompileFixtureCore(string mainPath, string fixtureDir, Action<CGenerator>? configureGenerator)
 {
     var parseResult = ParseFile(mainPath);
     var ast = parseResult.EntryNodes;
@@ -1125,56 +1163,47 @@ static FixtureCompilation CompileFixtureCore(string mainPath, string fixtureDir,
     if (checker.Errors.Errors.Count > 0)
         return new FixtureCompilation(ast, parseErrors, checker, "", FixturePhase.Semantic, null);
 
-    try
+    return new FixtureCompilation(ast, parseErrors, checker, "", FixturePhase.Success, null);
+}
+
+static void RunLlvmEmissionTest(string fixtureDir, string mainPath)
+{
+    var projectRoot = GetProjectRoot();
+    var compilerInvocation = GetCompilerInvocation(projectRoot);
+    WithTempDirectory("zorb-llvm-emission", tempDir =>
     {
-        var generator = new CGenerator(fixtureDir, checker.SymbolTable);
-        configureGenerator?.Invoke(generator);
-        var generated = generator.Generate(ast, parseResult.Files);
-        return new FixtureCompilation(ast, parseErrors, checker, generated, FixturePhase.Success, null);
-    }
-    catch (Exception ex)
-    {
-        return new FixtureCompilation(ast, parseErrors, checker, "", FixturePhase.Codegen, ex.Message);
-    }
+        var outputPath = Path.Combine(tempDir, "out.ll");
+        var emission = RunProcessWithTimeoutArgs(
+            compilerInvocation.FileName,
+            BuildCommandArguments(compilerInvocation, "--emit-llvm", mainPath, "-o", outputPath),
+            projectRoot,
+            TimeSpan.FromSeconds(30));
+
+        if (emission.ExitCode != 0)
+        {
+            throw new Exception(
+                $"LLVM emission failed with exit code {emission.ExitCode}.{Environment.NewLine}{emission.StdErr}{emission.StdOut}".Trim());
+        }
+
+        if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
+            throw new Exception("LLVM emission did not produce a non-empty output file.");
+
+        var llvmIr = File.ReadAllText(outputPath, Encoding.UTF8);
+        if (!llvmIr.Contains("target triple =", StringComparison.Ordinal))
+            throw new Exception("LLVM output did not contain a target triple.");
+
+        foreach (var expected in ReadExpectationLinesForCurrentHost(fixtureDir, "expect-llvm.txt"))
+            AssertTextContains(llvmIr, expected);
+    });
 }
 
 static void RunRuntimeExpectationsIfPresent(string fixtureDir, string mainPath)
 {
-    var runtimeExpectations = ReadRuntimeExpectations(fixtureDir);
-    if (runtimeExpectations.Count == 0)
-        return;
-
-    var runnableExpectations = runtimeExpectations
-        .Where(IsRuntimeExpectationRunnableOnCurrentHost)
-        .ToList();
-    if (runnableExpectations.Count == 0)
-        return;
-
-    var runtimeCompilations = new Dictionary<(bool PreserveStart, bool NoStdLib), FixtureCompilation>();
-
-    foreach (var runtimeExpectation in runnableExpectations)
+    foreach (var runtimeExpectation in ReadRuntimeExpectations(fixtureDir)
+        .Where(IsRuntimeExpectationRunnableOnCurrentHost))
     {
-        var compilationKey = GetRuntimeCompilationOptions(runtimeExpectation.TargetName);
-        if (!runtimeCompilations.TryGetValue(compilationKey, out var runtimeCompilation))
-        {
-            runtimeCompilation = CompileRuntimeFixture(mainPath, fixtureDir, compilationKey.PreserveStart, compilationKey.NoStdLib);
-            AssertNoErrors(runtimeCompilation.ParseErrors);
-            AssertNoErrors(runtimeCompilation.Checker.Errors.Errors);
-            AssertNoWarnings(runtimeCompilation.Checker.Errors.Warnings);
-            runtimeCompilations[compilationKey] = runtimeCompilation;
-        }
-
-        RunRuntimeExpectation(fixtureDir, runtimeCompilation.Generated, runtimeExpectation);
+        RunLlvmRuntimeExpectation(fixtureDir, mainPath, runtimeExpectation);
     }
-}
-
-static FixtureCompilation CompileRuntimeFixture(string mainPath, string fixtureDir, bool preserveStart, bool noStdLib)
-{
-    return CompileFixtureCore(mainPath, fixtureDir, generator =>
-    {
-        generator.PreserveStart = preserveStart;
-        generator.NoStdLib = noStdLib;
-    });
 }
 
 static ParseGraphResult ParseFile(string path)
@@ -1263,7 +1292,6 @@ static FixturePhase ReadExpectedPhase(string fixtureDir)
         "success" => FixturePhase.Success,
         "parse" => FixturePhase.Parse,
         "semantic" => FixturePhase.Semantic,
-        "codegen" => FixturePhase.Codegen,
         _ => throw new Exception($"Unknown expected phase '{text}' in expect-phase.txt")
     };
 }
@@ -1338,18 +1366,6 @@ static List<RuntimeExpectation> ReadRuntimeExpectations(string fixtureDir)
                 : (File.Exists(hostExitPath) ? int.Parse(File.ReadAllText(hostExitPath, Encoding.UTF8).Trim()) : 0)));
     }
 
-    var aarch64StdOutPath = Path.Combine(fixtureDir, "expect-stdout-aarch64.txt");
-    var aarch64StdErrPath = Path.Combine(fixtureDir, "expect-stderr-aarch64.txt");
-    var aarch64ExitPath = Path.Combine(fixtureDir, "expect-exit-aarch64.txt");
-    if (File.Exists(aarch64StdOutPath) || File.Exists(aarch64StdErrPath) || File.Exists(aarch64ExitPath))
-    {
-        expectations.Add(new RuntimeExpectation(
-            "linux-aarch64",
-            File.Exists(aarch64StdOutPath) ? NormalizeNewlines(File.ReadAllText(aarch64StdOutPath, Encoding.UTF8)) : null,
-            File.Exists(aarch64StdErrPath) ? NormalizeNewlines(File.ReadAllText(aarch64StdErrPath, Encoding.UTF8)) : null,
-            File.Exists(aarch64ExitPath) ? int.Parse(File.ReadAllText(aarch64ExitPath, Encoding.UTF8).Trim()) : 0));
-    }
-
     return expectations;
 }
 
@@ -1388,105 +1404,39 @@ static bool IsRuntimeExpectationRunnableOnCurrentHost(RuntimeExpectation runtime
 {
     return runtimeExpectation.TargetName switch
     {
-        "freestanding-linux" or "host-linux" or "linux-aarch64" => OperatingSystem.IsLinux(),
+        "freestanding-linux" or "host-linux" => OperatingSystem.IsLinux(),
         "host-windows" => OperatingSystem.IsWindows(),
         _ => false
     };
 }
 
-static (bool PreserveStart, bool NoStdLib) GetRuntimeCompilationOptions(string targetName)
+static void RunLlvmRuntimeExpectation(string fixtureDir, string mainPath, RuntimeExpectation runtimeExpectation)
 {
-    return targetName switch
+    var projectRoot = GetProjectRoot();
+    var compilerInvocation = GetCompilerInvocation(projectRoot);
+    WithTempDirectory($"zorb-runtime-{Path.GetFileName(fixtureDir)}", tempDir =>
     {
-        "freestanding-linux" => (PreserveStart: true, NoStdLib: true),
-        "host-linux" => (PreserveStart: false, NoStdLib: false),
-        "linux-aarch64" => (PreserveStart: true, NoStdLib: true),
-        "host-windows" => (PreserveStart: false, NoStdLib: false),
-        _ => throw new Exception($"Unknown runtime target '{targetName}'.")
-    };
-}
-
-static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeExpectation runtimeExpectation)
-{
-    var tempDir = Path.Combine(
-        Path.GetTempPath(),
-        "zorb-runtime-fixtures",
-        Path.GetFileName(fixtureDir) + "-" + runtimeExpectation.TargetName + "-" + Guid.NewGuid().ToString("N"));
-    Directory.CreateDirectory(tempDir);
-
-    try
-    {
-        var sourcePath = Path.Combine(tempDir, "out.c");
-        File.WriteAllText(sourcePath, generated, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         CopyRuntimeDataFiles(fixtureDir, tempDir);
+        var binaryName = OperatingSystem.IsWindows() ? "out.exe" : "out";
+        var binaryPath = Path.Combine(tempDir, binaryName);
+        var build = RunProcessWithTimeoutArgs(
+            compilerInvocation.FileName,
+            BuildCommandArguments(
+                compilerInvocation,
+                "build", mainPath, "--target", runtimeExpectation.TargetName, "-o", binaryPath),
+            projectRoot,
+            TimeSpan.FromSeconds(30));
 
-        ProcessResult compile;
-        ProcessResult execution;
-
-        if (runtimeExpectation.TargetName == "freestanding-linux")
+        if (build.ExitCode != 0)
         {
-            EnsureToolAvailable("timeout");
-            var binaryPath = Path.Combine(tempDir, "out");
-            compile = RunProcessArgs(
-                "gcc",
-                ["-O2", "-nostdlib", "-fno-pie", "-no-pie", "-z", "execstack", "-fno-builtin", sourcePath, "-o", binaryPath],
-                tempDir);
-
-            if (compile.ExitCode != 0)
-                throw new Exception($"Runtime gcc compile failed with exit code {compile.ExitCode}.{Environment.NewLine}{compile.StdErr}{compile.StdOut}".Trim());
-
-            execution = RunProcessArgs("timeout", ["30s", binaryPath], tempDir);
+            throw new Exception(
+                $"LLVM build for target '{runtimeExpectation.TargetName}' failed with exit code {build.ExitCode}.{Environment.NewLine}{build.StdErr}{build.StdOut}".Trim());
         }
-        else if (runtimeExpectation.TargetName == "host-linux")
-        {
-            EnsureToolAvailable("timeout");
-            var binaryPath = Path.Combine(tempDir, "out");
-            compile = RunProcessArgs(
-                "gcc",
-                ["-O2", sourcePath, "-o", binaryPath],
-                tempDir);
 
-            if (compile.ExitCode != 0)
-                throw new Exception($"Hosted Linux gcc compile failed with exit code {compile.ExitCode}.{Environment.NewLine}{compile.StdErr}{compile.StdOut}".Trim());
+        if (!File.Exists(binaryPath))
+            throw new Exception($"LLVM build for target '{runtimeExpectation.TargetName}' did not produce a binary.");
 
-            execution = RunProcessArgs("timeout", ["30s", binaryPath], tempDir);
-        }
-        else if (runtimeExpectation.TargetName == "linux-aarch64")
-        {
-            EnsureToolAvailable("aarch64-linux-gnu-gcc");
-            EnsureToolAvailable("qemu-aarch64");
-            EnsureToolAvailable("timeout");
-
-            var binaryPath = Path.Combine(tempDir, "out-aarch64");
-            compile = RunProcessArgs(
-                "aarch64-linux-gnu-gcc",
-                ["-O2", "-nostdlib", "-static", "-fno-pie", "-no-pie", "-z", "execstack", "-fno-builtin", sourcePath, "-o", binaryPath],
-                tempDir);
-
-            if (compile.ExitCode != 0)
-                throw new Exception($"Runtime aarch64 gcc compile failed with exit code {compile.ExitCode}.{Environment.NewLine}{compile.StdErr}{compile.StdOut}".Trim());
-
-            execution = RunProcessArgs("timeout", ["30s", "qemu-aarch64", binaryPath], tempDir);
-        }
-        else if (runtimeExpectation.TargetName == "host-windows")
-        {
-            var compiler = EnsureToolAvailable("clang-cl", "cl");
-
-            var binaryPath = Path.Combine(tempDir, "out.exe");
-            compile = RunProcessArgs(
-                compiler,
-                GetWindowsCompileArgumentList(compiler, sourcePath, binaryPath),
-                tempDir);
-
-            if (compile.ExitCode != 0)
-                throw new Exception($"Runtime Windows compile failed with exit code {compile.ExitCode}.{Environment.NewLine}{compile.StdErr}{compile.StdOut}".Trim());
-
-            execution = RunProcessWithTimeoutArgs(binaryPath, Array.Empty<string>(), tempDir, TimeSpan.FromSeconds(30));
-        }
-        else
-        {
-            throw new Exception($"Unknown runtime target '{runtimeExpectation.TargetName}'.");
-        }
+        var execution = RunBuiltCliBinary(binaryPath, tempDir);
 
         var actualStdOut = NormalizeNewlines(execution.StdOut);
         var actualStdErr = NormalizeNewlines(execution.StdErr);
@@ -1510,12 +1460,7 @@ static void RunRuntimeExpectation(string fixtureDir, string generated, RuntimeEx
             throw new Exception(
                 $"Target '{runtimeExpectation.TargetName}' runtime stderr did not match expectation.{Environment.NewLine}Expected:{Environment.NewLine}{runtimeExpectation.ExpectedStdErr}{Environment.NewLine}Actual:{Environment.NewLine}{actualStdErr}");
         }
-    }
-    finally
-    {
-        if (Directory.Exists(tempDir))
-            Directory.Delete(tempDir, recursive: true);
-    }
+    });
 }
 
 static void CopyRuntimeDataFiles(string fixtureDir, string tempDir)
@@ -1556,6 +1501,18 @@ static bool IsAnyToolAvailable(params string[] toolNames)
     return false;
 }
 
+static bool IsBareMetalLinkerAvailable()
+{
+    var configured = Environment.GetEnvironmentVariable("ZORB_LLD");
+    if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
+        return true;
+
+    if (ExternalTools.IsToolAvailable("ld.lld"))
+        return true;
+
+    return ExternalTools.FindAvailableToolByPrefix("ld.lld-") != null;
+}
+
 static string FindAncestorContainingFile(string startPath, string fileName)
 {
     var current = new DirectoryInfo(Path.GetFullPath(startPath));
@@ -1571,22 +1528,11 @@ static string FindAncestorContainingFile(string startPath, string fileName)
     throw new Exception($"Unable to locate '{fileName}' from '{startPath}'.");
 }
 
-static IReadOnlyList<string> GetWindowsCompileArgumentList(string compiler, string cSourcePath, string outputPath)
+static string GetProjectRoot()
 {
-    try
-    {
-        return ExternalTools.GetWindowsCompileArgumentList(compiler, cSourcePath, outputPath);
-    }
-    catch (ZorbCompilerException ex)
-    {
-        throw new Exception(ex.Message, ex);
-    }
-}
-
-static ProcessResult RunProcessArgs(string fileName, IEnumerable<string> arguments, string workingDirectory)
-{
-    var result = ExternalTools.RunProcess(fileName, arguments, workingDirectory);
-    return new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
+    var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
+    return Directory.GetParent(testProjectRoot)?.FullName
+        ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
 }
 
 static ProcessResult RunProcessWithTimeoutArgs(string fileName, IEnumerable<string> arguments, string workingDirectory, TimeSpan timeout)
@@ -1620,8 +1566,7 @@ enum FixturePhase
 {
     Success,
     Parse,
-    Semantic,
-    Codegen
+    Semantic
 }
 
 sealed record FixtureCompilation(

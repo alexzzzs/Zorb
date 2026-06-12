@@ -1,5 +1,0 @@
-int64_t auto__z2;
-int64_t auto__z2__z2;
-.auto__z2 = 1
-.auto__z2__z2 = 2
-return (s.auto__z2 + s.auto__z2__z2);

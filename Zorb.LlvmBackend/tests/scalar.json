@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "module_name": "scalar_smoke",
+  "target": {
+    "triple": "x86_64-pc-linux-gnu",
+    "cpu": "generic",
+    "features": "",
+    "optimize": "O0"
+  },
+  "output_kind": "llvm_ir",
+  "output_path": "Zorb.LlvmBackend/tests/scalar.ll",
+  "types": [
+    {"id": 1, "kind": "scalar", "scalar": "void"},
+    {"id": 2, "kind": "scalar", "scalar": "i32"}
+  ],
+  "functions": [
+    {
+      "id": 1,
+      "name": "add",
+      "linkage": "external",
+      "return_type": 2,
+      "parameters": [
+        {"id": 1, "name": "lhs", "type": 2},
+        {"id": 2, "name": "rhs", "type": 2}
+      ],
+      "blocks": [
+        {
+          "id": 1,
+          "name": "entry",
+          "instructions": [
+            {
+              "id": 3,
+              "op": "binary",
+              "type": 2,
+              "binary_op": "add",
+              "lhs": 1,
+              "rhs": 2
+            }
+          ],
+          "terminator": {"op": "return_value", "value": 3}
+        }
+      ]
+    }
+  ]
+}

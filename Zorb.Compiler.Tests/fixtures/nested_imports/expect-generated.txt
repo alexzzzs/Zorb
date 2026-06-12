@@ -1,2 +1,0 @@
-return leaf_answer();
-return middle_answer();

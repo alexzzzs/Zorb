@@ -1,3 +1,0 @@
-struct Slice_u8
-return buf.len;
-use((struct Slice_u8){ .ptr = buf, .len = 4 })

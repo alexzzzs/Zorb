@@ -36,6 +36,7 @@ public class TypeChecker
     private readonly Stack<HashSet<string>> _typeParameterScopes = new();
     private readonly Dictionary<string, string> _errorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<long, string> _errorValues = new();
+    private readonly Dictionary<Expr, TypeNode> _checkedExpressionTypes = new();
     private IReadOnlyDictionary<string, IReadOnlyList<Node>>? _parsedFilesByPath;
     private string _currentDir = ".";
     private FunctionDecl? _currentFunction;
@@ -46,6 +47,13 @@ public class TypeChecker
 
     public SymbolTable SymbolTable => _symbolTable;
     public ErrorReporter Errors => _errors;
+
+    public TypeNode? GetCheckedExpressionType(Expr expression)
+    {
+        return _checkedExpressionTypes.TryGetValue(expression, out var type)
+            ? type.Clone()
+            : null;
+    }
 
     private static readonly HashSet<string> NumericOperators = new()
     {
@@ -501,6 +509,7 @@ public class TypeChecker
         _typeParameterScopes.Clear();
         _errorSymbols.Clear();
         _errorValues.Clear();
+        _checkedExpressionTypes.Clear();
         _fileScopes.Clear();
         _fileExports.Clear();
         _parsedFilesByPath = null;
@@ -1989,8 +1998,35 @@ public class TypeChecker
                 {
                     _symbolTable.DefineVariable(catchExpr.ErrorVar, new TypeNode { Name = "i32" });
                     _catchErrorVarScopes.Peek().Add(catchExpr.ErrorVar);
+                    var catchFlow = FlowOutcome.FallsThrough;
                     foreach (var stmt in catchExpr.CatchBody)
-                        CheckStatement(stmt);
+                    {
+                        if (catchFlow != FlowOutcome.FallsThrough)
+                        {
+                            _errors.Warning(stmt, "Unreachable statement.");
+                            break;
+                        }
+
+                        catchFlow = CheckStatement(stmt);
+                    }
+
+                    if (catchFlow == FlowOutcome.FallsThrough)
+                    {
+                        if (catchExpr.CatchBody.LastOrDefault() is not ExpressionStatement fallback)
+                        {
+                            _errors.Error(catchExpr, "Catch body must end with a fallback expression or transfer control with return, break, or continue.");
+                            break;
+                        }
+
+                        var successType = catchType.ErrorInnerType ?? catchType;
+                        var fallbackType = GetExpressionType(fallback.Expression);
+                        if (!IsAssignableTo(successType, fallback.Expression, fallbackType))
+                        {
+                            _errors.Error(
+                                fallback.Expression,
+                                $"Catch fallback expression of type '{FormatType(fallbackType)}' is not assignable to '{FormatType(successType)}'.");
+                        }
+                    }
                 }
                 finally
                 {
@@ -2594,6 +2630,14 @@ public class TypeChecker
     }
 
     private TypeNode? GetExpressionType(Expr expr, bool reportErrors = true)
+    {
+        var type = ComputeExpressionType(expr, reportErrors);
+        if (type != null)
+            _checkedExpressionTypes[expr] = type.Clone();
+        return type;
+    }
+
+    private TypeNode? ComputeExpressionType(Expr expr, bool reportErrors)
     {
         switch (expr)
         {
@@ -3261,7 +3305,7 @@ public class TypeChecker
 
         var leftLabel = leftInfo.IsSigned ? "signed" : "unsigned";
         var rightLabel = rightInfo.IsSigned ? "signed" : "unsigned";
-        _errors.Warning(bin, $"Comparison '{bin.Operator}' mixes {leftLabel} type '{FormatType(leftType)}' with {rightLabel} type '{FormatType(rightType)}'. Generated C follows the platform's usual signed/unsigned comparison rules.");
+        _errors.Warning(bin, $"Comparison '{bin.Operator}' mixes {leftLabel} type '{FormatType(leftType)}' with {rightLabel} type '{FormatType(rightType)}'. The comparison uses the usual integer conversion rules.");
     }
 
     private bool TryBuildNumericConversionDiagnostic(TypeNode targetType, Expr? sourceExpr, TypeNode? sourceType, out string message)

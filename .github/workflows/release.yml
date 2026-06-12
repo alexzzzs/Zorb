@@ -34,6 +34,64 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Install release toolchain
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-20-dev lld-20 g++
+          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Cache Zig build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            Zorb.LlvmBackend/.zig-cache
+            ~/.cache/zig
+          key: release-${{ runner.os }}-zig-0.16.0-llvm20-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          restore-keys: |
+            release-${{ runner.os }}-zig-0.16.0-llvm20-
+
+      - name: Install release toolchain
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install llvm --version=20.1.8 -y --no-progress
+          Invoke-WebRequest https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip -OutFile zig.zip
+          Expand-Archive zig.zip -DestinationPath .
+          "$PWD/zig-x86_64-windows-0.16.0" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$env:ProgramFiles\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Cache Zig build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            Zorb.LlvmBackend/.zig-cache
+            ~\AppData\Local\zig
+          key: release-${{ runner.os }}-zig-0.16.0-llvm20-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          restore-keys: |
+            release-${{ runner.os }}-zig-0.16.0-llvm20-
+
+      - name: Discover LLVM library paths
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $llvmPrefix = if (Test-Path "$env:ProgramFiles\LLVM") {
+            Resolve-Path "$env:ProgramFiles\LLVM"
+          } else {
+            throw "LLVM install root was not found under $env:ProgramFiles\LLVM"
+          }
+
+          $llvmLib = Get-ChildItem -Path $llvmPrefix -Filter LLVM-C.lib -Recurse -File -ErrorAction Stop |
+            Select-Object -First 1
+          if ($null -eq $llvmLib) {
+            throw "Unable to find LLVM-C.lib under $llvmPrefix"
+          }
+
+          "LLVM_PREFIX=$llvmPrefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LLVM_LIB_DIR=$(Split-Path $llvmLib.FullName -Parent)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Compute release version metadata
         id: version
         shell: bash
@@ -66,6 +124,20 @@ jobs:
           tag=${GITHUB_REF_NAME}
           commit=${GITHUB_SHA}
           EOF
+
+      - name: Smoke test release directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            compiler="${{ matrix.output_dir }}/Zorb.Compiler"
+          else
+            compiler="${{ matrix.output_dir }}/Zorb.Compiler.exe"
+          fi
+          "$compiler" --emit-llvm Zorb.Compiler.Tests/fixtures/runtime_hello_world/main.zorb -o "$RUNNER_TEMP/zorb-release-smoke.ll"
+          "$compiler" build Zorb.Compiler.Tests/fixtures/bare_metal_debug_port/main.zorb --target bare-metal-x86_64 -o "$RUNNER_TEMP/zorb-release-smoke.elf"
+          test -s "$RUNNER_TEMP/zorb-release-smoke.ll"
+          test -s "$RUNNER_TEMP/zorb-release-smoke.elf"
 
       - name: Package release asset
         if: matrix.os == 'ubuntu-latest'

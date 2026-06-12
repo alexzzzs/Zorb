@@ -65,22 +65,20 @@ partial class Program
                     options.CheckOnly = true;
                     break;
 
-                case "--emit-c":
-                    // Retained as an explicit no-op for CLI compatibility. Emit-C is the default mode.
+                case "--emit-llvm":
+                    if (options.Mode is CommandMode.Build or CommandMode.Run)
+                    {
+                        Console.Error.WriteLine("Option --emit-llvm cannot be combined with build or run.");
+                        PrintUsage();
+                        return null;
+                    }
+                    options.Mode = CommandMode.EmitLlvmIr;
+                    if (!options.OutputPathExplicitlySet)
+                        options.OutputPath = "out.ll";
                     break;
 
                 case "--dump-tokens":
                     options.DumpTokens = true;
-                    break;
-
-                case "--keep-c":
-                    if (i + 1 >= args.Length)
-                    {
-                        Console.Error.WriteLine("Missing value for --keep-c.");
-                        PrintUsage();
-                        return null;
-                    }
-                    options.KeepCPath = args[++i];
                     break;
 
                 case "--linker-script":
@@ -152,13 +150,6 @@ partial class Program
             return null;
         }
 
-        if (options.KeepCPath != null && options.Mode == CommandMode.EmitC)
-        {
-            Console.Error.WriteLine("Option --keep-c is only valid with build or run.");
-            PrintUsage();
-            return null;
-        }
-
         if (options.CheckOnly && options.OutputPathExplicitlySet)
         {
             Console.Error.WriteLine("Option -o/--output is not valid with --check.");
@@ -173,7 +164,7 @@ partial class Program
             return null;
         }
 
-        if (options.CheckOnly && options.Mode != CommandMode.EmitC)
+        if (options.CheckOnly && options.Mode != CommandMode.EmitLlvmIr)
         {
             Console.Error.WriteLine("Option --check cannot be combined with build or run.");
             PrintUsage();
@@ -192,9 +183,8 @@ partial class Program
         Console.WriteLine("Options:");
         Console.WriteLine("  --check              Run parse and semantic checks only.");
         Console.WriteLine("  --dump-tokens        Print the token stream before parsing.");
-        Console.WriteLine("  --emit-c             Explicitly request C emission (default behavior).");
-        Console.WriteLine("  -o, --output <path>  Write generated C or built binary to the given path.");
-        Console.WriteLine("  --keep-c <path>      Keep the generated C file when using build or run.");
+        Console.WriteLine("  --emit-llvm          Emit verified LLVM IR through the Zig backend (default behavior).");
+        Console.WriteLine("  -o, --output <path>  Write generated LLVM IR or a built binary to the given path.");
         Console.WriteLine("  --native-flags <s>   Append raw native compiler/linker flags for hosted build/run.");
         Console.WriteLine("  --linker-script <p>  Use a custom linker script for build --target bare-metal-x86_64.");
         Console.WriteLine("  --emit-linker-script <p>");

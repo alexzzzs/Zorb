@@ -13,9 +13,29 @@ public static class ExternalTools
 
     public static IReadOnlyList<string> GetWindowsCompileArgumentList(string compiler, string cSourcePath, string outputPath)
     {
+        return GetWindowsCompileAndLinkArgumentList(compiler, cSourcePath, [], outputPath);
+    }
+
+    public static IReadOnlyList<string> GetWindowsCompileAndLinkArgumentList(
+        string compiler,
+        string cSourcePath,
+        IReadOnlyList<string> additionalInputs,
+        string outputPath)
+    {
         return compiler switch
         {
-            "clang-cl" or "cl" => ["/nologo", "/TC", "/O2", cSourcePath, $"/Fe:{outputPath}", "/link", "kernel32.lib"],
+            "clang-cl" or "cl" => [
+                "/nologo",
+                "/TC",
+                "/O2",
+                "/MD",
+                cSourcePath,
+                .. additionalInputs,
+                $"/Fe:{outputPath}",
+                "/link",
+                "/subsystem:console",
+                "kernel32.lib"
+            ],
             _ => throw new ZorbCompilerException($"Unsupported Windows compiler '{compiler}'.")
         };
     }
@@ -31,7 +51,7 @@ public static class ExternalTools
     {
         foreach (var toolName in toolNames)
         {
-            if (IsToolAvailable(toolName))
+            if (FindAvailableTool(toolName) != null)
                 return toolName;
         }
 
@@ -43,9 +63,66 @@ public static class ExternalTools
 
     public static bool IsToolAvailable(string toolName)
     {
+        return FindAvailableTool(toolName) != null;
+    }
+
+    public static string? FindAvailableTool(string toolName)
+    {
         var locator = OperatingSystem.IsWindows() ? "where" : "which";
         var check = RunProcess(locator, [toolName], Directory.GetCurrentDirectory());
-        return check.ExitCode == 0 && !string.IsNullOrWhiteSpace(check.StdOut);
+        if (check.ExitCode != 0)
+            return null;
+
+        return check.StdOut
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault();
+    }
+
+    public static string? FindAvailableToolByPrefix(string toolNamePrefix)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        var comparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        var executableSuffix = OperatingSystem.IsWindows() ? ".exe" : string.Empty;
+        string? bestMatch = null;
+
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!Directory.Exists(directory))
+                continue;
+
+            IEnumerable<string> candidates;
+            try
+            {
+                candidates = Directory.EnumerateFiles(directory);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var candidate in candidates)
+            {
+                var fileName = Path.GetFileName(candidate);
+                if (!fileName.StartsWith(toolNamePrefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                    continue;
+
+                if (OperatingSystem.IsWindows() &&
+                    !fileName.EndsWith(executableSuffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (bestMatch == null || comparer.Compare(fileName, Path.GetFileName(bestMatch)) > 0)
+                    bestMatch = candidate;
+            }
+        }
+
+        return bestMatch;
     }
 
     public static CommandResult RunProcess(string fileName, string arguments, string workingDirectory)

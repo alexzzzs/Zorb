@@ -1,0 +1,2 @@
+icmp slt i64
+icmp eq i32

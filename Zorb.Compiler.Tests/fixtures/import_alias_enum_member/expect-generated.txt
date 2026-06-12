@@ -1,3 +1,0 @@
-typedef int32_t Mode;
-static const Mode Mode_Run = (Mode)1;
-if (__zorb_switch_value_

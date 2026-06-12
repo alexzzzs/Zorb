@@ -1,2 +1,0 @@
-.error = Error_Fail
-.error = Error_Retry

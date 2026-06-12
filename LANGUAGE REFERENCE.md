@@ -1,6 +1,7 @@
 # Zorb Language Reference
 
-Zorb is a small ahead-of-time systems language that currently lowers to C. Its current design favors explicit types, limited implicit conversion, direct target access, and a small standard library implemented in Zorb itself.
+Zorb is a small ahead-of-time systems language. Native builds lower through a
+versioned backend IR to a Zig 0.16/LLVM 20 backend.
 
 ## Source Files And Compilation Model
 
@@ -11,8 +12,9 @@ The compiler pipeline is:
 1. Lex the entry file and imported files.
 2. Parse the import graph.
 3. Run semantic checking, including import visibility and type checking.
-4. Lower the checked AST to C.
-5. Optionally compile and run/build the generated C through the compiler driver.
+4. Lower the checked AST to versioned backend IR.
+5. Ask the Zig/LLVM backend to verify and emit LLVM IR or an object file.
+6. Link and optionally run the generated program.
 
 The compiler supports these output targets:
 
@@ -23,7 +25,13 @@ bare-metal-x86_64
 host-windows
 ```
 
-`build` and `run` default to `freestanding-linux` on Linux and `host-windows` on Windows. Plain C emission defaults to `host-linux`.
+`build` and `run` default to `freestanding-linux` on Linux and `host-windows`
+on Windows. Plain backend emission defaults to `host-linux`.
+
+`bare-metal-x86_64` is an ELF target and can be built from x86_64 Linux or
+Windows hosts. It uses LLVM object emission and LLD rather than the host C
+compiler. Hosted Windows GNU/MinGW output is not currently supported;
+`host-windows` uses the MSVC ABI.
 
 ## Lexical Structure
 
@@ -170,7 +178,8 @@ For already-qualified exported names, the alias preserves the exported name bene
 import c "windows.h"
 ```
 
-This registers a C header for generated C. It does not load Zorb symbols.
+This registers a C header dependency for native lowering. It does not load
+Zorb symbols.
 
 ## Declarations
 
@@ -214,7 +223,8 @@ Global variables and local variables use the same declaration shape. Globals may
 std.io.stdout: i32 = 1
 ```
 
-Dotted global names are flattened in generated C by replacing `.` with `_`.
+Dotted global names are flattened in lowered symbol names by replacing `.` with
+`_`.
 
 ### Constants
 
@@ -223,7 +233,8 @@ const count: i64 = 4
 export const page_size: i64 = 4096
 ```
 
-`const` declarations must include an initializer. In generated C, constants are emitted with C `const`.
+`const` declarations must include an initializer. Native lowering preserves the
+read-only intent of those declarations.
 
 Integer `const` declarations whose initializer is a constant integer expression can be used in compile-time integer contexts such as array sizes, alignments, offsets, and folded global integer initializers.
 
@@ -372,7 +383,8 @@ fn demo() -> i64 {
 }
 ```
 
-Generic function calls must provide explicit type arguments. Each concrete instantiation is monomorphized into generated C.
+Generic function calls must provide explicit type arguments. Each concrete
+instantiation is monomorphized into a distinct lowered function.
 
 Generic functions may use their type parameters in parameters, return types, local declarations, casts, `Builtin.sizeof(...)`, struct literals, arrays, slices, pointers, function types, and error unions. Calls may use imported declarations and nested generic types:
 
@@ -402,7 +414,8 @@ extern fn ExitProcess(uExitCode: u32) -> void
 extern fn WriteFile(h: i64, buf: *i8, len: u32, written: *u32, overlapped: i64) -> i32
 ```
 
-`extern fn` declares a function without a body and emits an `extern` C declaration.
+`extern fn` declares a function without a body and lowers as an external native
+declaration.
 
 ## Attributes
 
@@ -505,7 +518,8 @@ string
 
 `bool` is a first-class type. Conditions require `bool`; integers and pointers are not implicitly truthy.
 
-`string` is a source-level type. It maps to `char*` in generated C but does not implicitly convert to pointer or integer types.
+`string` is a source-level pointer-like string type. It does not implicitly
+convert to pointer or integer types.
 
 ### Generic Type Instantiations
 
@@ -557,7 +571,8 @@ Global arrays must be initialized with array literals.
 view: []u8
 ```
 
-`[]T` is a non-owning view over contiguous `T` elements. It lowers to a generated C struct with:
+`[]T` is a non-owning view over contiguous `T` elements. It lowers to a native
+aggregate with:
 
 ```zorb
 ptr: *T
@@ -939,6 +954,8 @@ value: T = fallible() catch |err| {
 The left side must have error-union type `!T`. The catch expression itself has type `T`.
 
 The catch body runs only if the error code is nonzero. The named error variable is an `i32` scoped to the catch body.
+The body must either end with a fallback expression assignable to `T` or
+transfer control with `return`, `break`, or `continue`.
 
 Global initializers may not contain `catch`.
 
@@ -954,7 +971,9 @@ Builtin.IsX86_64
 Builtin.IsAArch64
 ```
 
-These are `bool` values representing the selected compilation target and generated C target environment. They are not the host OS running the Zorb compiler unless the selected target matches the host.
+These are `bool` values representing the selected compilation target. They are
+not the host OS running the Zorb compiler unless the selected target matches
+the host.
 
 ### Builtin.sizeof
 
@@ -962,7 +981,7 @@ These are `bool` values representing the selected compilation target and generat
 size: i64 = Builtin.sizeof(Type)
 ```
 
-Returns the generated C `sizeof(Type)` as `i64`. Unknown types are rejected.
+Returns the backend `sizeof(Type)` as `i64`. Unknown types are rejected.
 
 Examples:
 
@@ -977,7 +996,9 @@ fiber_bytes: i64 = Builtin.sizeof(Fiber)
 Builtin.CompileError("message")
 ```
 
-This expects a string literal and lowers to a generated C preprocessor `#error`. It is used primarily in platform-specific branches that must fail if compiled for an unsupported target.
+This expects a string literal and lowers to a compile-time backend failure. It
+is used primarily in platform-specific branches that must fail if compiled for
+an unsupported target.
 
 ## Type Checking And Assignability
 
@@ -1034,7 +1055,9 @@ Arrays decay to `*T` only in function-call argument position, and only when the 
 
 ### Volatile Qualification
 
-An unqualified value can be assigned to a matching volatile-qualified target. Volatile qualification is represented in the type and in generated C.
+An unqualified value can be assigned to a matching volatile-qualified target.
+Volatile qualification is represented in the type and the lowered native
+representation.
 
 ### Function Types
 
@@ -1075,9 +1098,9 @@ Local declarations may shadow outer declarations. Lookup prefers the innermost a
 
 Visibility is separate from existence. A symbol may exist in the global symbol table but not be visible from the current file unless it is local, declared in the same file, builtin, or exported by a directly imported file.
 
-## Generated C Model
+## Code Generation Model
 
-Zorb lowers to C.
+Zorb native builds lower through backend IR to LLVM IR and target object code.
 
 Primitive mappings:
 
@@ -1095,11 +1118,15 @@ string char*
 void   void
 ```
 
-Structs lower to C `struct` declarations. Qualified names are flattened with `_`.
+Structs lower to native aggregate types. Qualified names are flattened with `_`.
 
-Tagged unions lower to generated C structs containing a discriminator plus a payload union. Error unions lower to generated result structs. Slices lower to generated slice structs.
+Tagged unions lower to aggregates containing a discriminator plus a payload
+union. Error unions lower to result-like aggregates. Slices lower to two-field
+slice aggregates.
 
-On hosted targets, a source `_start` is renamed internally and called from a generated C `main`. On freestanding Linux and bare-metal targets, `_start` is preserved.
+On hosted targets, a source `_start` is renamed internally and called from a
+generated `main` shim. On freestanding Linux and bare-metal targets, `_start`
+is preserved.
 
 ## Complete Example
 

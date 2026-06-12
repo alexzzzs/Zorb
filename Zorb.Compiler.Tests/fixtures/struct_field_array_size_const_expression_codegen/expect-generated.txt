@@ -1,4 +1,0 @@
-struct Packet {
-    uint8_t bytes[4];
-};
-sizeof(struct Packet)

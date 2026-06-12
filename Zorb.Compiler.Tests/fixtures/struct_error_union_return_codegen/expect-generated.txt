@@ -1,3 +1,0 @@
-struct Result_Pair
-.value = 0, .error = Error_Fail
-.value = (struct Pair){ .left = 1, .right = 2 }, .error = 0

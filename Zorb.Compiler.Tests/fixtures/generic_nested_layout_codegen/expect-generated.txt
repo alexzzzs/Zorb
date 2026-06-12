@@ -1,3 +1,0 @@
-struct Inner_g1_6_n3_i32 {
-struct __attribute__((packed)) Outer_g1_21_n17_Inner_g1_6_n3_i32 {
-struct Inner_g1_6_n3_i32 value;
