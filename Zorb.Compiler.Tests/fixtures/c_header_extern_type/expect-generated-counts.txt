@@ -1,1 +1,0 @@
-extern size_t strlen => 0

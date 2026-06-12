@@ -1,3 +1,0 @@
-struct Result_i64 may_fail(int64_t flag)
-.error = Error_Fail
-.value = 7

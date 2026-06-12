@@ -2,21 +2,6 @@ using Zorb.Compiler.Utils;
 
 partial class Program
 {
-    private static string GetLinuxCompileFlags(bool noStdLib)
-    {
-        return noStdLib ? HostLinuxFreestandingCompileFlags : HostLinuxHostedCompileFlags;
-    }
-
-    private static IReadOnlyList<string> GetWindowsCompileArgumentList(string compiler, string cSourcePath, string outputPath)
-    {
-        return ExternalTools.GetWindowsCompileArgumentList(compiler, cSourcePath, outputPath);
-    }
-
-    private static string NormalizeWindowsExecutablePath(string outputPath)
-    {
-        return ExternalTools.NormalizeWindowsExecutablePath(outputPath);
-    }
-
     private static string EnsureToolAvailable(params string[] toolNames)
     {
         return ExternalTools.EnsureToolAvailable(toolNames);

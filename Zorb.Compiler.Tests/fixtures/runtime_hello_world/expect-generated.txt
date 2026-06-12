@@ -1,2 +1,0 @@
-std_io_print("ok\n");
-std_os_exit(0);

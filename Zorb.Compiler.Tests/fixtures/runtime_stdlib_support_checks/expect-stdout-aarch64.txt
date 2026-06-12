@@ -1,3 +1,0 @@
-linux aarch64
-task supported
-async supported

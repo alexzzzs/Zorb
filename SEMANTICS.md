@@ -202,7 +202,8 @@ Notes:
 - Generic declarations may have multiple distinct type parameters.
 - Every generic use must provide exactly the declared number of type arguments.
 - Type arguments may be nested and may use pointers, slices, fixed arrays, function types, and error unions.
-- Different concrete argument lists are distinct nominal types and distinct monomorphized C declarations.
+- Different concrete argument lists are distinct nominal types and distinct
+  monomorphized lowered declarations.
 - Imported exported generic structs and functions can be instantiated through their import alias.
 - Generic structs preserve normal struct layout attributes for each concrete instantiation.
 - Generic `extern fn` declarations, constraints, default type arguments, generic enums, and generic unions are not supported.
@@ -234,7 +235,8 @@ Notes:
 - Slice indexing performs runtime bounds checks and traps on out-of-bounds access before reading or writing the backing storage.
 - Slices alias their backing storage, so writes through `slice[index]` or `slice.ptr[...]` mutate the underlying array or buffer view.
 - Slice fields are ordinary writable fields today, including `.len` and `.ptr`.
-- Slices currently lower to generated C structs containing `ptr` and `len` fields.
+- Slices currently lower to native two-field aggregates containing `ptr` and
+  `len` fields.
 
 ### Function Types
 
@@ -261,7 +263,8 @@ fn name(...) -> !T
 ```
 
 - `!T` represents a result-like type carrying either a success value of `T` or an error code.
-- Error unions are nominally represented in generated C as `struct Result_<...> { T value; int32_t error; }`.
+- Error unions are nominally represented as a result-like aggregate with a
+  `value` field and an `i32` error code field.
 - Pointer depth inside `T` is preserved.
 
 ## Declarations
@@ -297,7 +300,7 @@ Meaning:
 - A variable may be declared without an initializer.
 - `const` declarations must include an initializer.
 - Global initializers may not contain `catch` expressions.
-- `const` marks the generated C declaration as `const`.
+- `const` marks the declaration as read-only in the lowered program.
 
 Qualified names:
 
@@ -399,7 +402,8 @@ Current behavior:
 - `abi(name)` currently accepts `sysv`, `sysv64`, `ms`, and `win64`.
 - `section("name")` is currently intended for functions and global variables.
 - Unknown attributes are parser errors.
-- Attributes are lowered to GCC-style `__attribute__` annotations in generated C.
+- Attributes are lowered to target-appropriate native metadata or calling
+  convention details.
 
 ## Statements
 
@@ -566,6 +570,8 @@ Meaning:
 - The left side must produce an error union in any meaningful program.
 - The catch body is parsed as a list of statements.
 - The error variable is introduced inside the catch body as an `i32`.
+- The catch body must either end with a fallback expression of type `T` or
+  transfer control with `return`, `break`, or `continue`.
 - Inside function bodies, catch expressions may appear in general expression position.
 - Global initializers may not contain `catch` expressions.
 
@@ -582,7 +588,8 @@ Current builtins:
 Meaning:
 
 - These are compile-time-known source constructs lowered to C preprocessor-backed constants.
-- They describe the target platform selected by the generated C compilation environment, not the host OS running the Zorb compiler.
+- They describe the selected compilation target, not the host OS running the
+  Zorb compiler.
 - Semantically they behave as `bool` values.
 
 ## Name Resolution And Visibility
@@ -808,18 +815,20 @@ Important consequence:
 - An array literal is written as `[N]T{ expr, ... }`.
 - The literal must contain exactly `N` elements.
 - Each element must be assignable to `T`.
-- In declaration initializers, array literals lower to C array initializer lists.
+- In declaration initializers, array literals lower to native aggregate
+  initializers.
 
 ### Copy Semantics
 
 - Arrays assign by value only when source and target types match exactly, including length and element type.
-- Array copies lower to explicit element-by-element C loops rather than raw C array assignment.
+- Array copies lower to explicit element-by-element loops rather than raw block
+  assignment.
 - Copying an array does not create an alias to the original storage.
 
 ## Strings
 
 - A string literal has source-level type `string`.
-- In generated C, `string` maps to `char*`.
+- `string` lowers as a native pointer-like string representation.
 - A variable initialized directly from a string literal may be emitted as a C character array depending on the declared type and codegen path.
 - `string` is only implicitly assignable to `string`.
 - Converting `string` to pointer or integer representations requires an explicit `cast(...)`.
@@ -845,12 +854,12 @@ Important consequence:
 ### Code Generation Model
 
 - `!T` lowers to `struct Result_<T>`.
-- The generated struct always contains:
+- The lowered aggregate always contains:
   - `value`
   - `error`
 - `error` is an `int32_t`.
-- For `return error.Name`, the generated result has `.error = Error_Name`.
-- For success returns, the generated result has `.error = 0`.
+- For `return error.Name`, the lowered result has `.error = Error_Name`.
+- For success returns, the lowered result has `.error = 0`.
 
 ### Catch
 
@@ -899,7 +908,7 @@ Meaning:
 - Output operands must type-check, have scalar or pointer type, and be assignable expressions.
 - Arrays, function values, error unions, and `void` values are not valid asm operands.
 - Catch expressions are not valid inside asm operands.
-- Clobbers are string literals emitted verbatim in generated C.
+- Clobbers are string literals preserved verbatim in lowered inline assembly.
 
 ## Built-In Symbols
 
@@ -916,18 +925,22 @@ It also seeds built-in scalar type names into the symbol table for visibility an
 
 ## Code Generation Model
 
-The current compiler lowers Zorb to C.
+The current compiler lowers Zorb through backend IR to LLVM IR and native
+object code.
 
 ### Name Lowering
 
 - Qualified names are flattened with `_`.
-- Dotted variable references used as global-like qualified names are flattened when emitted in C.
+- Dotted variable references used as global-like qualified names are flattened
+  when emitted in lowered symbol names.
 
 ### Platform Lowering
 
 - Linux syscall support code is emitted only for targets that use the Linux syscall ABI.
 - On Linux syscall targets, the generated syscall wrapper currently has x86_64 and AArch64 inline-assembly implementations.
-- `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`, `Builtin.IsX86_64`, and `Builtin.IsAArch64` lower to preprocessor-defined boolean-like constants (`0` or `1` in generated C).
+- `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`,
+  `Builtin.IsX86_64`, and `Builtin.IsAArch64` lower to compile-time-known
+  boolean-like constants.
 
 ### Entry Point
 

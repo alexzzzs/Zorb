@@ -31,7 +31,7 @@ public static class ExternalTools
     {
         foreach (var toolName in toolNames)
         {
-            if (IsToolAvailable(toolName))
+            if (FindAvailableTool(toolName) != null)
                 return toolName;
         }
 
@@ -43,9 +43,19 @@ public static class ExternalTools
 
     public static bool IsToolAvailable(string toolName)
     {
+        return FindAvailableTool(toolName) != null;
+    }
+
+    public static string? FindAvailableTool(string toolName)
+    {
         var locator = OperatingSystem.IsWindows() ? "where" : "which";
         var check = RunProcess(locator, [toolName], Directory.GetCurrentDirectory());
-        return check.ExitCode == 0 && !string.IsNullOrWhiteSpace(check.StdOut);
+        if (check.ExitCode != 0)
+            return null;
+
+        return check.StdOut
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault();
     }
 
     public static CommandResult RunProcess(string fileName, string arguments, string workingDirectory)

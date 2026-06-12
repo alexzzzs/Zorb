@@ -1,3 +1,0 @@
-int64_t auto__z2();
-int64_t auto__z2() {
-return auto__z2();

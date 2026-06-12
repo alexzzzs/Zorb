@@ -1,3 +1,0 @@
-return (buf + offset);
-return (offset + buf);
-return (buf - offset);

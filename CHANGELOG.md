@@ -42,9 +42,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking
+
+- The legacy C backend was removed. `--emit-c` and `--keep-c` no longer exist,
+  native `build` and `run` are LLVM-only, and downstream workflows must stop
+  depending on generated C output.
+
 ### Added
 
-- Explicit generic structs and functions with multiple type parameters, nested concrete type arguments, imported generic declarations, and monomorphized C output.
+- A Zig 0.16 backend that consumes versioned backend IR and emits verified LLVM
+  IR, assembly, bitcode, or native object files through LLVM 20.
+- `--emit-llvm` for writing verified LLVM IR.
+- Production packaging for the LLVM backend and LLD, with static LLVM linkage
+  on Linux and a bundled `LLVM-C.dll` on Windows.
+- Linux and Windows CI coverage for the Zig backend, packaged release smoke
+  tests, and cross-host `bare-metal-x86_64` ELF builds.
+- LLVM verifier coverage for every semantically successful fixture and example,
+  plus LLVM-built runtime execution for the full host-supported runtime suite.
+- Explicit generic structs and functions with multiple type parameters, nested concrete type arguments, imported generic declarations, and monomorphized native output.
 - Generic type support across pointers, slices, fixed arrays, function signatures, struct literals, `Builtin.sizeof(...)`, and error unions.
 - Generic struct support for `packed`, `align(N)`, `layout(explicit)`, and field `offset(N)` attributes.
 - Parser, semantic, code-generation, import, layout, diagnostic, and runtime fixtures covering generic success paths and invalid arity, duplicate parameters, unknown arguments, non-generic misuse, nominal mismatches, and unsupported generic extern declarations.
@@ -63,6 +78,13 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Native `build`, `run`, and default emission now use the Zig/LLVM backend.
+- C-fragment snapshots and the GCC/QEMU runtime harness were replaced by LLVM
+  emission checks, focused LLVM IR assertions, and LLVM-built runtime tests.
+- The backend project now lives under `Zorb.LlvmBackend/`.
+- Bare-metal x86_64 builds use LLD and are supported from x86_64 Linux and
+  Windows hosts. Hosted Windows output remains MSVC ABI; Windows GNU/MinGW is
+  not supported.
 - Concrete generic struct types now participate in exact nominal type compatibility, and type substitution preserves pointer, slice, array, and error-union wrappers.
 - The compiler entrypoint and parser are now split across smaller partial-class source files so CLI/build logic and parsing logic are easier to work on in isolation.
 
@@ -71,6 +93,13 @@ All notable changes to this project will be documented in this file.
 - `std.task.spawn(...)` now rejects unsupported targets up front instead of falling into architecture-specific code paths.
 - `std.task.yield()` now returns safely when called outside an active fiber.
 - `std.async.init()` now resets its internal polling state on re-entry, and `std.async.loop()` no longer assumes polling was initialized successfully.
+- Mixed-width integer operands are explicitly coerced before LLVM arithmetic
+  and comparisons, preventing invalid mismatched LLVM instruction types.
+- Slice bounds failures preserve the documented exit code `1` on Linux and
+  Windows instead of lowering unconditionally to `llvm.trap`.
+- Catch fallback expressions now lower through an explicit LLVM phi, catch
+  bodies without a fallback or control transfer are rejected, and hosted entry
+  shim generation no longer mutates the checked AST.
 
 ## [0.1.6] - May 2, 2026
 

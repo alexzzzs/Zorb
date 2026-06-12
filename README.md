@@ -1,10 +1,11 @@
 # Zorb
 
-Zorb is a small ahead-of-time compiler for a systems language that currently lowers to C.
+Zorb is a small ahead-of-time compiler for a systems language. Native
+compilation lowers through a Zig 0.16 backend over LLVM 20.
 
 The project already has:
 
-- a working `net8.0` compiler
+- a working `net8.0` frontend and Zig/LLVM native backend
 - a fixture-based regression suite with runtime tests
 - a draft language spec in `SEMANTICS.md`
 - a small standard library under `std/`
@@ -14,7 +15,7 @@ The project already has:
 The compiler supports a focused language subset:
 
 - functions, `extern fn`, and namespaced declarations
-- `struct` types plus explicit generic structs and functions, monomorphized in generated C
+- `struct` types plus explicit generic structs and functions, monomorphized per concrete use
 - `enum` types with explicit integer backing types
 - tagged `union` types with generated tag enums
 - globals, `const` declarations, and error declarations
@@ -28,6 +29,23 @@ The compiler supports a focused language subset:
 - builtins such as `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`, and `Builtin.sizeof(...)`
 
 The current semantic source of truth is [SEMANTICS.md](./SEMANTICS.md).
+
+## Supported Parity
+
+The LLVM backend is the only production backend and is the parity target for
+the implemented language subset described in this repository.
+
+That parity claim currently covers:
+
+- `freestanding-linux` on Linux hosts
+- `host-windows` on Windows hosts using the MSVC ABI toolchain path
+- `bare-metal-x86_64` for kernel ELF builds
+
+It does not currently mean:
+
+- hosted Windows GNU/MinGW support
+- AArch64 runtime execution coverage in the fixture suite
+- `run` support for bare-metal output
 
 ## Generics
 
@@ -49,7 +67,10 @@ fn make() -> Box<i64> {
 
 Type arguments are currently explicit. Generic calls such as `identity<i64>(42)` and generic types such as `Box<i64>` must provide exactly the declared number of arguments. Nested forms such as `Box<Box<i64>>`, imported generic declarations, pointers, slices, arrays, error unions, and generic struct layout attributes are supported.
 
-Each concrete use is monomorphized into a distinct C function or struct. Zorb does not currently provide type inference, constraints, default type arguments, generic enums or unions, generic extern functions, or first-class values for uninstantiated generic functions.
+Each concrete use is monomorphized into a distinct backend function or struct.
+Zorb does not currently provide type inference, constraints, default type
+arguments, generic enums or unions, generic extern functions, or first-class
+values for uninstantiated generic functions.
 
 Cross-platform stdlib helpers currently include:
 
@@ -65,9 +86,17 @@ Cross-platform stdlib helpers currently include:
 
 ```bash
 dotnet build Zorb.Compiler/Zorb.Compiler.csproj -c Release
+cd Zorb.LlvmBackend
+zig build test
+zig build
 ```
 
-Publish a standalone compiler binary:
+Backend development requires Zig 0.16 and LLVM 20 development headers and
+libraries. The release scripts package the backend and LLD with the compiler,
+so released archives do not require a separate Zig installation. Linux release
+builds statically link LLVM; Windows release builds bundle `LLVM-C.dll`.
+
+Publish a standalone compiler package:
 
 ```bash
 ./scripts/publish-compiler-linux.sh
@@ -93,12 +122,14 @@ $env:INFORMATIONAL_VERSION="0.1.6"
 ./scripts/publish-compiler-windows.ps1
 ```
 
-The GitHub Actions workflow publishes standalone Linux and Windows compiler artifacts automatically on pushes to `master` and on version tags such as `v0.1.0`.
-Version tags such as `v0.1.0` also create a GitHub Release and attach zipped standalone compiler binaries as release assets.
+The GitHub Actions workflow builds and tests the .NET frontend, Zig backend, and
+packaged toolchain on Linux and Windows. Pushes to `master` publish standalone
+artifacts. Version tags such as `v0.1.0` create a GitHub Release with zipped
+compiler packages.
 
 ## Run The Compiler
 
-Check a file without emitting C:
+Check a file without emitting output:
 
 ```bash
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- main.zorb --check
@@ -116,10 +147,10 @@ Dump the token stream before parsing:
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- main.zorb --dump-tokens --check
 ```
 
-Emit C:
+Emit verified LLVM IR:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- main.zorb -o out.c
+dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- main.zorb -o out.ll
 ```
 
 Build a native executable on the current host:
@@ -140,12 +171,6 @@ Select an explicit build target:
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target host-linux -o out
 ```
 
-Keep the generated C while building or running:
-
-```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb -o out --keep-c out.c
-```
-
 Supported `--target` values are `host-linux`, `freestanding-linux`, `bare-metal-x86_64`, and `host-windows`.
 On Linux, `build` and `run` default to `freestanding-linux`, which preserves `_start` and links a Linux executable without the usual C runtime startup files.
 The legacy `-nostdlib` flag remains available as shorthand for `--target freestanding-linux`.
@@ -153,7 +178,7 @@ The legacy `-nostdlib` flag remains available as shorthand for `--target freesta
 Build a bare-metal x86_64 kernel ELF with the bundled linker script:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 -o kernel.elf --keep-c kernel.c
+dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 -o kernel.elf
 ```
 
 Use a custom linker script instead of the bundled one:
@@ -168,21 +193,16 @@ Emit the linker script used for the build so you can inspect or customize it:
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --emit-linker-script kernel.ld -o kernel.elf
 ```
 
-`bare-metal-x86_64` preserves `_start`, sets `Builtin.IsBareMetal`, routes `std.io.write(...)` to the x86_64 debug port `0xE9`, links a kernel ELF with either the bundled linker script or the script passed to `--linker-script`, and can write that exact script to disk with `--emit-linker-script`.
+`bare-metal-x86_64` preserves `_start`, sets `Builtin.IsBareMetal`, routes
+`std.io.write(...)` to the x86_64 debug port `0xE9`, emits an ELF object through
+LLVM, and links a kernel ELF with packaged `ld.lld`. The target can be built
+from x86_64 Linux or Windows hosts with either the bundled linker script or the
+script passed to `--linker-script`.
 `run` is intentionally unsupported for bare-metal output.
-
-For freestanding Linux output, compile the generated C with the required Linux x86_64 flags:
-
-```bash
-gcc -O2 -nostdlib -fno-pie -no-pie -z execstack -fno-builtin out.c -o out
-```
-
-Flag rationale is documented in [CFLAGS.md](./CFLAGS.md).
-Those flags are for Linux freestanding binaries, not for true bare-metal kernels.
 
 ## Windows Host Builds
 
-On Windows, the recommended compiler driver is `clang-cl`.
+On Windows, the recommended hosted linker driver is `clang-cl`.
 It integrates with the normal Windows/MSVC link environment, which makes it the most convenient path for Zorb programs that use the Windows-facing standard library bindings in `std/io.zorb` and `std/os.zorb`.
 
 Build a native Windows executable:
@@ -209,7 +229,9 @@ Notes:
 - `-nostdlib` build and run remain Linux-oriented and are not currently supported on Windows hosts.
 - `clang-cl` is the recommended Windows toolchain.
 - `cl.exe` may also work, but `clang-cl` is the preferred default.
-- Plain `clang` and MinGW-style flows may work, but currently require manual linker setup for the Windows API libraries used by the standard library modules.
+- Windows GNU/MinGW hosted output is not supported. LLVM removes the old C
+  compiler restriction for bare-metal ELF output, but it does not implicitly
+  provide a MinGW runtime, ABI, or standard-library binding layer.
 
 ## Test
 
@@ -219,11 +241,13 @@ Run the full fixture suite:
 dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj
 ```
 
-Update full-codegen snapshots after reviewing intentional output changes:
+Every semantically successful fixture and example is emitted through LLVM and
+verified. Runtime fixtures are built and executed through the LLVM backend.
+Focused `expect-llvm.txt` files may assert stable IR details where verifier and
+runtime coverage are not specific enough.
 
-```bash
-dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj -- --update-snapshots
-```
+Current runtime coverage is strongest on Linux and on Windows host targets in
+CI. The suite does not yet include an AArch64 runtime lane.
 
 ## Examples
 

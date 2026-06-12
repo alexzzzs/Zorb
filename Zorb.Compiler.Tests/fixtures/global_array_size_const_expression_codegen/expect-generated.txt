@@ -1,2 +1,0 @@
-const int64_t count = 4;
-uint8_t buf[4] = { 1, 2, 3, 4 };

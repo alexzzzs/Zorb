@@ -1,0 +1,12 @@
+error Fail = 1
+
+fn may_fail() !i64 {
+    return error.Fail
+}
+
+fn main() -> i64 {
+    return may_fail() catch |err| {
+        ignored: i32 = err
+        42
+    }
+}

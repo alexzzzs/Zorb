@@ -1,5 +1,0 @@
-int64_t identity_g1_6_n3_i64(int64_t value);
-int64_t identity_g1_6_n3_i64(int64_t value) {
-    return value;
-}
-return identity_g1_6_n3_i64(42);
