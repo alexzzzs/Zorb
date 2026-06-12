@@ -59,7 +59,7 @@ partial class Program
                 var compiler = EnsureToolAvailable("clang-cl", "cl");
                 var link = RunProcess(
                     compiler,
-                    new[] { objectPath, $"/Fe:{fullOutputPath}" }
+                    ExternalTools.GetWindowsLinkArgumentList(compiler, objectPath, fullOutputPath)
                         .Concat(ExternalTools.SplitCommandLine(nativeFlags))
                         .ToArray(),
                     tempDir);

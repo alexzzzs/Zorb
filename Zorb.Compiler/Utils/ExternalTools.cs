@@ -20,6 +20,23 @@ public static class ExternalTools
         };
     }
 
+    public static IReadOnlyList<string> GetWindowsLinkArgumentList(string compiler, string objectPath, string outputPath)
+    {
+        return compiler switch
+        {
+            "clang-cl" or "cl" => [
+                "/nologo",
+                "/MT",
+                objectPath,
+                $"/Fe:{outputPath}",
+                "/link",
+                "/subsystem:console",
+                "kernel32.lib"
+            ],
+            _ => throw new ZorbCompilerException($"Unsupported Windows compiler '{compiler}'.")
+        };
+    }
+
     public static string NormalizeWindowsExecutablePath(string outputPath)
     {
         return outputPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
