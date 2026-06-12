@@ -169,6 +169,28 @@ jobs:
           "$PWD/zig-x86_64-windows-0.16.0" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "$env:ProgramFiles\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      - name: Cache Zig build artifacts
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/cache@v4
+        with:
+          path: |
+            Zorb.LlvmBackend/.zig-cache
+            ~/.cache/zig
+          key: ${{ runner.os }}-zig-0.16.0-llvm20-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-0.16.0-llvm20-
+
+      - name: Cache Zig build artifacts
+        if: matrix.os == 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: |
+            Zorb.LlvmBackend/.zig-cache
+            ~\AppData\Local\zig
+          key: ${{ runner.os }}-zig-0.16.0-llvm20-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-0.16.0-llvm20-
+
       - name: Compute version metadata
         id: version
         shell: bash

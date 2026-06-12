@@ -12,6 +12,9 @@ LLVM_PREFIX="${LLVM_PREFIX:-/usr/lib/llvm-20}"
 CXX_RUNTIME="${CXX_RUNTIME:-}"
 LLD="${LLD:-}"
 
+mkdir -p "$OUTPUT_DIR"
+OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
+
 find_versioned_tool() {
   local exact_name="$1"
   local prefix_name="$2"
@@ -73,10 +76,12 @@ if [[ -n "$INFORMATIONAL_VERSION" ]]; then
 fi
 
 dotnet publish "$PROJECT_PATH" "${PUBLISH_ARGS[@]}"
+pushd "$BACKEND_DIR" >/dev/null
+trap 'popd >/dev/null' EXIT
+
 "$ZIG" build \
-  --build-file "$BACKEND_DIR/build.zig" \
-  --cache-dir "$BACKEND_DIR/.zig-cache" \
-  --prefix "$BACKEND_DIR/zig-out" \
+  --cache-dir .zig-cache \
+  --prefix zig-out \
   -Doptimize=ReleaseSafe \
   -Dstatic-llvm=true \
   -Dllvm-prefix="$LLVM_PREFIX" \
