@@ -58,6 +58,53 @@ public static class ExternalTools
             .FirstOrDefault();
     }
 
+    public static string? FindAvailableToolByPrefix(string toolNamePrefix)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        var comparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        var executableSuffix = OperatingSystem.IsWindows() ? ".exe" : string.Empty;
+        string? bestMatch = null;
+
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!Directory.Exists(directory))
+                continue;
+
+            IEnumerable<string> candidates;
+            try
+            {
+                candidates = Directory.EnumerateFiles(directory);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var candidate in candidates)
+            {
+                var fileName = Path.GetFileName(candidate);
+                if (!fileName.StartsWith(toolNamePrefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                    continue;
+
+                if (OperatingSystem.IsWindows() &&
+                    !fileName.EndsWith(executableSuffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (bestMatch == null || comparer.Compare(fileName, Path.GetFileName(bestMatch)) > 0)
+                    bestMatch = candidate;
+            }
+        }
+
+        return bestMatch;
+    }
+
     public static CommandResult RunProcess(string fileName, string arguments, string workingDirectory)
     {
         return RunProcessCore(fileName, arguments, workingDirectory, timeoutMilliseconds: null);

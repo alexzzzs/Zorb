@@ -18,6 +18,16 @@ pub fn build(b: *std.Build) void {
         "llvm-prefix",
         "LLVM installation prefix",
     ) orelse "/usr/lib/llvm-20";
+    const llvm_include_dir = b.option(
+        []const u8,
+        "llvm-include-dir",
+        "LLVM include directory containing llvm-c headers",
+    ) orelse b.pathJoin(&.{ llvm_prefix, "include" });
+    const llvm_lib_dir = b.option(
+        []const u8,
+        "llvm-lib-dir",
+        "LLVM library directory containing LLVM-C and component libraries",
+    ) orelse b.pathJoin(&.{ llvm_prefix, "lib" });
     const llvm_library = b.option(
         []const u8,
         "llvm-library",
@@ -30,7 +40,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    llvm_header.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ llvm_prefix, "include" }) });
+    llvm_header.addSystemIncludePath(.{ .cwd_relative = llvm_include_dir });
 
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -40,7 +50,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "llvm", .module = llvm_header.createModule() },
         },
     });
-    root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ llvm_prefix, "lib" }) });
+    root_module.addLibraryPath(.{ .cwd_relative = llvm_lib_dir });
     if (static_llvm) {
         linkStaticLlvm(
             root_module,
@@ -52,7 +62,7 @@ pub fn build(b: *std.Build) void {
             .preferred_link_mode = .dynamic,
         });
         if (target.result.os.tag != .windows)
-            root_module.addRPath(.{ .cwd_relative = b.pathJoin(&.{ llvm_prefix, "lib" }) });
+            root_module.addRPath(.{ .cwd_relative = llvm_lib_dir });
     }
 
     const backend = b.addExecutable(.{

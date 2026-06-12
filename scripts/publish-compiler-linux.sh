@@ -12,6 +12,29 @@ LLVM_PREFIX="${LLVM_PREFIX:-/usr/lib/llvm-20}"
 CXX_RUNTIME="${CXX_RUNTIME:-}"
 LLD="${LLD:-}"
 
+find_versioned_tool() {
+  local exact_name="$1"
+  local prefix_name="$2"
+  local candidate=""
+
+  candidate="$(command -v "$exact_name" 2>/dev/null || true)"
+  if [[ -n "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  local path_dir
+  IFS=':' read -r -a path_dirs <<< "$PATH"
+  for path_dir in "${path_dirs[@]}"; do
+    [[ -d "$path_dir" ]] || continue
+    local match
+    for match in "$path_dir"/"$prefix_name"*; do
+      [[ -x "$match" && ! -d "$match" ]] || continue
+      printf '%s\n' "$match"
+    done
+  done | sort -V | tail -n 1
+}
+
 if [[ -z "$CXX_RUNTIME" ]]; then
   if ! command -v g++ >/dev/null 2>&1; then
     echo "g++ is required to locate libstdc++, or set CXX_RUNTIME explicitly." >&2
@@ -25,7 +48,7 @@ if [[ ! -f "$CXX_RUNTIME" ]]; then
 fi
 
 if [[ -z "$LLD" ]]; then
-  LLD="$(command -v ld.lld || true)"
+  LLD="$(find_versioned_tool "ld.lld" "ld.lld-" || true)"
 fi
 if [[ -z "$LLD" || ! -x "$LLD" ]]; then
   echo "ld.lld is required, or set LLD to an executable path." >&2
