@@ -105,7 +105,7 @@ Publish a standalone compiler package:
 Publish a version-stamped standalone Linux compiler build:
 
 ```bash
-VERSION=0.1.6 INFORMATIONAL_VERSION=0.1.6 ./scripts/publish-compiler-linux.sh
+VERSION=0.2.0 INFORMATIONAL_VERSION=0.2.0 ./scripts/publish-compiler-linux.sh
 ```
 
 On Windows PowerShell:
@@ -117,8 +117,8 @@ On Windows PowerShell:
 Publish a version-stamped standalone Windows compiler build:
 
 ```powershell
-$env:VERSION="0.1.6"
-$env:INFORMATIONAL_VERSION="0.1.6"
+$env:VERSION="0.2.0"
+$env:INFORMATIONAL_VERSION="0.2.0"
 ./scripts/publish-compiler-windows.ps1
 ```
 

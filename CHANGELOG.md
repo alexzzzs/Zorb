@@ -2,45 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.5] - April 24, 2026
-
-### Added
-
-- `for` loops with C-style headers written as `for init; condition; update { ... }`.
-- `switch` statements with ordered `case` branches plus an optional `else` branch.
-- New hardening fixtures covering `continue`, local `const` declarations, and exported `const` globals.
-- Additional hardening fixtures covering imports of exported vs. private symbols, and unknown-attribute parsing.
-- Direct CLI argument-regression coverage for help/version paths plus invalid option combinations.
-- Slice types written as `[]T`, including `.ptr` and `.len` field access plus slice indexing.
-- Array-to-slice coercions for assignment, initialization, struct literals, returns, and function-call arguments when the element types match.
-- New slice-focused fixtures covering postfix-syntax rejection, slice parameter lowering, and runtime slice indexing.
-- A new `bare-metal-x86_64` target for kernel-oriented builds, including `Builtin.IsBareMetal`, preserved `_start`, and a bundled default linker script.
-- Bare-metal CLI support for `--linker-script` and `--emit-linker-script`, plus regression coverage for default-script and custom-script builds.
-- Early bare-metal stdlib support including x86_64 debug-port output, bare-metal capability checks, and a minimal example kernel fixture.
-- Low-level codegen attributes for `abi(sysv|sysv64|ms|win64)` and `section("...")`.
-- Struct layout attributes for `packed`, `layout(explicit)`, and field-level `offset(N)` for hardware-table-style definitions.
-- `volatile` as a real type qualifier, in addition to declaration-level attribute syntax, so it can appear in pointer, field, parameter, and cast target types.
-- New fixtures covering bare-metal codegen, volatile and ABI attributes, section placement, explicit struct layout, and invalid explicit-layout usage.
-
-### Changed
-
-- The compiler version now advances to the `0.1.6-dev` line after the `0.1.5` release.
-- `std.io.write` now takes a `[]u8` buffer instead of raw pointer-and-length arguments, and the string and integer formatting helpers now build on slice-based buffer flows.
-- `std.str.reverse` and `std.str.from_i64` now consume `[]u8` buffers instead of separate pointer-and-length arguments.
-- The documentation now distinguishes `freestanding-linux` from true bare-metal output instead of using "freestanding" loosely for both.
-- Hosted `_start` entry handling now uses a generated `main` shim instead of renaming `_start` directly to `main`, so hosted programs can define both `_start` and `main` without symbol collisions.
-- Bare-metal builds now produce a linker-script-driven kernel ELF by default instead of stopping at an object file.
-
-### Fixed
-
-- `continue` is now rejected semantically outside `while` loops, matching the documented loop-control rules.
-- Local `const` declarations now parse in statement position instead of being skipped as unsupported syntax.
-- `const` declarations now require an initializer, matching the documented syntax instead of falling through to invalid C output.
-- The CLI now rejects ignored or contradictory option combinations such as `--keep-c` outside build/run, `-o` with `run`, and `--check` with build/run.
-- The generated C backend no longer assumes Linux syscall wrappers or hosted entrypoint lowering for every target.
-- Explicit-layout structs now fail during semantic checking when their offsets are incomplete or incompatible with the compiler's byte-precise layout model.
-
 ## [Unreleased]
+
+## [0.2.0] - June 12, 2026
 
 ### Breaking
 
@@ -142,6 +106,44 @@ All notable changes to this project will be documented in this file.
 - Assignments to `const` declarations, assignments to non-assignable expressions, duplicate struct fields, and duplicate constant switch cases are now rejected during semantic checking.
 - Recent semantics and project-note updates now line up with the landed numeric model, struct-return coverage, and diagnostics behavior instead of leaving those improvements undocumented.
 - README example coverage now calls out the dogfood lexer and bare-metal kernel examples more directly.
+
+## [0.1.5] - April 24, 2026
+
+### Added
+
+- `for` loops with C-style headers written as `for init; condition; update { ... }`.
+- `switch` statements with ordered `case` branches plus an optional `else` branch.
+- New hardening fixtures covering `continue`, local `const` declarations, and exported `const` globals.
+- Additional hardening fixtures covering imports of exported vs. private symbols, and unknown-attribute parsing.
+- Direct CLI argument-regression coverage for help/version paths plus invalid option combinations.
+- Slice types written as `[]T`, including `.ptr` and `.len` field access plus slice indexing.
+- Array-to-slice coercions for assignment, initialization, struct literals, returns, and function-call arguments when the element types match.
+- New slice-focused fixtures covering postfix-syntax rejection, slice parameter lowering, and runtime slice indexing.
+- A new `bare-metal-x86_64` target for kernel-oriented builds, including `Builtin.IsBareMetal`, preserved `_start`, and a bundled default linker script.
+- Bare-metal CLI support for `--linker-script` and `--emit-linker-script`, plus regression coverage for default-script and custom-script builds.
+- Early bare-metal stdlib support including x86_64 debug-port output, bare-metal capability checks, and a minimal example kernel fixture.
+- Low-level codegen attributes for `abi(sysv|sysv64|ms|win64)` and `section("...")`.
+- Struct layout attributes for `packed`, `layout(explicit)`, and field-level `offset(N)` for hardware-table-style definitions.
+- `volatile` as a real type qualifier, in addition to declaration-level attribute syntax, so it can appear in pointer, field, parameter, and cast target types.
+- New fixtures covering bare-metal codegen, volatile and ABI attributes, section placement, explicit struct layout, and invalid explicit-layout usage.
+
+### Changed
+
+- The compiler version now advances to the `0.1.6-dev` line after the `0.1.5` release.
+- `std.io.write` now takes a `[]u8` buffer instead of raw pointer-and-length arguments, and the string and integer formatting helpers now build on slice-based buffer flows.
+- `std.str.reverse` and `std.str.from_i64` now consume `[]u8` buffers instead of separate pointer-and-length arguments.
+- The documentation now distinguishes `freestanding-linux` from true bare-metal output instead of using "freestanding" loosely for both.
+- Hosted `_start` entry handling now uses a generated `main` shim instead of renaming `_start` directly to `main`, so hosted programs can define both `_start` and `main` without symbol collisions.
+- Bare-metal builds now produce a linker-script-driven kernel ELF by default instead of stopping at an object file.
+
+### Fixed
+
+- `continue` is now rejected semantically outside `while` loops, matching the documented loop-control rules.
+- Local `const` declarations now parse in statement position instead of being skipped as unsupported syntax.
+- `const` declarations now require an initializer, matching the documented syntax instead of falling through to invalid C output.
+- The CLI now rejects ignored or contradictory option combinations such as `--keep-c` outside build/run, `-o` with `run`, and `--check` with build/run.
+- The generated C backend no longer assumes Linux syscall wrappers or hosted entrypoint lowering for every target.
+- Explicit-layout structs now fail during semantic checking when their offsets are incomplete or incompatible with the compiler's byte-precise layout model.
 
 ## [0.1.4] - 2026-04-23
 
