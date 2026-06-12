@@ -29,6 +29,16 @@ jobs:
           tar -xf zig.tar.xz
           echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
 
+      - name: Cache Zig build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            Zorb.LlvmBackend/.zig-cache
+            ~/.cache/zig
+          key: ${{ runner.os }}-zig-0.16.0-llvm20-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-0.16.0-llvm20-
+
       - name: Build LLVM backend
         run: |
           cd Zorb.LlvmBackend
@@ -68,6 +78,16 @@ jobs:
           Expand-Archive zig.zip -DestinationPath .
           "$PWD/zig-x86_64-windows-0.16.0" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "$env:ProgramFiles\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Cache Zig build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            Zorb.LlvmBackend/.zig-cache
+            ~\AppData\Local\zig
+          key: ${{ runner.os }}-zig-0.16.0-llvm20-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-0.16.0-llvm20-
 
       - name: Discover LLVM library paths
         shell: pwsh

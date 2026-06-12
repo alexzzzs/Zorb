@@ -26,12 +26,17 @@ public static class ExternalTools
         {
             "clang-cl" or "cl" => [
                 "/nologo",
-                "/MT",
                 objectPath,
                 $"/Fe:{outputPath}",
                 "/link",
                 "/subsystem:console",
-                "kernel32.lib"
+                "/entry:mainCRTStartup",
+                "kernel32.lib",
+                "libcmt.lib",
+                "libvcruntime.lib",
+                "vcruntime.lib",
+                "ucrt.lib",
+                "oldnames.lib"
             ],
             _ => throw new ZorbCompilerException($"Unsupported Windows compiler '{compiler}'.")
         };
