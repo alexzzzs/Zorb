@@ -20,5 +20,7 @@ fn _start() {
     std.io.print("\n")
     std.io.print_i64(classify(3))
     std.io.print("\n")
+    std.io.print_i64(classify(2))
+    std.io.print("\n")
     std.os.exit(0)
 }

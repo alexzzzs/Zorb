@@ -1588,7 +1588,10 @@ public sealed class ZigBackendIrWriter
                     : null;
                 var argument = call.Args[index];
                 var argumentType = GetCheckedType(argument);
-                if (parameterType?.IsPointer == true && argumentType.ArraySize != null)
+                if (parameterType?.IsPointer == true &&
+                    argumentType.ArraySize != null &&
+                    !parameterType.IsSlice &&
+                    Math.Max(parameterType.PointerLevel, 1) == 1)
                 {
                     var zero = EmitIntegerConstant(0, new TypeNode { Name = "i64" });
                     arguments.Add(EmitIndexAddress(

@@ -1004,7 +1004,8 @@ public class TypeChecker
                 return null;
             }
 
-            call.TypeArguments = inferredArguments!;
+            if (inferredArguments != null && inferredArguments.Count > 0)
+                call.TypeArguments = inferredArguments;
         }
 
         if (symbolInfo.TypeParameters.Count > 0 && call.TypeArguments.Count != symbolInfo.TypeParameters.Count)
