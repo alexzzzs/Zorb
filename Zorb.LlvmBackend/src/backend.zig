@@ -21,11 +21,7 @@ pub const Backend = struct {
     strings: std.StringHashMapUnmanaged(llvm.LLVMValueRef) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, module_ir: *const ir.Module) !Backend {
-        llvm.LLVMInitializeAllTargetInfos();
-        llvm.LLVMInitializeAllTargets();
-        llvm.LLVMInitializeAllTargetMCs();
-        llvm.LLVMInitializeAllAsmPrinters();
-        llvm.LLVMInitializeAllAsmParsers();
+        initializeSupportedTargets();
 
         const triple = try allocator.dupeZ(u8, module_ir.target.triple);
         defer allocator.free(triple);
@@ -118,6 +114,22 @@ pub const Backend = struct {
             );
             try self.globals.put(self.allocator, global_ir.id, global);
         }
+    }
+
+    fn initializeSupportedTargets() void {
+        llvm.LLVMInitializeAArch64TargetInfo();
+        llvm.LLVMInitializeAArch64Target();
+        llvm.LLVMInitializeAArch64TargetMC();
+        llvm.LLVMInitializeAArch64AsmPrinter();
+        llvm.LLVMInitializeAArch64AsmParser();
+        llvm.LLVMInitializeAArch64Disassembler();
+
+        llvm.LLVMInitializeX86TargetInfo();
+        llvm.LLVMInitializeX86Target();
+        llvm.LLVMInitializeX86TargetMC();
+        llvm.LLVMInitializeX86AsmPrinter();
+        llvm.LLVMInitializeX86AsmParser();
+        llvm.LLVMInitializeX86Disassembler();
     }
 
     fn constantValue(self: *Backend, type_id: u32, constant: ir.Constant) !llvm.LLVMValueRef {
