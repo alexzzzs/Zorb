@@ -200,7 +200,8 @@ Notes:
 - Generic functions are monomorphized during C generation. Type inference is not currently supported.
 - Type parameters are scoped to the generic declaration.
 - Generic declarations may have multiple distinct type parameters.
-- Every generic use must provide exactly the declared number of type arguments.
+- Generic struct uses must provide exactly the declared number of type arguments.
+- Generic function calls may omit type arguments when they can be inferred directly from the argument types.
 - Type arguments may be nested and may use pointers, slices, fixed arrays, function types, and error unions.
 - Different concrete argument lists are distinct nominal types and distinct
   monomorphized lowered declarations.
@@ -221,8 +222,8 @@ Notes:
 - See [Constant Integer Evaluation](#constant-integer-evaluation) for the shared compile-time rules that govern `N`.
 - Arrays may appear in variable declarations and struct fields.
 - Struct field array sizes are resolved through the same constant-integer rules as variable declarations.
-- Arrays do not implicitly decay to pointers in general expression or assignment contexts.
-- Arrays decay to `*T` only when passed to a function parameter of type `*T`.
+- Arrays do not implicitly decay to pointers in unrelated expression contexts.
+- Arrays decay to `*T` whenever a context expects exactly that element pointer type, including variable initialization, assignment, struct literals, returns, and function calls.
 - Arrays also coerce to `[]T` when assigned, initialized, returned, used in struct literals, or passed to a function expecting that matching slice type.
 - `&array` is an explicit way to obtain a pointer to the first element, with type `*T`.
 - Indexing an array or pointer produces an element value of type `T`.
@@ -368,9 +369,10 @@ Meaning:
 - `extern fn` declares a function without a body.
 - Names may be qualified with dotted paths.
 - Non-extern functions may declare distinct type parameters after the function name.
-- Generic calls provide explicit type arguments before the argument list, for example `identity<i64>(42)`.
+- Generic calls may provide explicit type arguments before the argument list, for example `identity<i64>(42)`.
+- When the parameter types determine the instantiation directly, generic calls may omit them, for example `identity(42)`.
 - Generic call arity must exactly match the declaration.
-- Type inference and uninstantiated generic function values are not supported.
+- Uninstantiated generic function values are not supported.
 - `extern fn` declarations cannot be generic.
 
 ### Attributes
@@ -482,12 +484,14 @@ match expr {
 Meaning:
 
 - `match` evaluates the controlling expression once.
-- `match` currently accepts enum and tagged-union expressions.
+- `match` currently accepts numeric, `bool`, enum, and tagged-union expressions.
+- Scalar and enum `match` use ordered equality-checked cases, just like `switch`.
 - Enum patterns are qualified enum members such as `Mode.Run`.
+- Numeric and `bool` patterns are ordinary expressions such as `0` or `true`.
 - Tagged-union patterns are qualified variant names, optionally with one payload binding identifier, such as `Value.Number(n)`.
 - Tagged-union payload bindings create a local variable inside that case body with the variant payload type.
 - `else` is optional and runs only when no earlier case matches.
-- Without `else`, enum and tagged-union matches must be exhaustive.
+- Without `else`, `bool`, enum, and tagged-union matches must be exhaustive.
 
 ## Expressions
 
@@ -802,10 +806,9 @@ Important consequence:
 
 ### Decay
 
-- Arrays decay to pointers only in function-call argument position.
-- That decay applies only when the parameter type is exactly `*T` for the array element type `T`.
+- Arrays decay to pointers whenever the target type is exactly `*T` for the array element type `T`.
 - Arrays do not decay to `*void` implicitly.
-- Outside call position, arrays remain arrays unless explicitly addressed or indexed.
+- Outside contexts that expect `*T` or `[]T`, arrays remain arrays unless explicitly addressed or indexed.
 
 ### Slice Coercions
 

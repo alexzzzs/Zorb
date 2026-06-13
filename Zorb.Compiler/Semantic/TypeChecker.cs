@@ -995,6 +995,19 @@ public class TypeChecker
             return null;
         }
 
+        if (symbolInfo.TypeParameters.Count > 0 && call.TypeArguments.Count == 0)
+        {
+            if (!TryInferCallTypeArguments(symbolInfo, call, out var inferredArguments, out var inferenceError))
+            {
+                if (reportErrors && !string.IsNullOrEmpty(inferenceError))
+                    _errors.Error(call, inferenceError);
+                return null;
+            }
+
+            if (inferredArguments != null && inferredArguments.Count > 0)
+                call.TypeArguments = inferredArguments;
+        }
+
         if (symbolInfo.TypeParameters.Count > 0 && call.TypeArguments.Count != symbolInfo.TypeParameters.Count)
         {
             if (reportErrors)
@@ -1024,6 +1037,201 @@ public class TypeChecker
             displayName,
             parameters,
             returnType);
+    }
+
+    private bool TryInferCallTypeArguments(
+        SymbolInfo symbolInfo,
+        CallExpr call,
+        out List<TypeNode>? inferredArguments,
+        out string? error)
+    {
+        inferredArguments = null;
+        error = null;
+
+        var parameters = symbolInfo.GetCallableParameters();
+        if (parameters.Count != call.Args.Count)
+            return true;
+
+        var typeParameterNames = new HashSet<string>(symbolInfo.TypeParameters, StringComparer.Ordinal);
+        var inferredByName = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        foreach (var (parameter, argument) in parameters.Zip(call.Args))
+        {
+            var argumentType = GetExpressionType(argument, reportErrors: false);
+            if (argumentType == null)
+                return true;
+
+            if (!TryInferTypeArgumentsFromTypes(parameter.TypeName, argumentType, typeParameterNames, inferredByName))
+            {
+                error = $"Could not infer type arguments for generic function '{symbolInfo.Name}' from the provided arguments.";
+                return false;
+            }
+        }
+
+        var missing = symbolInfo.TypeParameters
+            .Where(name => !inferredByName.ContainsKey(name))
+            .ToList();
+        if (missing.Count > 0)
+        {
+            error = $"Could not infer type argument(s) {string.Join(", ", missing.Select(name => $"'{name}'"))} for generic function '{symbolInfo.Name}'.";
+            return false;
+        }
+
+        inferredArguments = symbolInfo.TypeParameters
+            .Select(name => inferredByName[name].Clone())
+            .ToList();
+        return true;
+    }
+
+    private bool TryInferTypeArgumentsFromTypes(
+        TypeNode parameterType,
+        TypeNode argumentType,
+        HashSet<string> typeParameterNames,
+        Dictionary<string, TypeNode> inferredByName)
+    {
+        if (typeParameterNames.Contains(parameterType.Name) &&
+            parameterType.NamespacePath.Count == 0 &&
+            parameterType.TypeArguments.Count == 0 &&
+            !parameterType.IsFunction &&
+            !parameterType.IsSlice &&
+            !parameterType.IsPointer &&
+            !parameterType.IsErrorUnion &&
+            parameterType.ArraySize == null)
+        {
+            return TryBindInferredType(parameterType.Name, argumentType, inferredByName);
+        }
+
+        if (parameterType.IsErrorUnion != argumentType.IsErrorUnion)
+            return false;
+
+        if (parameterType.IsErrorUnion)
+        {
+            var parameterInner = parameterType.ErrorInnerType ?? parameterType;
+            var argumentInner = argumentType.ErrorInnerType ?? argumentType;
+            return TryInferTypeArgumentsFromTypes(parameterInner, argumentInner, typeParameterNames, inferredByName);
+        }
+
+        if (parameterType.IsSlice)
+        {
+            var parameterElement = parameterType.Clone();
+            parameterElement.IsSlice = false;
+            parameterElement.ArraySize = null;
+            parameterElement.ArraySizeExpr = null;
+            if (argumentType.IsSlice)
+            {
+                var argumentElement = argumentType.Clone();
+                argumentElement.IsSlice = false;
+                argumentElement.ArraySize = null;
+                argumentElement.ArraySizeExpr = null;
+                return TryInferTypeArgumentsFromTypes(parameterElement, argumentElement, typeParameterNames, inferredByName);
+            }
+
+            if (argumentType.ArraySize != null)
+            {
+                var argumentElement = argumentType.Clone();
+                argumentElement.ArraySize = null;
+                argumentElement.ArraySizeExpr = null;
+                return TryInferTypeArgumentsFromTypes(parameterElement, argumentElement, typeParameterNames, inferredByName);
+            }
+
+            return false;
+        }
+
+        if (parameterType.IsPointer)
+        {
+            var parameterLevel = Math.Max(parameterType.PointerLevel, 1);
+            if (argumentType.ArraySize != null && parameterLevel == 1)
+            {
+                var parameterElement = parameterType.Clone();
+                parameterElement.IsPointer = false;
+                parameterElement.PointerLevel = 0;
+                var argumentElement = argumentType.Clone();
+                argumentElement.ArraySize = null;
+                argumentElement.ArraySizeExpr = null;
+                return TryInferTypeArgumentsFromTypes(parameterElement, argumentElement, typeParameterNames, inferredByName);
+            }
+
+            if (!argumentType.IsPointer)
+                return false;
+
+            var argumentLevel = Math.Max(argumentType.PointerLevel, 1);
+            if (parameterLevel != argumentLevel)
+                return false;
+
+            var parameterElementType = GetPointerElementTypeForInference(parameterType);
+            var argumentElementType = GetPointerElementTypeForInference(argumentType);
+            return TryInferTypeArgumentsFromTypes(parameterElementType, argumentElementType, typeParameterNames, inferredByName);
+        }
+
+        if (parameterType.ArraySize != null || argumentType.ArraySize != null)
+        {
+            if (parameterType.ArraySize != argumentType.ArraySize)
+                return false;
+
+            if (parameterType.ArraySize == null || argumentType.ArraySize == null)
+                return false;
+
+            var parameterElement = parameterType.Clone();
+            parameterElement.ArraySize = null;
+            parameterElement.ArraySizeExpr = null;
+            var argumentElement = argumentType.Clone();
+            argumentElement.ArraySize = null;
+            argumentElement.ArraySizeExpr = null;
+            return TryInferTypeArgumentsFromTypes(parameterElement, argumentElement, typeParameterNames, inferredByName);
+        }
+
+        if (parameterType.IsFunction || argumentType.IsFunction)
+        {
+            if (!parameterType.IsFunction || !argumentType.IsFunction)
+                return false;
+
+            if (parameterType.ParamTypes.Count != argumentType.ParamTypes.Count)
+                return false;
+
+            for (var i = 0; i < parameterType.ParamTypes.Count; i++)
+            {
+                if (!TryInferTypeArgumentsFromTypes(parameterType.ParamTypes[i], argumentType.ParamTypes[i], typeParameterNames, inferredByName))
+                    return false;
+            }
+
+            return TryInferTypeArgumentsFromTypes(
+                parameterType.ReturnType ?? new TypeNode { Name = "void" },
+                argumentType.ReturnType ?? new TypeNode { Name = "void" },
+                typeParameterNames,
+                inferredByName);
+        }
+
+        if (!string.Equals(parameterType.Name, argumentType.Name, StringComparison.Ordinal) ||
+            !parameterType.NamespacePath.SequenceEqual(argumentType.NamespacePath) ||
+            parameterType.TypeArguments.Count != argumentType.TypeArguments.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < parameterType.TypeArguments.Count; i++)
+        {
+            if (!TryInferTypeArgumentsFromTypes(parameterType.TypeArguments[i], argumentType.TypeArguments[i], typeParameterNames, inferredByName))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static TypeNode GetPointerElementTypeForInference(TypeNode pointerType)
+    {
+        var level = Math.Max(pointerType.PointerLevel, 1);
+        var element = pointerType.Clone();
+        element.PointerLevel = level - 1;
+        element.IsPointer = element.PointerLevel > 0;
+        return element;
+    }
+
+    private static bool TryBindInferredType(string typeParameter, TypeNode inferredType, Dictionary<string, TypeNode> inferredByName)
+    {
+        if (inferredByName.TryGetValue(typeParameter, out var existing))
+            return TypeHelpers.SameType(existing, inferredType);
+
+        inferredByName[typeParameter] = inferredType.Clone();
+        return true;
     }
 
     private FlowOutcome CheckStatement(Statement stmt)
@@ -1250,38 +1458,44 @@ public class TypeChecker
         if (matchType == null)
             return FlowOutcome.FallsThrough;
 
-        if (!IsEnumType(matchType) && !IsUnionType(matchType))
+        if (!IsSwitchOperandType(matchType) && !IsUnionType(matchType))
         {
-            _errors.Error(matchStmt.Expression, $"Match expression must have enum or union type, got '{FormatType(matchType)}'.");
+            _errors.Error(matchStmt.Expression, $"Match expression must have numeric, bool, enum, or union type, got '{FormatType(matchType)}'.");
             return FlowOutcome.FallsThrough;
         }
 
-        return IsEnumType(matchType)
-            ? CheckEnumMatchStatement(matchStmt, matchType)
-            : CheckUnionMatchStatement(matchStmt, matchType);
+        return IsUnionType(matchType)
+            ? CheckUnionMatchStatement(matchStmt, matchType)
+            : CheckScalarMatchStatement(matchStmt, matchType);
     }
 
-    private FlowOutcome CheckEnumMatchStatement(MatchStmt matchStmt, TypeNode matchType)
+    private FlowOutcome CheckScalarMatchStatement(MatchStmt matchStmt, TypeNode matchType)
     {
-        var enumDefinition = LookupEnumDefinition(matchType);
         var seenCaseValues = new Dictionary<string, MatchPattern>(StringComparer.Ordinal);
         var seenEnumCaseValues = new HashSet<long>();
+        var seenBoolCaseValues = new HashSet<bool>();
         var caseOutcomes = new List<FlowOutcome>();
         var isExhaustive = false;
+        var enumDefinition = LookupEnumDefinition(matchType);
 
         foreach (var matchCase in matchStmt.Cases)
         {
             if (matchCase.Pattern is not QualifiedMatchPattern qualifiedPattern)
             {
-                _errors.Error(matchCase.Pattern, $"Match over enum '{FormatType(matchType)}' requires enum-member patterns like '{enumDefinition?.Name}.Member'.");
+                var expectedPattern = IsEnumType(matchType)
+                    ? $"enum-member patterns like '{enumDefinition?.Name}.Member'"
+                    : "expression patterns like '0' or 'true'";
+                _errors.Error(matchCase.Pattern, $"Match over '{FormatType(matchType)}' requires {expectedPattern}.");
                 caseOutcomes.Add(CheckBlock(matchCase.Body));
                 continue;
             }
 
             CheckExpression(qualifiedPattern.Value);
             var patternType = GetExpressionType(qualifiedPattern.Value);
-            if (patternType != null && !TypeHelpers.SameType(matchType, patternType))
-                _errors.Error(qualifiedPattern.Value, $"Match case pattern of type '{FormatType(patternType)}' does not match enum type '{FormatType(matchType)}'.");
+            if (patternType != null && !AreEqualityComparableTypes(matchType, patternType))
+            {
+                _errors.Error(qualifiedPattern.Value, $"Match case pattern of type '{FormatType(patternType)}' is not comparable to match expression type '{FormatType(matchType)}'.");
+            }
 
             if (TryGetSwitchCaseKey(qualifiedPattern.Value, out var caseKey))
             {
@@ -1289,19 +1503,41 @@ public class TypeChecker
                     _errors.Error(qualifiedPattern.Value, $"Duplicate match case value '{caseKey}'.{FormatPreviousDeclarationSuffix(seenCaseValues[caseKey])}");
             }
 
-            if (TryEvaluateConstIntExpr(qualifiedPattern.Value, out var enumCaseValue, out _))
+            if (IsEnumType(matchType) && TryEvaluateConstIntExpr(qualifiedPattern.Value, out var enumCaseValue, out _))
                 seenEnumCaseValues.Add(enumCaseValue);
+            else if (IsBoolType(matchType) && qualifiedPattern.Value is BuiltinExpr { Name: "true" or "false" } builtin)
+                seenBoolCaseValues.Add(builtin.Name == "true");
 
             caseOutcomes.Add(CheckBlock(matchCase.Body));
         }
 
-        if (enumDefinition != null && matchStmt.ElseBody.Count == 0)
+        if (matchStmt.ElseBody.Count == 0)
         {
-            var missingMembers = GetMissingEnumMembers(enumDefinition, seenEnumCaseValues);
-            if (missingMembers.Count > 0)
-                _errors.Error(matchStmt, $"Match over enum '{FormatType(matchType)}' must cover all members or provide an else branch. Missing: {string.Join(", ", missingMembers)}.");
+            if (enumDefinition != null)
+            {
+                var missingMembers = GetMissingEnumMembers(enumDefinition, seenEnumCaseValues);
+                if (missingMembers.Count > 0)
+                    _errors.Error(matchStmt, $"Match over enum '{FormatType(matchType)}' must cover all members or provide an else branch. Missing: {string.Join(", ", missingMembers)}.");
+                else
+                    isExhaustive = true;
+            }
+            else if (IsBoolType(matchType))
+            {
+                var missingValues = new List<string>();
+                if (!seenBoolCaseValues.Contains(false))
+                    missingValues.Add("false");
+                if (!seenBoolCaseValues.Contains(true))
+                    missingValues.Add("true");
+
+                if (missingValues.Count > 0)
+                    _errors.Error(matchStmt, $"Match over bool must cover both values or provide an else branch. Missing: {string.Join(", ", missingValues)}.");
+                else
+                    isExhaustive = true;
+            }
             else
-                isExhaustive = true;
+            {
+                isExhaustive = false;
+            }
         }
 
         return CombineMatchFlow(caseOutcomes, matchStmt.ElseBody, isExhaustive);
@@ -2586,6 +2822,12 @@ public class TypeChecker
         if (call.TargetExpr != null && IsInvalidPostfixTarget(call.TargetExpr))
             return;
 
+        if (call.TargetExpr != null)
+            CheckExpression(call.TargetExpr);
+
+        foreach (var argument in call.Args)
+            CheckExpression(argument);
+
         var callInfo = ResolveCallInfo(call, reportErrors: true);
         if (callInfo == null)
             return;
@@ -2603,7 +2845,6 @@ public class TypeChecker
 
         for (int i = 0; i < argCount; i++)
         {
-            CheckExpression(call.Args[i]);
             var argType = GetExpressionType(call.Args[i]);
             var paramType = parameters[i].TypeName;
 
@@ -2620,12 +2861,6 @@ public class TypeChecker
                     continue;
                 }
             }
-
-            if (CanDecayArrayToPointer(paramType, argType))
-                continue;
-
-            if (CanCoerceToSlice(paramType, argType))
-                continue;
 
             if (!IsAssignableTo(paramType, call.Args[i], argType))
             {
@@ -3133,6 +3368,11 @@ public class TypeChecker
             TypeArgumentListsMatch(target.TypeArguments, source.TypeArguments);
     }
 
+    private static bool CanCoerceImplicitly(TypeNode target, TypeNode source)
+    {
+        return CanDecayArrayToPointer(target, source) || CanCoerceToSlice(target, source);
+    }
+
     private static bool CanCoerceToSlice(TypeNode target, TypeNode source)
     {
         if (!target.IsSlice || source.IsSlice || source.ArraySize == null)
@@ -3178,17 +3418,17 @@ public class TypeChecker
         if (CanAddVolatileQualifier(target, source))
             return true;
 
+        if (CanCoerceImplicitly(target, source))
+            return true;
+
         var targetIsFixedArray = target.ArraySize != null;
         var sourceIsFixedArray = source.ArraySize != null;
         if (targetIsFixedArray || sourceIsFixedArray)
         {
             // Once exact fixed-array identity fails, the only remaining implicit path is array-to-slice coercion.
-            if (!(target.IsSlice && sourceIsFixedArray))
+            if (!CanCoerceImplicitly(target, source))
                 return false;
         }
-
-        if (CanCoerceToSlice(target, source))
-            return true;
 
         if (target.IsPointer && target.Name == "void" && source.IsPointer)
             return true;

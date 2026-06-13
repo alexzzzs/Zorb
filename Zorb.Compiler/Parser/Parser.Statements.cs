@@ -272,6 +272,13 @@ public partial class Parser
 
     private MatchPattern ParseMatchPattern()
     {
+        if (Current.Type != TokenType.Identifier)
+        {
+            var scalarPattern = new QualifiedMatchPattern { Value = ParseExpression() };
+            StampNode(scalarPattern, scalarPattern.Value);
+            return scalarPattern;
+        }
+
         var patternExpr = ParseQualifiedReferenceExpression(
             "Expected match pattern name.",
             "Expected identifier after '.'.");

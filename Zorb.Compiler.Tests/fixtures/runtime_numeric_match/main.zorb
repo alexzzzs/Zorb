@@ -1,0 +1,26 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+fn classify(value: i64) -> i64 {
+    match value {
+        case 1 {
+            return 1
+        }
+        case 3 {
+            return 9
+        }
+        else {
+            return 0
+        }
+    }
+}
+
+fn _start() {
+    std.io.print_i64(classify(1))
+    std.io.print("\n")
+    std.io.print_i64(classify(3))
+    std.io.print("\n")
+    std.io.print_i64(classify(2))
+    std.io.print("\n")
+    std.os.exit(0)
+}

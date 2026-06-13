@@ -13,17 +13,34 @@ All notable changes to this project will be documented in this file.
   for a focused AArch64 lane.
 - Ubuntu CI coverage for the AArch64 Linux lane using `aarch64-linux-gnu-gcc`
   and `qemu-aarch64`.
+- Generic function type-argument inference for direct, obvious call sites,
+  including imported generic declarations and parameter shapes involving
+  pointers, slices, arrays, function types, and error unions.
+- Additional fixture coverage for inferred generic calls, import-alias generic
+  calls, and runtime coercion flows across arrays, pointers, and slices.
+- Scalar `match` support for numeric and `bool` expressions, with shared
+  ordered-case lowering alongside enum `match` and tagged-union payload
+  matching.
 
 ### Changed
 
 - The compiler version now advances to the `0.2.1-dev` line after the
   `0.2.0` release.
+- Arrays now decay to exact element pointers in any context that expects `*T`,
+  instead of only in function-call argument position.
+- Generic calls no longer require explicit type arguments when the concrete
+  instantiation can be inferred directly from the argument types.
+- `match` now acts as the general ordered-case branching form for scalars and
+  enums, while retaining tagged-union payload binding as its richer extension.
 
 ### Fixed
 
 - Direct expression-statement `catch` bodies may now fall through without a
   fallback value when the result is discarded, while value-producing `catch`
   expressions still require a fallback or control transfer.
+- LLVM lowering now applies contextual array-to-pointer coercions consistently
+  for returns, stores, and calls, so semantic acceptance and verified backend
+  output stay aligned.
 
 ## [0.2.0] - June 12, 2026
 

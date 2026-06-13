@@ -1,0 +1,8 @@
+fn _start() {
+    flag: bool = true
+    match flag {
+        case true {
+            return
+        }
+    }
+}
