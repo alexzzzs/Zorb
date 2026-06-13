@@ -54,6 +54,58 @@ jobs:
       - name: Run Fixture Suite
         run: dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj --configuration Release
 
+  linux-aarch64-cross:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      ZORB_RUN_AARCH64_TESTS: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install AArch64 cross-runtime toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-20-dev lld-20 g++ gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+
+      - name: Install Zig 0.16
+        run: |
+          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Cache Zig build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            Zorb.LlvmBackend/.zig-cache
+            ~/.cache/zig
+          key: ${{ runner.os }}-zig-0.16.0-llvm20-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-0.16.0-llvm20-
+
+      - name: Build LLVM backend
+        run: |
+          cd Zorb.LlvmBackend
+          zig build test
+          zig build -Dstatic-llvm=true -Dcxx-runtime="$(g++ -print-file-name=libstdc++.so)" -Doptimize=ReleaseSafe
+
+      - name: Restore
+        run: dotnet restore Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj
+
+      - name: Build Compiler
+        run: dotnet build Zorb.Compiler/Zorb.Compiler.csproj -c Release --no-restore
+
+      - name: Run Fixture Suite With AArch64 Lane
+        run: dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj --configuration Release
+
   windows-hosted-smoke:
     runs-on: windows-latest
     timeout-minutes: 20
@@ -126,6 +178,7 @@ jobs:
   publish-standalone:
     needs:
       - test
+      - linux-aarch64-cross
       - windows-hosted-smoke
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
     strategy:

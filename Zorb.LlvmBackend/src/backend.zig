@@ -21,12 +21,11 @@ pub const Backend = struct {
     strings: std.StringHashMapUnmanaged(llvm.LLVMValueRef) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, module_ir: *const ir.Module) !Backend {
-        if (llvm.LLVMInitializeNativeTarget() != 0 or
-            llvm.LLVMInitializeNativeAsmPrinter() != 0 or
-            llvm.LLVMInitializeNativeAsmParser() != 0)
-        {
-            return llvm_support.LlvmError.LlvmInitializationFailed;
-        }
+        llvm.LLVMInitializeAllTargetInfos();
+        llvm.LLVMInitializeAllTargets();
+        llvm.LLVMInitializeAllTargetMCs();
+        llvm.LLVMInitializeAllAsmPrinters();
+        llvm.LLVMInitializeAllAsmParsers();
 
         const triple = try allocator.dupeZ(u8, module_ir.target.triple);
         defer allocator.free(triple);

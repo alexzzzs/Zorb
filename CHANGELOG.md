@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Explicit Linux AArch64 CLI targets: `host-linux-aarch64` and
+  `freestanding-linux-aarch64`.
+- Linux AArch64 cross-build verification in the fixture suite, including LLVM
+  target-triple checks, binary build checks, and QEMU-backed CLI runtime tests
+  for a focused AArch64 lane.
+- Ubuntu CI coverage for the AArch64 Linux lane using `aarch64-linux-gnu-gcc`
+  and `qemu-aarch64`.
+
+### Changed
+
+- The compiler version now advances to the `0.2.1-dev` line after the
+  `0.2.0` release.
+
 ### Fixed
 
 - Direct expression-statement `catch` bodies may now fall through without a

@@ -64,6 +64,8 @@ SECTIONS
     {
         HostLinux,
         FreestandingLinux,
+        HostLinuxAArch64,
+        FreestandingLinuxAArch64,
         BareMetalX86_64,
         HostWindows
     }
@@ -187,8 +189,8 @@ SECTIONS
                     ? ZigBackendOutputKind.LlvmIr
                     : ZigBackendOutputKind.Object,
                 Path.GetFullPath(outputPath),
-                addFreestandingEntryShim: target is CompilationTarget.FreestandingLinux or CompilationTarget.BareMetalX86_64,
-                addHostedEntryShim: target is CompilationTarget.HostLinux or CompilationTarget.HostWindows);
+                addFreestandingEntryShim: target is CompilationTarget.FreestandingLinux or CompilationTarget.FreestandingLinuxAArch64 or CompilationTarget.BareMetalX86_64,
+                addHostedEntryShim: target is CompilationTarget.HostLinux or CompilationTarget.HostLinuxAArch64 or CompilationTarget.HostWindows);
 
             return new CompiledProgram(
                 inputPath,

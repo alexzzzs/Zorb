@@ -190,7 +190,7 @@ partial class Program
         Console.WriteLine("  --emit-linker-script <p>");
         Console.WriteLine("                      Write the linker script used by build --target bare-metal-x86_64 to the given path.");
         Console.WriteLine("  --target <name>      Select the compilation target.");
-        Console.WriteLine("                      Supported targets: host-linux, freestanding-linux, bare-metal-x86_64, host-windows.");
+        Console.WriteLine("                      Supported targets: host-linux, freestanding-linux, host-linux-aarch64, freestanding-linux-aarch64, bare-metal-x86_64, host-windows.");
         Console.WriteLine("                      Build/run default to freestanding-linux on Linux and host-windows on Windows.");
         Console.WriteLine("                      bare-metal-x86_64 build links a kernel ELF with a bundled linker script unless overridden.");
         Console.WriteLine("  -nostdlib            Legacy shorthand for --target freestanding-linux.");
@@ -207,6 +207,12 @@ partial class Program
                 return true;
             case "freestanding-linux":
                 target = CompilationTarget.FreestandingLinux;
+                return true;
+            case "host-linux-aarch64":
+                target = CompilationTarget.HostLinuxAArch64;
+                return true;
+            case "freestanding-linux-aarch64":
+                target = CompilationTarget.FreestandingLinuxAArch64;
                 return true;
             case "bare-metal-x86_64":
                 target = CompilationTarget.BareMetalX86_64;
@@ -226,6 +232,8 @@ partial class Program
         {
             CompilationTarget.HostLinux => "host-linux",
             CompilationTarget.FreestandingLinux => "freestanding-linux",
+            CompilationTarget.HostLinuxAArch64 => "host-linux-aarch64",
+            CompilationTarget.FreestandingLinuxAArch64 => "freestanding-linux-aarch64",
             CompilationTarget.BareMetalX86_64 => "bare-metal-x86_64",
             CompilationTarget.HostWindows => "host-windows",
             _ => throw new ArgumentOutOfRangeException(nameof(target), target, null)

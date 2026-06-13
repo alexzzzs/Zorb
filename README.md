@@ -38,13 +38,13 @@ the implemented language subset described in this repository.
 That parity claim currently covers:
 
 - `freestanding-linux` on Linux hosts
+- `freestanding-linux-aarch64` and `host-linux-aarch64` from Linux hosts with an AArch64 cross-toolchain
 - `host-windows` on Windows hosts using the MSVC ABI toolchain path
 - `bare-metal-x86_64` for kernel ELF builds
 
 It does not currently mean:
 
 - hosted Windows GNU/MinGW support
-- AArch64 runtime execution coverage in the fixture suite
 - `run` support for bare-metal output
 
 ## Generics
@@ -171,7 +171,7 @@ Select an explicit build target:
 dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target host-linux -o out
 ```
 
-Supported `--target` values are `host-linux`, `freestanding-linux`, `bare-metal-x86_64`, and `host-windows`.
+Supported `--target` values are `host-linux`, `freestanding-linux`, `host-linux-aarch64`, `freestanding-linux-aarch64`, `bare-metal-x86_64`, and `host-windows`.
 On Linux, `build` and `run` default to `freestanding-linux`, which preserves `_start` and links a Linux executable without the usual C runtime startup files.
 The legacy `-nostdlib` flag remains available as shorthand for `--target freestanding-linux`.
 
@@ -247,7 +247,8 @@ Focused `expect-llvm.txt` files may assert stable IR details where verifier and
 runtime coverage are not specific enough.
 
 Current runtime coverage is strongest on Linux and on Windows host targets in
-CI. The suite does not yet include an AArch64 runtime lane.
+CI. An AArch64 Linux lane is available on Linux hosts with `aarch64-linux-gnu-gcc`
+plus `qemu-aarch64`; set `ZORB_RUN_AARCH64_TESTS=1` to require that lane locally.
 
 ## Examples
 

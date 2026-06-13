@@ -6,6 +6,11 @@ using Zorb.Compiler.Utils;
 
 partial class Program
 {
+    private const string AArch64LinuxCrossCompilerEnvironmentVariable = "ZORB_AARCH64_LINUX_GCC";
+    private const string AArch64LinuxQemuEnvironmentVariable = "ZORB_QEMU_AARCH64";
+    private const string AArch64LinuxSysrootEnvironmentVariable = "ZORB_AARCH64_LINUX_SYSROOT";
+    private const string DefaultAArch64LinuxSysroot = "/usr/aarch64-linux-gnu";
+
     private static int BuildExecutableFromBackend(
         string backendIr,
         string outputPath,
@@ -38,11 +43,11 @@ partial class Program
                 if (link.ExitCode != 0)
                     return ReportFailedProcess("Bare-metal link failed.", link);
             }
-            else if (target is CompilationTarget.HostLinux or CompilationTarget.FreestandingLinux)
+            else if (IsLinuxTarget(target))
             {
-                EnsureToolAvailable("gcc");
+                var compiler = ResolveLinuxCompiler(target);
                 var args = new List<string>();
-                if (target == CompilationTarget.FreestandingLinux)
+                if (IsFreestandingLinuxTarget(target))
                     args.AddRange(["-nostdlib", "-fno-pie", "-no-pie", "-z", "execstack", "-fno-builtin"]);
                 else
                     args.Add("-no-pie");
@@ -50,7 +55,7 @@ partial class Program
                 args.Add("-o");
                 args.Add(fullOutputPath);
                 args.AddRange(ExternalTools.SplitCommandLine(nativeFlags));
-                var link = RunProcess("gcc", args, tempDir);
+                var link = RunProcess(compiler, args, tempDir);
                 if (link.ExitCode != 0)
                     return ReportFailedProcess("Native link failed.", link);
             }
@@ -123,11 +128,7 @@ partial class Program
                 reportSuccess: false);
             if (buildResult != 0)
                 return buildResult;
-            var execution = RunProcessWithTimeout(
-                binaryPath,
-                Array.Empty<string>(),
-                tempDir,
-                RunTimeoutMilliseconds);
+            var execution = RunBuiltBinaryForTarget(binaryPath, tempDir, target);
             if (!string.IsNullOrEmpty(execution.StdOut))
                 Console.Write(execution.StdOut);
             if (!string.IsNullOrEmpty(execution.StdErr))
@@ -322,13 +323,13 @@ partial class Program
         if (mode != CommandMode.Build && mode != CommandMode.Run)
             return;
 
-        if (target == CompilationTarget.HostLinux || target == CompilationTarget.FreestandingLinux)
+        if (IsLinuxTarget(target))
         {
             if (!OperatingSystem.IsLinux())
                 throw new ZorbCompilerException($"Target '{FormatTarget(target)}' currently requires a Linux host for build and run. Current host: {DescribeCurrentHost()}.");
 
-            if (!IsSupportedHostedArchitecture())
-                throw new ZorbCompilerException($"Target '{FormatTarget(target)}' currently requires an x86_64 or aarch64 Linux host. Current host: {DescribeCurrentHost()}.");
+            if (!IsSupportedLinuxHostForTarget(target))
+                throw new ZorbCompilerException($"Target '{FormatTarget(target)}' currently requires a compatible Linux host and toolchain. Current host: {DescribeCurrentHost()}.");
         }
 
         if (target == CompilationTarget.BareMetalX86_64)
@@ -389,6 +390,8 @@ partial class Program
             CompilationTarget.HostLinux or CompilationTarget.FreestandingLinux
                 when RuntimeInformation.ProcessArchitecture == Architecture.Arm64
                 => new ZigBackendTarget("aarch64-unknown-linux-gnu"),
+            CompilationTarget.HostLinuxAArch64 or CompilationTarget.FreestandingLinuxAArch64
+                => new ZigBackendTarget("aarch64-unknown-linux-gnu"),
             CompilationTarget.BareMetalX86_64
                 => new ZigBackendTarget("x86_64-unknown-none-elf"),
             CompilationTarget.HostWindows
@@ -400,6 +403,135 @@ partial class Program
             _ => throw new ZorbCompilerException(
                 $"The Zig LLVM backend does not support target '{FormatTarget(target)}' on {DescribeCurrentHost()}.")
         };
+    }
+
+    private static bool IsLinuxTarget(CompilationTarget target)
+    {
+        return target is
+            CompilationTarget.HostLinux or
+            CompilationTarget.FreestandingLinux or
+            CompilationTarget.HostLinuxAArch64 or
+            CompilationTarget.FreestandingLinuxAArch64;
+    }
+
+    private static bool IsFreestandingLinuxTarget(CompilationTarget target)
+    {
+        return target is CompilationTarget.FreestandingLinux or CompilationTarget.FreestandingLinuxAArch64;
+    }
+
+    private static bool IsAArch64LinuxTarget(CompilationTarget target)
+    {
+        return target is CompilationTarget.HostLinuxAArch64 or CompilationTarget.FreestandingLinuxAArch64;
+    }
+
+    private static bool IsSupportedLinuxHostForTarget(CompilationTarget target)
+    {
+        if (!IsSupportedHostedArchitecture())
+            return false;
+
+        if (!IsAArch64LinuxTarget(target))
+            return true;
+
+        if (RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
+            return true;
+
+        return FindAArch64LinuxCrossCompiler() != null;
+    }
+
+    private static string ResolveLinuxCompiler(CompilationTarget target)
+    {
+        if (IsAArch64LinuxTarget(target) && RuntimeInformation.ProcessArchitecture != Architecture.Arm64)
+        {
+            var compiler = FindAArch64LinuxCrossCompiler();
+            if (compiler != null)
+                return compiler;
+
+            throw new ZorbCompilerException(
+                $"Target '{FormatTarget(target)}' requires an AArch64 Linux cross-compiler on x86_64 hosts. Install 'aarch64-linux-gnu-gcc' or set {AArch64LinuxCrossCompilerEnvironmentVariable}.");
+        }
+
+        return EnsureToolAvailable("gcc");
+    }
+
+    private static string? FindAArch64LinuxCrossCompiler()
+    {
+        var configuredPath = Environment.GetEnvironmentVariable(AArch64LinuxCrossCompilerEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            if (File.Exists(configuredPath))
+                return Path.GetFullPath(configuredPath);
+
+            throw new ZorbCompilerException(
+                $"{AArch64LinuxCrossCompilerEnvironmentVariable} points to a missing file: {Path.GetFullPath(configuredPath)}");
+        }
+
+        return ExternalTools.FindAvailableTool("aarch64-linux-gnu-gcc");
+    }
+
+    private static ProcessResult RunBuiltBinaryForTarget(string binaryPath, string workingDirectory, CompilationTarget target)
+    {
+        if (!IsAArch64LinuxTarget(target) || RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
+        {
+            return RunProcessWithTimeout(
+                binaryPath,
+                Array.Empty<string>(),
+                workingDirectory,
+                RunTimeoutMilliseconds);
+        }
+
+        var qemu = ResolveAArch64Qemu();
+        var args = new List<string>();
+        var sysroot = ResolveAArch64LinuxSysroot();
+        if (sysroot != null)
+        {
+            args.Add("-L");
+            args.Add(sysroot);
+        }
+
+        args.Add(binaryPath);
+        return RunProcessWithTimeout(
+            qemu,
+            args.ToArray(),
+            workingDirectory,
+            RunTimeoutMilliseconds);
+    }
+
+    private static string ResolveAArch64Qemu()
+    {
+        var configuredPath = Environment.GetEnvironmentVariable(AArch64LinuxQemuEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            if (File.Exists(configuredPath))
+                return Path.GetFullPath(configuredPath);
+
+            throw new ZorbCompilerException(
+                $"{AArch64LinuxQemuEnvironmentVariable} points to a missing file: {Path.GetFullPath(configuredPath)}");
+        }
+
+        var qemu = ExternalTools.FindAvailableTool("qemu-aarch64")
+            ?? ExternalTools.FindAvailableTool("qemu-aarch64-static");
+        if (qemu != null)
+            return qemu;
+
+        throw new ZorbCompilerException(
+            $"Target execution for AArch64 Linux requires qemu-aarch64. Install 'qemu-user' or set {AArch64LinuxQemuEnvironmentVariable}.");
+    }
+
+    private static string? ResolveAArch64LinuxSysroot()
+    {
+        var configuredPath = Environment.GetEnvironmentVariable(AArch64LinuxSysrootEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            if (Directory.Exists(configuredPath))
+                return Path.GetFullPath(configuredPath);
+
+            throw new ZorbCompilerException(
+                $"{AArch64LinuxSysrootEnvironmentVariable} points to a missing directory: {Path.GetFullPath(configuredPath)}");
+        }
+
+        return Directory.Exists(DefaultAArch64LinuxSysroot)
+            ? DefaultAArch64LinuxSysroot
+            : null;
     }
 
     private static string ResolveOutputPath(Options options, CompilationTarget target)

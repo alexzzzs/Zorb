@@ -2273,7 +2273,7 @@ public sealed class ZigBackendIrWriter
 
         private static bool IsPointerLike(TypeNode type)
         {
-            return type.IsPointer || type.Name == "string";
+            return type.IsPointer || type.IsFunction || type.Name == "string";
         }
 
         private static TypeNode GetComparisonOperandType(TypeNode leftType, TypeNode rightType)

@@ -17,6 +17,12 @@ Optional expectation files:
 - `expect-stdout-windows.txt`
 - `expect-stderr-windows.txt`
 - `expect-exit-windows.txt`
+- `expect-stdout-linux-aarch64.txt`
+- `expect-stderr-linux-aarch64.txt`
+- `expect-exit-linux-aarch64.txt`
+- `expect-stdout-host-linux-aarch64.txt`
+- `expect-stderr-host-linux-aarch64.txt`
+- `expect-exit-host-linux-aarch64.txt`
 
 ## Default Behavior
 
@@ -60,13 +66,21 @@ Windows-specific expectation files enable a `host-windows` runtime pass when
 the suite runs on Windows. Missing Windows values fall back to their generic
 counterparts.
 
-The suite currently has no AArch64 runtime target. Do not add architecture
-expectation files until that target exists in the compiler CLI and CI.
+When the AArch64 Linux lane is enabled, generic runtime expectations may also
+be reused for:
+
+- `freestanding-linux-aarch64`
+- `host-linux-aarch64`
+
+Add explicit `*-linux-aarch64.txt` expectation files only when AArch64 behavior
+intentionally differs from the generic Linux result.
 
 The current parity bar for the LLVM backend is:
 
 - verified LLVM emission for every semantically successful fixture and example
 - Linux runtime execution for fixtures with generic runtime expectations
+- AArch64 Linux cross-build verification plus QEMU runtime execution for the
+  focused AArch64 lane when enabled
 - Windows runtime execution when Windows-specific host expectations are present
 - bare-metal build validation through CLI coverage rather than runtime execution
 

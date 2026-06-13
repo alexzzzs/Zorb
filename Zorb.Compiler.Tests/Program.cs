@@ -11,6 +11,12 @@ using Zorb.Compiler.Parsing;
 using Zorb.Compiler.Semantic;
 using Zorb.Compiler.Utils;
 
+const string RunAArch64TestsEnvironmentVariable = "ZORB_RUN_AARCH64_TESTS";
+const string AArch64CrossCompilerEnvironmentVariable = "ZORB_AARCH64_LINUX_GCC";
+const string AArch64QemuEnvironmentVariable = "ZORB_QEMU_AARCH64";
+const string AArch64SysrootEnvironmentVariable = "ZORB_AARCH64_LINUX_SYSROOT";
+const string DefaultAArch64LinuxSysroot = "/usr/aarch64-linux-gnu";
+
 var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
 var fixtureRoot = Path.Combine(testProjectRoot, "fixtures");
 var fixtureDirs = Directory.GetDirectories(fixtureRoot).OrderBy(path => path, StringComparer.Ordinal).ToList();
@@ -41,6 +47,17 @@ catch (Exception ex)
 {
     failures.Add($"cli_workflow: {ex.Message}");
     Console.WriteLine("FAIL cli_workflow");
+}
+
+try
+{
+    RunAArch64LinuxCrossTargetTests(fixtureRoot);
+    Console.WriteLine("PASS aarch64_linux_targets");
+}
+catch (Exception ex)
+{
+    failures.Add($"aarch64_linux_targets: {ex.Message}");
+    Console.WriteLine("FAIL aarch64_linux_targets");
 }
 
 try
@@ -223,6 +240,53 @@ static void RunCliWorkflowTests(string fixtureRoot)
     WithTempDirectory("zorb-cli-tests", tempDir =>
     {
         foreach (var workflowCase in GetCliWorkflowCases())
+            RunCliWorkflowFixture(compilerInvocation, projectRoot, fixtureRoot, tempDir, workflowCase);
+    });
+}
+
+static void RunAArch64LinuxCrossTargetTests(string fixtureRoot)
+{
+    if (!OperatingSystem.IsLinux())
+        return;
+
+    var shouldRun = string.Equals(
+        Environment.GetEnvironmentVariable(RunAArch64TestsEnvironmentVariable),
+        "1",
+        StringComparison.Ordinal);
+
+    var linuxCompiler = FindAArch64LinuxCompiler();
+    var qemu = FindAArch64Qemu();
+    var isNativeAArch64 = RuntimeInformation.ProcessArchitecture == Architecture.Arm64;
+    var canBuild = isNativeAArch64 || linuxCompiler != null;
+    var canRun = isNativeAArch64 || qemu != null;
+
+    if (!shouldRun && (!canBuild || !canRun))
+        return;
+
+    if (!canBuild)
+    {
+        throw new Exception(
+            $"AArch64 Linux target tests require either an aarch64 host or an AArch64 cross-compiler. Install 'aarch64-linux-gnu-gcc' or set {AArch64CrossCompilerEnvironmentVariable}.");
+    }
+
+    if (!canRun)
+    {
+        throw new Exception(
+            $"AArch64 Linux target tests require either an aarch64 host or qemu-aarch64. Install 'qemu-user' or set {AArch64QemuEnvironmentVariable}.");
+    }
+
+    EnsureToolAvailable("timeout");
+
+    var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
+    var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
+        ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
+    var compilerInvocation = GetCompilerInvocation(projectRoot);
+
+    RunAArch64EmissionVerification(compilerInvocation, projectRoot, fixtureRoot);
+
+    WithTempDirectory("zorb-aarch64-cli-tests", tempDir =>
+    {
+        foreach (var workflowCase in GetAArch64CliWorkflowCases())
             RunCliWorkflowFixture(compilerInvocation, projectRoot, fixtureRoot, tempDir, workflowCase);
     });
 }
@@ -980,6 +1044,72 @@ static CliWorkflowCase[] GetCliWorkflowCases()
     throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
 }
 
+static CliWorkflowCase[] GetAArch64CliWorkflowCases()
+{
+    return
+    [
+        new CliWorkflowCase("runtime_hello_world", "freestanding-linux-aarch64"),
+        new CliWorkflowCase("runtime_string_escapes", "freestanding-linux-aarch64"),
+        new CliWorkflowCase("runtime_condition_catch", "freestanding-linux-aarch64"),
+        new CliWorkflowCase("runtime_task_yield_without_fiber", "freestanding-linux-aarch64"),
+        new CliWorkflowCase("runtime_host_platform_branch", "host-linux-aarch64"),
+        new CliWorkflowCase("runtime_stdlib_support_checks", "host-linux-aarch64")
+    ];
+}
+
+static void RunAArch64EmissionVerification(CompilerInvocation compilerInvocation, string projectRoot, string fixtureRoot)
+{
+    var emissionCases = new[]
+    {
+        new AArch64EmissionCase("runtime_hello_world", "freestanding-linux-aarch64"),
+        new AArch64EmissionCase("stdlib_linux_arch_syscall_codegen", "freestanding-linux-aarch64"),
+        new AArch64EmissionCase("stdlib_task_aarch64_codegen", "freestanding-linux-aarch64"),
+        new AArch64EmissionCase("runtime_host_platform_branch", "host-linux-aarch64")
+    };
+
+    WithTempDirectory("zorb-aarch64-emission", tempDir =>
+    {
+        foreach (var emissionCase in emissionCases)
+        {
+            var fixtureDir = Path.Combine(fixtureRoot, emissionCase.FixtureName);
+            var mainPath = Path.Combine(fixtureDir, "main.zorb");
+            var llvmPath = Path.Combine(tempDir, emissionCase.FixtureName + ".ll");
+            var binaryPath = Path.Combine(tempDir, emissionCase.FixtureName);
+
+            var emission = RunProcessWithTimeoutArgs(
+                compilerInvocation.FileName,
+                BuildCommandArguments(compilerInvocation, "--emit-llvm", mainPath, "--target", emissionCase.TargetName, "-o", llvmPath),
+                projectRoot,
+                TimeSpan.FromSeconds(30));
+            if (emission.ExitCode != 0)
+            {
+                throw new Exception(
+                    $"AArch64 LLVM emission failed for fixture '{emissionCase.FixtureName}' with exit code {emission.ExitCode}.{Environment.NewLine}{emission.StdErr}{emission.StdOut}".Trim());
+            }
+
+            if (!File.Exists(llvmPath) || new FileInfo(llvmPath).Length == 0)
+                throw new Exception($"AArch64 LLVM emission did not produce output for fixture '{emissionCase.FixtureName}'.");
+
+            var llvmIr = File.ReadAllText(llvmPath, Encoding.UTF8);
+            AssertTextContains(llvmIr, "target triple = \"aarch64-unknown-linux-gnu\"");
+
+            var build = RunProcessWithTimeoutArgs(
+                compilerInvocation.FileName,
+                BuildCommandArguments(compilerInvocation, "build", mainPath, "--target", emissionCase.TargetName, "-o", binaryPath),
+                projectRoot,
+                TimeSpan.FromSeconds(30));
+            if (build.ExitCode != 0)
+            {
+                throw new Exception(
+                    $"AArch64 build failed for fixture '{emissionCase.FixtureName}' with exit code {build.ExitCode}.{Environment.NewLine}{build.StdErr}{build.StdOut}".Trim());
+            }
+
+            if (!File.Exists(binaryPath) || new FileInfo(binaryPath).Length == 0)
+                throw new Exception($"AArch64 build did not produce output for fixture '{emissionCase.FixtureName}'.");
+        }
+    });
+}
+
 static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string projectRoot, string fixtureRoot, string tempDir, CliWorkflowCase workflowCase)
 {
     var fixtureName = workflowCase.FixtureName;
@@ -1009,7 +1139,7 @@ static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string 
     if (!File.Exists(builtBinaryPath))
         throw new Exception($"CLI build for fixture '{fixtureName}' did not produce the requested binary.");
 
-    var builtExecution = RunBuiltCliBinary(builtBinaryPath, fixtureTempDir);
+    var builtExecution = RunBuiltCliBinary(builtBinaryPath, fixtureTempDir, cliTargetName);
     if (builtExecution.ExitCode != expectedExit)
         throw new Exception($"Built fixture '{fixtureName}' exit code mismatch. Expected {expectedExit}, got {builtExecution.ExitCode}.");
 
@@ -1037,10 +1167,32 @@ static void RunCliWorkflowFixture(CompilerInvocation compilerInvocation, string 
         throw new Exception($"CLI run for fixture '{fixtureName}' stderr mismatch.{Environment.NewLine}Expected:{Environment.NewLine}{expectedStdErr}{Environment.NewLine}Actual:{Environment.NewLine}{actualRunStdErr}");
 }
 
-static ProcessResult RunBuiltCliBinary(string builtBinaryPath, string workingDirectory)
+static ProcessResult RunBuiltCliBinary(string builtBinaryPath, string workingDirectory, string targetName)
 {
     if (OperatingSystem.IsLinux())
+    {
+        if (string.Equals(targetName, "host-linux-aarch64", StringComparison.Ordinal) ||
+            string.Equals(targetName, "freestanding-linux-aarch64", StringComparison.Ordinal))
+        {
+            var args = new List<string> { "30s" };
+            var qemu = FindAArch64Qemu();
+            if (qemu == null)
+                throw new Exception($"AArch64 CLI workflow tests require qemu-aarch64. Install 'qemu-user' or set {AArch64QemuEnvironmentVariable}.");
+
+            args.Add(qemu);
+            var sysroot = ResolveAArch64Sysroot();
+            if (sysroot != null)
+            {
+                args.Add("-L");
+                args.Add(sysroot);
+            }
+
+            args.Add(builtBinaryPath);
+            return RunProcessWithTimeoutArgs("timeout", args, workingDirectory, TimeSpan.FromSeconds(30));
+        }
+
         return RunProcessWithTimeoutArgs("timeout", ["30s", builtBinaryPath], workingDirectory, TimeSpan.FromSeconds(30));
+    }
 
     if (OperatingSystem.IsWindows())
         return RunProcessWithTimeoutArgs(builtBinaryPath, Array.Empty<string>(), workingDirectory, TimeSpan.FromSeconds(30));
@@ -1366,6 +1518,42 @@ static List<RuntimeExpectation> ReadRuntimeExpectations(string fixtureDir)
                 : (File.Exists(hostExitPath) ? int.Parse(File.ReadAllText(hostExitPath, Encoding.UTF8).Trim()) : 0)));
     }
 
+    var aarch64StdOutPath = Path.Combine(fixtureDir, "expect-stdout-linux-aarch64.txt");
+    var aarch64StdErrPath = Path.Combine(fixtureDir, "expect-stderr-linux-aarch64.txt");
+    var aarch64ExitPath = Path.Combine(fixtureDir, "expect-exit-linux-aarch64.txt");
+    if (File.Exists(aarch64StdOutPath) || File.Exists(aarch64StdErrPath) || File.Exists(aarch64ExitPath))
+    {
+        expectations.Add(new RuntimeExpectation(
+            "freestanding-linux-aarch64",
+            File.Exists(aarch64StdOutPath)
+                ? NormalizeNewlines(File.ReadAllText(aarch64StdOutPath, Encoding.UTF8))
+                : (File.Exists(hostStdOutPath) ? NormalizeNewlines(File.ReadAllText(hostStdOutPath, Encoding.UTF8)) : null),
+            File.Exists(aarch64StdErrPath)
+                ? NormalizeNewlines(File.ReadAllText(aarch64StdErrPath, Encoding.UTF8))
+                : (File.Exists(hostStdErrPath) ? NormalizeNewlines(File.ReadAllText(hostStdErrPath, Encoding.UTF8)) : null),
+            File.Exists(aarch64ExitPath)
+                ? int.Parse(File.ReadAllText(aarch64ExitPath, Encoding.UTF8).Trim())
+                : (File.Exists(hostExitPath) ? int.Parse(File.ReadAllText(hostExitPath, Encoding.UTF8).Trim()) : 0)));
+    }
+
+    var hostAarch64StdOutPath = Path.Combine(fixtureDir, "expect-stdout-host-linux-aarch64.txt");
+    var hostAarch64StdErrPath = Path.Combine(fixtureDir, "expect-stderr-host-linux-aarch64.txt");
+    var hostAarch64ExitPath = Path.Combine(fixtureDir, "expect-exit-host-linux-aarch64.txt");
+    if (File.Exists(hostAarch64StdOutPath) || File.Exists(hostAarch64StdErrPath) || File.Exists(hostAarch64ExitPath))
+    {
+        expectations.Add(new RuntimeExpectation(
+            "host-linux-aarch64",
+            File.Exists(hostAarch64StdOutPath)
+                ? NormalizeNewlines(File.ReadAllText(hostAarch64StdOutPath, Encoding.UTF8))
+                : (File.Exists(hostStdOutPath) ? NormalizeNewlines(File.ReadAllText(hostStdOutPath, Encoding.UTF8)) : null),
+            File.Exists(hostAarch64StdErrPath)
+                ? NormalizeNewlines(File.ReadAllText(hostAarch64StdErrPath, Encoding.UTF8))
+                : (File.Exists(hostStdErrPath) ? NormalizeNewlines(File.ReadAllText(hostStdErrPath, Encoding.UTF8)) : null),
+            File.Exists(hostAarch64ExitPath)
+                ? int.Parse(File.ReadAllText(hostAarch64ExitPath, Encoding.UTF8).Trim())
+                : (File.Exists(hostExitPath) ? int.Parse(File.ReadAllText(hostExitPath, Encoding.UTF8).Trim()) : 0)));
+    }
+
     return expectations;
 }
 
@@ -1397,6 +1585,32 @@ static RuntimeExpectation ReadCliWorkflowExpectation(string fixtureDir, string t
             return hostLinuxExpectation;
     }
 
+    if (string.Equals(targetName, "freestanding-linux-aarch64", StringComparison.Ordinal))
+    {
+        var genericAarch64Expectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "freestanding-linux-aarch64", StringComparison.Ordinal));
+        if (genericAarch64Expectation != null)
+            return genericAarch64Expectation;
+
+        var freestandingExpectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "freestanding-linux", StringComparison.Ordinal));
+        if (freestandingExpectation != null)
+            return freestandingExpectation;
+    }
+
+    if (string.Equals(targetName, "host-linux-aarch64", StringComparison.Ordinal))
+    {
+        var hostAarch64Expectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "host-linux-aarch64", StringComparison.Ordinal));
+        if (hostAarch64Expectation != null)
+            return hostAarch64Expectation;
+
+        var freestandingAarch64Expectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "freestanding-linux-aarch64", StringComparison.Ordinal));
+        if (freestandingAarch64Expectation != null)
+            return freestandingAarch64Expectation;
+
+        var hostLinuxExpectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "freestanding-linux", StringComparison.Ordinal));
+        if (hostLinuxExpectation != null)
+            return hostLinuxExpectation;
+    }
+
     throw new Exception($"Fixture '{Path.GetFileName(fixtureDir)}' is missing runtime expectations for CLI target '{targetName}'.");
 }
 
@@ -1405,6 +1619,7 @@ static bool IsRuntimeExpectationRunnableOnCurrentHost(RuntimeExpectation runtime
     return runtimeExpectation.TargetName switch
     {
         "freestanding-linux" or "host-linux" => OperatingSystem.IsLinux(),
+        "freestanding-linux-aarch64" or "host-linux-aarch64" => OperatingSystem.IsLinux() && (RuntimeInformation.ProcessArchitecture == Architecture.Arm64 || FindAArch64Qemu() != null),
         "host-windows" => OperatingSystem.IsWindows(),
         _ => false
     };
@@ -1436,7 +1651,7 @@ static void RunLlvmRuntimeExpectation(string fixtureDir, string mainPath, Runtim
         if (!File.Exists(binaryPath))
             throw new Exception($"LLVM build for target '{runtimeExpectation.TargetName}' did not produce a binary.");
 
-        var execution = RunBuiltCliBinary(binaryPath, tempDir);
+        var execution = RunBuiltCliBinary(binaryPath, tempDir, runtimeExpectation.TargetName);
 
         var actualStdOut = NormalizeNewlines(execution.StdOut);
         var actualStdErr = NormalizeNewlines(execution.StdErr);
@@ -1513,6 +1728,51 @@ static bool IsBareMetalLinkerAvailable()
     return ExternalTools.FindAvailableToolByPrefix("ld.lld-") != null;
 }
 
+static string? FindAArch64LinuxCompiler()
+{
+    var configured = Environment.GetEnvironmentVariable(AArch64CrossCompilerEnvironmentVariable);
+    if (!string.IsNullOrWhiteSpace(configured))
+    {
+        if (File.Exists(configured))
+            return Path.GetFullPath(configured);
+
+        throw new Exception($"{AArch64CrossCompilerEnvironmentVariable} points to a missing file: {Path.GetFullPath(configured)}");
+    }
+
+    return ExternalTools.FindAvailableTool("aarch64-linux-gnu-gcc");
+}
+
+static string? FindAArch64Qemu()
+{
+    var configured = Environment.GetEnvironmentVariable(AArch64QemuEnvironmentVariable);
+    if (!string.IsNullOrWhiteSpace(configured))
+    {
+        if (File.Exists(configured))
+            return Path.GetFullPath(configured);
+
+        throw new Exception($"{AArch64QemuEnvironmentVariable} points to a missing file: {Path.GetFullPath(configured)}");
+    }
+
+    return ExternalTools.FindAvailableTool("qemu-aarch64")
+        ?? ExternalTools.FindAvailableTool("qemu-aarch64-static");
+}
+
+static string? ResolveAArch64Sysroot()
+{
+    var configured = Environment.GetEnvironmentVariable(AArch64SysrootEnvironmentVariable);
+    if (!string.IsNullOrWhiteSpace(configured))
+    {
+        if (Directory.Exists(configured))
+            return Path.GetFullPath(configured);
+
+        throw new Exception($"{AArch64SysrootEnvironmentVariable} points to a missing directory: {Path.GetFullPath(configured)}");
+    }
+
+    return Directory.Exists(DefaultAArch64LinuxSysroot)
+        ? DefaultAArch64LinuxSysroot
+        : null;
+}
+
 static string FindAncestorContainingFile(string startPath, string fileName)
 {
     var current = new DirectoryInfo(Path.GetFullPath(startPath));
@@ -1586,5 +1846,7 @@ sealed record RuntimeExpectation(string TargetName, string? ExpectedStdOut, stri
 sealed record CompilerInvocation(string FileName, IReadOnlyList<string> ArgumentsPrefix);
 
 sealed record CliWorkflowCase(string FixtureName, string TargetName);
+
+sealed record AArch64EmissionCase(string FixtureName, string TargetName);
 
 sealed record CliArgumentCase(string Name, string Arguments, int ExpectedExitCode, string? ExpectedStdOutSubstring, string? ExpectedStdErrSubstring);
