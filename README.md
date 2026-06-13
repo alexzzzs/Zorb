@@ -65,12 +65,12 @@ fn make() -> Box<i64> {
 }
 ```
 
-Type arguments are currently explicit. Generic calls such as `identity<i64>(42)` and generic types such as `Box<i64>` must provide exactly the declared number of arguments. Nested forms such as `Box<Box<i64>>`, imported generic declarations, pointers, slices, arrays, error unions, and generic struct layout attributes are supported.
+Generic calls may provide explicit type arguments such as `identity<i64>(42)`, or omit them when the parameter types make the concrete instantiation obvious, such as `identity(42)`. Generic types such as `Box<i64>` still provide explicit type arguments. Nested forms such as `Box<Box<i64>>`, imported generic declarations, pointers, slices, arrays, error unions, and generic struct layout attributes are supported.
 
 Each concrete use is monomorphized into a distinct backend function or struct.
-Zorb does not currently provide type inference, constraints, default type
-arguments, generic enums or unions, generic extern functions, or first-class
-values for uninstantiated generic functions.
+Zorb does not currently provide constraints, default type arguments, generic
+enums or unions, generic extern functions, or first-class values for
+uninstantiated generic functions.
 
 Cross-platform stdlib helpers currently include:
 

@@ -565,7 +565,7 @@ public sealed class ZigBackendIrWriter
                     {
                         var valueType = _typeChecker.GetCheckedExpressionType(returnNode.Value)
                             ?? _function.ReturnType;
-                        var value = LowerExpression(returnNode.Value, valueType);
+                        var value = LowerExpression(returnNode.Value, _function.ReturnType);
                         if (IsScalarInteger(valueType) && IsScalarInteger(_function.ReturnType))
                             value = CoerceInteger(value, valueType, _function.ReturnType);
                         Terminate(new BackendTerminator { Op = "return_value", Value = value });
@@ -966,25 +966,21 @@ public sealed class ZigBackendIrWriter
         {
             var matchType = GetCheckedType(statement.Expression);
             var matchValue = LowerExpression(statement.Expression, matchType);
-            if (_typeInterner.IsEnumType(matchType))
-            {
-                LowerEnumMatch(statement, matchType, matchValue);
-                return;
-            }
             if (_typeInterner.IsUnionType(matchType))
             {
                 LowerUnionMatch(statement, matchType, matchValue);
                 return;
             }
-            throw Unsupported(statement, $"match type '{FormatType(matchType)}'");
+
+            LowerScalarMatch(statement, matchType, matchValue);
         }
 
-        private void LowerEnumMatch(MatchStmt statement, TypeNode matchType, uint matchValue)
+        private void LowerScalarMatch(MatchStmt statement, TypeNode matchType, uint matchValue)
         {
             var cases = statement.Cases.Select(matchCase =>
             {
                 if (matchCase.Pattern is not QualifiedMatchPattern pattern)
-                    throw Unsupported(matchCase.Pattern, "non-enum match pattern");
+                    throw Unsupported(matchCase.Pattern, "non-scalar match pattern");
                 return (Value: pattern.Value, matchCase.Body);
             }).ToList();
             LowerOrderedCases(
@@ -994,7 +990,8 @@ public sealed class ZigBackendIrWriter
                     Binding: (Action?)null)).ToList(),
                 matchValue,
                 statement.ElseBody,
-                exhaustiveWithoutElse: statement.ElseBody.Count == 0);
+                exhaustiveWithoutElse: statement.ElseBody.Count == 0 &&
+                    (_typeInterner.IsEnumType(matchType) || IsBoolType(matchType)));
         }
 
         private void LowerUnionMatch(MatchStmt statement, TypeNode matchType, uint matchValue)
@@ -1145,11 +1142,23 @@ public sealed class ZigBackendIrWriter
 
         private uint LowerExpression(Expr expression, TypeNode? expectedType = null)
         {
-            if (expectedType?.IsSlice == true)
+            var actualType = expectedType != null ? GetCheckedType(expression) : null;
+            if (expectedType?.IsSlice == true && actualType?.ArraySize != null)
             {
-                var actualType = GetCheckedType(expression);
-                if (actualType.ArraySize != null)
-                    return LowerArrayToSlice(expression, actualType, expectedType);
+                return LowerArrayToSlice(expression, actualType, expectedType);
+            }
+
+            if (expectedType?.IsPointer == true &&
+                actualType?.ArraySize != null &&
+                !expectedType.IsSlice &&
+                Math.Max(expectedType.PointerLevel, 1) == 1)
+            {
+                var zero = EmitIntegerConstant(0, new TypeNode { Name = "i64" });
+                return EmitIndexAddress(
+                    LowerAddress(expression),
+                    zero,
+                    actualType,
+                    GetArrayElementType(actualType));
             }
 
             switch (expression)
@@ -2241,6 +2250,16 @@ public sealed class ZigBackendIrWriter
         private static bool IsComparison(string op)
         {
             return op is "==" or "!=" or "<" or "<=" or ">" or ">=";
+        }
+
+        private static bool IsBoolType(TypeNode type)
+        {
+            return !type.IsPointer &&
+                   !type.IsSlice &&
+                   !type.IsErrorUnion &&
+                   !type.IsFunction &&
+                   type.ArraySize == null &&
+                   type.Name == "bool";
         }
 
         private static bool IsScalarInteger(TypeNode type)
