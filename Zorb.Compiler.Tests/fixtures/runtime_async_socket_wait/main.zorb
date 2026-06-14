@@ -50,7 +50,7 @@ fn recv_exact(fd: i32, buf: []u8) -> bool {
 
 fn bind_loopback_port(server_fd: i32, addr: *std.net.SockAddrV4) -> bool {
     port: i64 = 19140
-    while port < 19180 {
+    while port < 20140 {
         candidate: std.net.SockAddrV4 = std.net.sockaddr_v4_loopback(cast(u16, port))
         bind_result: i64 = std.net.bind_v4(server_fd, &candidate)
         if bind_result >= 0 {

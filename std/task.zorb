@@ -173,6 +173,9 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         active_fibers = active_fibers + 1 // Increment when created
         
         top: i64 = (cast(i64, raw_stack) + stack_size) & -16
+        if Builtin.IsWindows {
+            top = top - 8
+        }
         sp_exec: **u8 = cast(**u8, top - 8)
         sp_exec[0] = cast(*u8, fiber_entry_point)
         if Builtin.IsWindows {

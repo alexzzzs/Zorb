@@ -5,17 +5,38 @@ import "task.zorb"
 export struct std.async {}
 
 waiting_head: *Fiber = cast(*Fiber, 0)
+waiting_poll_cursor: *Fiber = cast(*Fiber, 0)
 
 fn std.async.read_event() -> i16 {
+    if Builtin.IsWindows {
+        return cast(i16, 768)
+    }
+
     return cast(i16, 1)
 }
 
 fn std.async.write_event() -> i16 {
+    if Builtin.IsWindows {
+        return cast(i16, 16)
+    }
+
     return cast(i16, 4)
+}
+
+fn std.async.error_event_mask() -> i16 {
+    if Builtin.IsWindows {
+        return cast(i16, 7)
+    }
+
+    return cast(i16, 56)
 }
 
 export fn std.async.is_supported() -> bool {
     if Builtin.IsBareMetal {
+        return false
+    }
+
+    if !std.net.is_supported() {
         return false
     }
 
@@ -28,6 +49,7 @@ export fn std.async.is_supported() -> bool {
 
 export fn std.async.init() {
     waiting_head = cast(*Fiber, 0)
+    waiting_poll_cursor = cast(*Fiber, 0)
 }
 
 export fn std.async.wait_readable(fd: i32) !i32 {
@@ -76,8 +98,15 @@ fn std.async.wait_for_fd(fd: i32, events: i16) !i32 {
 
         current_fiber.state = 0
         if current_fiber.wait_revents != cast(i16, 0) {
+            wake_result: i64 = std.async.decode_ready_events(events, current_fiber.wait_revents)
             current_fiber.wait_revents = cast(i16, 0)
-            return 0
+            if wake_result > 0 {
+                return 0
+            }
+
+            if wake_result < 0 {
+                return error.IOError
+            }
         }
     }
 
@@ -103,6 +132,22 @@ fn std.async.poll_single(fd: i32, events: i16, timeout_ms: i32) -> i64 {
     }
 
     return -cast(i64, error.InvalidArgument)
+}
+
+fn std.async.decode_ready_events(requested: i16, revents: i16) -> i64 {
+    if revents == cast(i16, 0) {
+        return 0
+    }
+
+    if (revents & requested) != cast(i16, 0) {
+        return 1
+    }
+
+    if (revents & std.async.error_event_mask()) != cast(i16, 0) {
+        return -cast(i64, error.IOError)
+    }
+
+    return 0
 }
 
 export fn std.async.loop() {
@@ -144,7 +189,8 @@ fn std.async.poll_events() {
     poll_storage: [64]std.net.PollFd
     waiting_fibers: [64]i64
     count: i64 = 0
-    cursor: *Fiber = waiting_head
+    cursor: *Fiber = std.async.resolve_waiting_cursor()
+    batch_start: *Fiber = cursor
 
     while cast(i64, cursor) != 0 && count < 64 {
         poll_storage[count].fd = cursor.wait_fd
@@ -153,11 +199,19 @@ fn std.async.poll_events() {
         waiting_fibers[count] = cast(i64, cursor)
         cursor = cursor.waiting_next
         count = count + 1
+        if cast(i64, cursor) == 0 && count < 64 {
+            cursor = waiting_head
+        }
+        if cursor == batch_start {
+            break
+        }
     }
 
     if count == 0 {
         return
     }
+
+    waiting_poll_cursor = cursor
 
     ready: i64 = std.net.poll(poll_storage, count, timeout_ms)
     if ready <= 0 {
@@ -173,6 +227,23 @@ fn std.async.poll_events() {
     }
 }
 
+fn std.async.resolve_waiting_cursor() -> *Fiber {
+    if cast(i64, waiting_poll_cursor) == 0 {
+        return waiting_head
+    }
+
+    cursor: *Fiber = waiting_head
+    while cast(i64, cursor) != 0 {
+        if cursor == waiting_poll_cursor {
+            return waiting_poll_cursor
+        }
+
+        cursor = cursor.waiting_next
+    }
+
+    return waiting_head
+}
+
 fn std.async.wake_waiting_fiber(target: *Fiber, revents: i16) {
     prev: *Fiber = cast(*Fiber, 0)
     cursor: *Fiber = waiting_head
@@ -183,6 +254,10 @@ fn std.async.wake_waiting_fiber(target: *Fiber, revents: i16) {
                 waiting_head = cursor.waiting_next
             } else {
                 prev.waiting_next = cursor.waiting_next
+            }
+
+            if waiting_poll_cursor == cursor {
+                waiting_poll_cursor = cursor.waiting_next
             }
 
             cursor.waiting_next = cast(*Fiber, 0)

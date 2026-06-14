@@ -11,7 +11,7 @@ extern fn connect(fd: i64, addr: *std.net.SockAddrV4, addr_len: i32) -> i32
 extern fn send(fd: i64, buf: *u8, len: i32, flags: i32) -> i32
 extern fn recv(fd: i64, buf: *u8, len: i32, flags: i32) -> i32
 extern fn closesocket(fd: i64) -> i32
-extern fn WSAPoll(fds: *std.net.PollFd, count: u32, timeout_ms: i32) -> i32
+extern fn WSAPoll(fds: *std.net.WinPollFd, count: u32, timeout_ms: i32) -> i32
 
 export struct std.net {}
 
@@ -28,19 +28,37 @@ export struct std.net.PollFd {
     revents: i16
 }
 
+struct std.net.WinPollFd {
+    fd: i64,
+    events: i16,
+    revents: i16
+}
+
 wsa_started: bool = false
 wsa_start_status: i32 = 0
 wsa_data_storage: [512]u8
 
 fn std.net.pollin() -> i16 {
+    if Builtin.IsWindows {
+        return cast(i16, 768)
+    }
+
     return cast(i16, 1)
 }
 
 fn std.net.pollout() -> i16 {
+    if Builtin.IsWindows {
+        return cast(i16, 16)
+    }
+
     return cast(i16, 4)
 }
 
 fn std.net.pollerr_mask() -> i16 {
+    if Builtin.IsWindows {
+        return cast(i16, 7)
+    }
+
     return cast(i16, 56)
 }
 
@@ -498,9 +516,24 @@ export fn std.net.poll(fds: *std.net.PollFd, count: i64, timeout_ms: i32) -> i64
             return -cast(i64, error.IOError)
         }
 
-        result: i32 = WSAPoll(fds, cast(u32, count), timeout_ms)
+        poll_storage: [64]std.net.WinPollFd
+        i: i64 = 0
+        while i < count && i < 64 {
+            poll_storage[i].fd = cast(i64, fds[i].fd)
+            poll_storage[i].events = fds[i].events
+            poll_storage[i].revents = cast(i16, 0)
+            i = i + 1
+        }
+
+        result: i32 = WSAPoll(&poll_storage[0], cast(u32, count), timeout_ms)
         if result < 0 {
             return -cast(i64, WSAGetLastError())
+        }
+
+        i = 0
+        while i < count && i < 64 {
+            fds[i].revents = poll_storage[i].revents
+            i = i + 1
         }
 
         return cast(i64, result)

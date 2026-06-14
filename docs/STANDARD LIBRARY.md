@@ -961,9 +961,11 @@ fn std.async.poll_events()
 ```
 
 Returns immediately when no fibers are waiting. Otherwise it batches waiting
-fibers into a local poll array, uses timeout `0` when the ready queue is
-non-empty and `-1` when it is empty, calls `std.net.poll(...)`, and wakes any
-fibers whose descriptors became ready.
+fibers into a local 64-element poll array, uses timeout `0` when the ready
+queue is non-empty and `-1` when it is empty, calls `std.net.poll(...)`, and
+wakes any fibers whose descriptors became ready. The implementation rotates its
+batch cursor across polling passes so waiters beyond the first 64 still make
+progress. Each individual poll pass still only examines up to 64 waiters.
 
 Example:
 
