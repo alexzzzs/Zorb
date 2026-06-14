@@ -78,6 +78,39 @@ fn std.task.resume(f: *Fiber) {
 export [noinline, noclone]
 fn std.task.swap_context(old_sp_ptr: **u8, new_sp: *u8) {
     if Builtin.IsX86_64 {
+        if Builtin.IsWindows {
+            asm {
+                "subq $160, %%rsp"
+                "movdqu %%xmm6, 0(%%rsp)"
+                "movdqu %%xmm7, 16(%%rsp)"
+                "movdqu %%xmm8, 32(%%rsp)"
+                "movdqu %%xmm9, 48(%%rsp)"
+                "movdqu %%xmm10, 64(%%rsp)"
+                "movdqu %%xmm11, 80(%%rsp)"
+                "movdqu %%xmm12, 96(%%rsp)"
+                "movdqu %%xmm13, 112(%%rsp)"
+                "movdqu %%xmm14, 128(%%rsp)"
+                "movdqu %%xmm15, 144(%%rsp)"
+                "pushq %%rbp; pushq %%rbx; pushq %%rdi; pushq %%rsi; pushq %%r12; pushq %%r13; pushq %%r14; pushq %%r15"
+                "movq %%rsp, (%0)"
+                "movq %1, %%rsp"
+                "popq %%r15; popq %%r14; popq %%r13; popq %%r12; popq %%rsi; popq %%rdi; popq %%rbx; popq %%rbp"
+                "movdqu 0(%%rsp), %%xmm6"
+                "movdqu 16(%%rsp), %%xmm7"
+                "movdqu 32(%%rsp), %%xmm8"
+                "movdqu 48(%%rsp), %%xmm9"
+                "movdqu 64(%%rsp), %%xmm10"
+                "movdqu 80(%%rsp), %%xmm11"
+                "movdqu 96(%%rsp), %%xmm12"
+                "movdqu 112(%%rsp), %%xmm13"
+                "movdqu 128(%%rsp), %%xmm14"
+                "movdqu 144(%%rsp), %%xmm15"
+                "addq $160, %%rsp"
+                : : "r"(old_sp_ptr), "r"(new_sp) : "memory"
+            }
+            return
+        }
+
         asm {
             "pushq %%rbp; pushq %%rbx; pushq %%rdi; pushq %%rsi; pushq %%r12; pushq %%r13; pushq %%r14; pushq %%r15"
             "movq %%rsp, (%0)"
@@ -142,7 +175,11 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         top: i64 = (cast(i64, raw_stack) + stack_size) & -16
         sp_exec: **u8 = cast(**u8, top - 8)
         sp_exec[0] = cast(*u8, fiber_entry_point)
-        f.stack_ptr = cast(*u8, top - 72)
+        if Builtin.IsWindows {
+            f.stack_ptr = cast(*u8, top - 232)
+        } else {
+            f.stack_ptr = cast(*u8, top - 72)
+        }
         
         std.task.enqueue(f)
         return 0
