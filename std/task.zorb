@@ -4,10 +4,14 @@ import "errors.zorb"
 export struct Fiber {
     id: i64,
     stack_ptr: *u8,
-    state: i32, // 0: Ready, 2: Dead
+    state: i32, // 0: Ready, 1: Waiting, 2: Dead
     func: fn(*void) -> void,
     arg: *void,
     next: *Fiber
+    wait_fd: i32,
+    wait_events: i16,
+    wait_revents: i16,
+    waiting_next: *Fiber
 }
 
 export current_fiber: *Fiber = cast(*Fiber, 0)
@@ -24,11 +28,7 @@ export fn std.task.is_supported() -> bool {
     }
 
     if Builtin.IsX86_64 {
-        if !Builtin.IsWindows {
-            return true
-        }
-
-        return false
+        return true
     }
 
     if Builtin.IsAArch64 {
@@ -79,10 +79,10 @@ export [noinline, noclone]
 fn std.task.swap_context(old_sp_ptr: **u8, new_sp: *u8) {
     if Builtin.IsX86_64 {
         asm {
-            "pushq %%rbp; pushq %%rbx; pushq %%r12; pushq %%r13; pushq %%r14; pushq %%r15"
+            "pushq %%rbp; pushq %%rbx; pushq %%rdi; pushq %%rsi; pushq %%r12; pushq %%r13; pushq %%r14; pushq %%r15"
             "movq %%rsp, (%0)"
             "movq %1, %%rsp"
-            "popq %%r15; popq %%r14; popq %%r13; popq %%r12; popq %%rbx; popq %%rbp"
+            "popq %%r15; popq %%r14; popq %%r13; popq %%r12; popq %%rsi; popq %%rdi; popq %%rbx; popq %%rbp"
             : : "r"(old_sp_ptr), "r"(new_sp) : "memory"
         }
         return
@@ -133,12 +133,16 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         f.arg = arg
         f.state = 0
         f.next = cast(*Fiber, 0)
+        f.wait_fd = -1
+        f.wait_events = cast(i16, 0)
+        f.wait_revents = cast(i16, 0)
+        f.waiting_next = cast(*Fiber, 0)
         active_fibers = active_fibers + 1 // Increment when created
         
         top: i64 = (cast(i64, raw_stack) + stack_size) & -16
         sp_exec: **u8 = cast(**u8, top - 8)
         sp_exec[0] = cast(*u8, fiber_entry_point)
-        f.stack_ptr = cast(*u8, top - 56)
+        f.stack_ptr = cast(*u8, top - 72)
         
         std.task.enqueue(f)
         return 0
@@ -156,6 +160,10 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         f.arg = arg
         f.state = 0
         f.next = cast(*Fiber, 0)
+        f.wait_fd = -1
+        f.wait_events = cast(i16, 0)
+        f.wait_revents = cast(i16, 0)
+        f.waiting_next = cast(*Fiber, 0)
         active_fibers = active_fibers + 1
 
         top: i64 = (cast(i64, raw_stack) + stack_size) & -16
@@ -202,7 +210,7 @@ export fn std.task.has_ready_fibers() -> bool {
     return true
 }
 
-fn std.task.enqueue(f: *Fiber) {
+export fn std.task.enqueue(f: *Fiber) {
     f.next = cast(*Fiber, 0)
     if cast(i64, ready_queue_tail) == 0 {
         ready_queue_head = f

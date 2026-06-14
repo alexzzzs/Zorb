@@ -1,0 +1,187 @@
+import "../../../std/async.zorb"
+import "../../../std/io.zorb"
+import "../../../std/mem.zorb"
+import "../../../std/net.zorb"
+import "../../../std/os.zorb"
+import "../../../std/str.zorb"
+import "../../../std/task.zorb"
+
+client_fd_global: i32 = 0
+conn_fd_global: i32 = 0
+
+fn string_bytes(value: string) -> []u8 {
+    bytes: []u8
+    bytes.ptr = cast(*u8, value)
+    bytes.len = std.str.len(value)
+    return bytes
+}
+
+fn send_exact(fd: i32, buf: []u8) -> bool {
+    sent: i64 = 0
+    while sent < buf.len {
+        chunk: []u8 = buf
+        chunk.ptr = buf.ptr + sent
+        chunk.len = buf.len - sent
+        wrote: i64 = std.net.send(fd, chunk)
+        if wrote <= 0 {
+            return false
+        }
+        sent = sent + wrote
+    }
+
+    return true
+}
+
+fn recv_exact(fd: i32, buf: []u8) -> bool {
+    received: i64 = 0
+    while received < buf.len {
+        chunk: []u8 = buf
+        chunk.ptr = buf.ptr + received
+        chunk.len = buf.len - received
+        read: i64 = std.net.recv(fd, chunk)
+        if read <= 0 {
+            return false
+        }
+        received = received + read
+    }
+
+    return true
+}
+
+fn bind_loopback_port(server_fd: i32, addr: *std.net.SockAddrV4) -> bool {
+    port: i64 = 19140
+    while port < 19180 {
+        candidate: std.net.SockAddrV4 = std.net.sockaddr_v4_loopback(cast(u16, port))
+        bind_result: i64 = std.net.bind_v4(server_fd, &candidate)
+        if bind_result >= 0 {
+            addr.family = candidate.family
+            addr.port = candidate.port
+            addr.addr = candidate.addr
+            i: i64 = 0
+            while i < 8 {
+                addr.zero[i] = candidate.zero[i]
+                i = i + 1
+            }
+            return true
+        }
+        port = port + 1
+    }
+
+    return false
+}
+
+fn reader(arg: *void) {
+    std.async.wait_readable(conn_fd_global) catch |wait_err| {
+        std.os.exit(wait_err)
+        return
+    }
+
+    buf_storage: [5]u8
+    buf: []u8 = buf_storage
+    if !recv_exact(conn_fd_global, buf) {
+        std.os.exit(31)
+        return
+    }
+
+    if !std.str.slice_eql(buf, string_bytes("PING\n")) {
+        std.os.exit(32)
+        return
+    }
+
+    std.io.print("async net ok\n")
+}
+
+fn writer(arg: *void) {
+    std.async.wait_writable(client_fd_global) catch |wait_err| {
+        std.os.exit(wait_err)
+        return
+    }
+
+    if !send_exact(client_fd_global, string_bytes("PING\n")) {
+        std.os.exit(41)
+        return
+    }
+}
+
+fn close_checked(fd: i32) {
+    std.net.close(fd)
+}
+
+fn _start() {
+    if !std.net.is_supported() || !std.async.is_supported() {
+        std.io.print("unsupported\n")
+        std.os.exit(0)
+        return
+    }
+
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(262144) catch |init_err| {
+        std.os.exit(init_err)
+        return
+    }
+
+    server_fd_raw: i64 = std.net.socket_tcp_v4()
+    client_fd_raw: i64 = std.net.socket_tcp_v4()
+    if server_fd_raw < 0 || client_fd_raw < 0 {
+        std.os.exit(1)
+        return
+    }
+
+    server_fd: i32 = cast(i32, server_fd_raw)
+    client_fd_global = cast(i32, client_fd_raw)
+
+    listen_addr: std.net.SockAddrV4
+    if !bind_loopback_port(server_fd, &listen_addr) {
+        close_checked(client_fd_global)
+        close_checked(server_fd)
+        std.os.exit(2)
+        return
+    }
+
+    if std.net.listen(server_fd, 1) < 0 {
+        close_checked(client_fd_global)
+        close_checked(server_fd)
+        std.os.exit(3)
+        return
+    }
+
+    if std.net.connect_v4(client_fd_global, &listen_addr) < 0 {
+        close_checked(client_fd_global)
+        close_checked(server_fd)
+        std.os.exit(4)
+        return
+    }
+
+    conn_fd_raw: i64 = std.net.accept(server_fd)
+    if conn_fd_raw < 0 {
+        close_checked(client_fd_global)
+        close_checked(server_fd)
+        std.os.exit(5)
+        return
+    }
+
+    conn_fd_global = cast(i32, conn_fd_raw)
+    std.async.init()
+
+    std.task.spawn(&heap, reader, cast(*void, 0)) catch |spawn_err| {
+        close_checked(conn_fd_global)
+        close_checked(client_fd_global)
+        close_checked(server_fd)
+        std.os.exit(spawn_err)
+        return
+    }
+
+    std.task.spawn(&heap, writer, cast(*void, 0)) catch |spawn_err| {
+        close_checked(conn_fd_global)
+        close_checked(client_fd_global)
+        close_checked(server_fd)
+        std.os.exit(spawn_err)
+        return
+    }
+
+    std.async.loop()
+
+    close_checked(conn_fd_global)
+    close_checked(client_fd_global)
+    close_checked(server_fd)
+    std.os.exit(0)
+}

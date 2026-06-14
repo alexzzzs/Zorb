@@ -1,5 +1,18 @@
 import "errors.zorb"
 
+import c "winsock2.h"
+extern fn WSAStartup(wVersionRequested: u16, wsa_data: *u8) -> i32
+extern fn WSAGetLastError() -> i32
+extern fn socket(domain: i32, kind: i32, protocol: i32) -> i64
+extern fn bind(fd: i64, addr: *std.net.SockAddrV4, addr_len: i32) -> i32
+extern fn listen(fd: i64, backlog: i32) -> i32
+extern fn accept(fd: i64, addr: *u8, addr_len: *i32) -> i64
+extern fn connect(fd: i64, addr: *std.net.SockAddrV4, addr_len: i32) -> i32
+extern fn send(fd: i64, buf: *u8, len: i32, flags: i32) -> i32
+extern fn recv(fd: i64, buf: *u8, len: i32, flags: i32) -> i32
+extern fn closesocket(fd: i64) -> i32
+extern fn WSAPoll(fds: *std.net.PollFd, count: u32, timeout_ms: i32) -> i32
+
 export struct std.net {}
 
 export struct std.net.SockAddrV4 {
@@ -9,8 +22,56 @@ export struct std.net.SockAddrV4 {
     zero: [8]u8
 }
 
+export struct std.net.PollFd {
+    fd: i32,
+    events: i16,
+    revents: i16
+}
+
+wsa_started: bool = false
+wsa_start_status: i32 = 0
+wsa_data_storage: [512]u8
+
+fn std.net.pollin() -> i16 {
+    return cast(i16, 1)
+}
+
+fn std.net.pollout() -> i16 {
+    return cast(i16, 4)
+}
+
+fn std.net.pollerr_mask() -> i16 {
+    return cast(i16, 56)
+}
+
+fn std.net.ensure_windows_started() -> i32 {
+    if !Builtin.IsWindows {
+        return 0
+    }
+
+    if wsa_started {
+        return wsa_start_status
+    }
+
+    wsa_start_status = WSAStartup(cast(u16, 514), wsa_data_storage)
+    wsa_started = true
+    return wsa_start_status
+}
+
 export fn std.net.is_supported() -> bool {
     if Builtin.IsBareMetal {
+        return false
+    }
+
+    if Builtin.IsWindows {
+        if Builtin.IsX86_64 {
+            return true
+        }
+
+        if Builtin.IsAArch64 {
+            return true
+        }
+
         return false
     }
 
@@ -32,6 +93,15 @@ export fn std.net.is_supported() -> bool {
 export fn std.net.errno(result: i64) -> i32 {
     if result >= 0 {
         return 0
+    }
+
+    if Builtin.IsWindows {
+        err: i32 = WSAGetLastError()
+        if err != 0 {
+            return err
+        }
+
+        return cast(i32, error.IOError)
     }
 
     return cast(i32, -result)
@@ -180,9 +250,34 @@ fn std.net.listen_nr() -> i64 {
     return 0
 }
 
+fn std.net.poll_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 7
+    }
+
+    if Builtin.IsAArch64 {
+        return 73
+    }
+
+    return 0
+}
+
 export fn std.net.socket(domain: i32, kind: i32, protocol: i32) -> i64 {
     if !std.net.is_supported() {
         return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    if Builtin.IsWindows {
+        if std.net.ensure_windows_started() != 0 {
+            return -cast(i64, error.IOError)
+        }
+
+        win_fd: i64 = socket(domain, kind, protocol)
+        if win_fd < 0 {
+            return -cast(i64, WSAGetLastError())
+        }
+
+        return win_fd
     }
 
     nr: i64 = std.net.socket_nr()
@@ -202,6 +297,19 @@ export fn std.net.bind_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
         return -cast(i64, error.UnsupportedPlatform)
     }
 
+    if Builtin.IsWindows {
+        if std.net.ensure_windows_started() != 0 {
+            return -cast(i64, error.IOError)
+        }
+
+        result: i32 = bind(cast(i64, fd), addr, cast(i32, Builtin.sizeof(std.net.SockAddrV4)))
+        if result < 0 {
+            return -cast(i64, WSAGetLastError())
+        }
+
+        return cast(i64, result)
+    }
+
     nr: i64 = std.net.bind_nr()
     if nr == 0 {
         return -cast(i64, error.NotImplemented)
@@ -213,6 +321,19 @@ export fn std.net.bind_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
 export fn std.net.listen(fd: i32, backlog: i32) -> i64 {
     if !std.net.is_supported() {
         return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    if Builtin.IsWindows {
+        if std.net.ensure_windows_started() != 0 {
+            return -cast(i64, error.IOError)
+        }
+
+        result: i32 = listen(cast(i64, fd), backlog)
+        if result < 0 {
+            return -cast(i64, WSAGetLastError())
+        }
+
+        return cast(i64, result)
     }
 
     nr: i64 = std.net.listen_nr()
@@ -228,6 +349,19 @@ export fn std.net.accept(fd: i32) -> i64 {
         return -cast(i64, error.UnsupportedPlatform)
     }
 
+    if Builtin.IsWindows {
+        if std.net.ensure_windows_started() != 0 {
+            return -cast(i64, error.IOError)
+        }
+
+        accepted_fd: i64 = accept(cast(i64, fd), cast(*u8, 0), cast(*i32, 0))
+        if accepted_fd < 0 {
+            return -cast(i64, WSAGetLastError())
+        }
+
+        return accepted_fd
+    }
+
     nr: i64 = std.net.accept_nr()
     if nr == 0 {
         return -cast(i64, error.NotImplemented)
@@ -239,6 +373,19 @@ export fn std.net.accept(fd: i32) -> i64 {
 export fn std.net.connect_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
     if !std.net.is_supported() {
         return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    if Builtin.IsWindows {
+        if std.net.ensure_windows_started() != 0 {
+            return -cast(i64, error.IOError)
+        }
+
+        result: i32 = connect(cast(i64, fd), addr, cast(i32, Builtin.sizeof(std.net.SockAddrV4)))
+        if result < 0 {
+            return -cast(i64, WSAGetLastError())
+        }
+
+        return cast(i64, result)
     }
 
     nr: i64 = std.net.connect_nr()
@@ -254,6 +401,24 @@ export fn std.net.send(fd: i32, buf: []u8) -> i64 {
         return -cast(i64, error.UnsupportedPlatform)
     }
 
+    if Builtin.IsWindows {
+        if std.net.ensure_windows_started() != 0 {
+            return -cast(i64, error.IOError)
+        }
+
+        send_len: i32 = cast(i32, buf.len)
+        if buf.len > 2147483647 {
+            send_len = 2147483647
+        }
+
+        wrote: i32 = send(cast(i64, fd), buf.ptr, send_len, 0)
+        if wrote < 0 {
+            return -cast(i64, WSAGetLastError())
+        }
+
+        return cast(i64, wrote)
+    }
+
     nr: i64 = std.net.sendto_nr()
     if nr == 0 {
         return -cast(i64, error.NotImplemented)
@@ -265,6 +430,24 @@ export fn std.net.send(fd: i32, buf: []u8) -> i64 {
 export fn std.net.recv(fd: i32, buf: []u8) -> i64 {
     if !std.net.is_supported() {
         return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    if Builtin.IsWindows {
+        if std.net.ensure_windows_started() != 0 {
+            return -cast(i64, error.IOError)
+        }
+
+        recv_len: i32 = cast(i32, buf.len)
+        if buf.len > 2147483647 {
+            recv_len = 2147483647
+        }
+
+        read: i32 = recv(cast(i64, fd), buf.ptr, recv_len, 0)
+        if read < 0 {
+            return -cast(i64, WSAGetLastError())
+        }
+
+        return cast(i64, read)
     }
 
     nr: i64 = std.net.recvfrom_nr()
@@ -280,10 +463,105 @@ export fn std.net.close(fd: i32) -> i64 {
         return -cast(i64, error.UnsupportedPlatform)
     }
 
+    if Builtin.IsWindows {
+        if std.net.ensure_windows_started() != 0 {
+            return -cast(i64, error.IOError)
+        }
+
+        result: i32 = closesocket(cast(i64, fd))
+        if result < 0 {
+            return -cast(i64, WSAGetLastError())
+        }
+
+        return cast(i64, result)
+    }
+
     nr: i64 = std.net.close_nr()
     if nr == 0 {
         return -cast(i64, error.NotImplemented)
     }
 
     return syscall(nr, fd)
+}
+
+export fn std.net.poll(fds: *std.net.PollFd, count: i64, timeout_ms: i32) -> i64 {
+    if !std.net.is_supported() {
+        return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    if count <= 0 {
+        return 0
+    }
+
+    if Builtin.IsWindows {
+        if std.net.ensure_windows_started() != 0 {
+            return -cast(i64, error.IOError)
+        }
+
+        result: i32 = WSAPoll(fds, cast(u32, count), timeout_ms)
+        if result < 0 {
+            return -cast(i64, WSAGetLastError())
+        }
+
+        return cast(i64, result)
+    }
+
+    nr: i64 = std.net.poll_nr()
+    if nr == 0 {
+        return -cast(i64, error.NotImplemented)
+    }
+
+    return syscall(nr, cast(i64, fds), count, cast(i64, timeout_ms))
+}
+
+export fn std.net.poll_readable(fd: i32, timeout_ms: i32) -> i64 {
+    poll_fd: std.net.PollFd
+    poll_fd.fd = fd
+    poll_fd.events = std.net.pollin()
+    poll_fd.revents = cast(i16, 0)
+
+    result: i64 = std.net.poll(&poll_fd, 1, timeout_ms)
+    if result <= 0 {
+        return result
+    }
+
+    if poll_fd.revents == cast(i16, 0) {
+        return 0
+    }
+
+    if (poll_fd.revents & std.net.pollerr_mask()) != cast(i16, 0) {
+        return -cast(i64, error.IOError)
+    }
+
+    if (poll_fd.revents & std.net.pollin()) != cast(i16, 0) {
+        return 1
+    }
+
+    return 0
+}
+
+export fn std.net.poll_writable(fd: i32, timeout_ms: i32) -> i64 {
+    poll_fd: std.net.PollFd
+    poll_fd.fd = fd
+    poll_fd.events = std.net.pollout()
+    poll_fd.revents = cast(i16, 0)
+
+    result: i64 = std.net.poll(&poll_fd, 1, timeout_ms)
+    if result <= 0 {
+        return result
+    }
+
+    if poll_fd.revents == cast(i16, 0) {
+        return 0
+    }
+
+    if (poll_fd.revents & std.net.pollerr_mask()) != cast(i16, 0) {
+        return -cast(i64, error.IOError)
+    }
+
+    if (poll_fd.revents & std.net.pollout()) != cast(i16, 0) {
+        return 1
+    }
+
+    return 0
 }

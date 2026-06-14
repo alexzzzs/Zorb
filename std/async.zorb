@@ -1,15 +1,21 @@
+import "errors.zorb"
+import "net.zorb"
 import "task.zorb"
 
 export struct std.async {}
-epoll_fd: i32 = -1
-polling_enabled: bool = false
+
+waiting_head: *Fiber = cast(*Fiber, 0)
+
+fn std.async.read_event() -> i16 {
+    return cast(i16, 1)
+}
+
+fn std.async.write_event() -> i16 {
+    return cast(i16, 4)
+}
 
 export fn std.async.is_supported() -> bool {
     if Builtin.IsBareMetal {
-        return false
-    }
-
-    if !Builtin.IsLinux {
         return false
     }
 
@@ -21,25 +27,82 @@ export fn std.async.is_supported() -> bool {
 }
 
 export fn std.async.init() {
-    epoll_fd = -1
-    polling_enabled = false
+    waiting_head = cast(*Fiber, 0)
+}
 
-    if std.async.is_supported() {
-        epoll_create1_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            epoll_create1_nr = 291
+export fn std.async.wait_readable(fd: i32) !i32 {
+    result: i32 = std.async.wait_for_fd(fd, std.async.read_event()) catch |err| {
+        return err
+    }
+    return result
+}
+
+export fn std.async.wait_writable(fd: i32) !i32 {
+    result: i32 = std.async.wait_for_fd(fd, std.async.write_event()) catch |err| {
+        return err
+    }
+    return result
+}
+
+fn std.async.wait_for_fd(fd: i32, events: i16) !i32 {
+    if fd < 0 {
+        return error.InvalidArgument
+    }
+
+    if !std.async.is_supported() {
+        return error.UnsupportedPlatform
+    }
+
+    if cast(i64, current_fiber) == 0 {
+        if std.async.poll_single(fd, events, -1) > 0 {
+            return 0
         }
-        if Builtin.IsAArch64 {
-            epoll_create1_nr = 20
+
+        return error.IOError
+    }
+
+    while true {
+        ready: i64 = std.async.poll_single(fd, events, 0)
+        if ready > 0 {
+            return 0
         }
-        if epoll_create1_nr != 0 {
-            created_fd: i64 = syscall(epoll_create1_nr, 0)
-            if created_fd >= 0 {
-                epoll_fd = cast(i32, created_fd)
-                polling_enabled = true
-            }
+
+        if ready < 0 {
+            return error.IOError
+        }
+
+        std.async.register_current_wait(fd, events)
+        std.task.yield_to_scheduler()
+
+        current_fiber.state = 0
+        if current_fiber.wait_revents != cast(i16, 0) {
+            current_fiber.wait_revents = cast(i16, 0)
+            return 0
         }
     }
+
+    return error.IOError
+}
+
+fn std.async.register_current_wait(fd: i32, events: i16) {
+    current_fiber.state = 1
+    current_fiber.wait_fd = fd
+    current_fiber.wait_events = events
+    current_fiber.wait_revents = cast(i16, 0)
+    current_fiber.waiting_next = waiting_head
+    waiting_head = current_fiber
+}
+
+fn std.async.poll_single(fd: i32, events: i16, timeout_ms: i32) -> i64 {
+    if events == std.async.read_event() {
+        return std.net.poll_readable(fd, timeout_ms)
+    }
+
+    if events == std.async.write_event() {
+        return std.net.poll_writable(fd, timeout_ms)
+    }
+
+    return -cast(i64, error.InvalidArgument)
 }
 
 export fn std.async.loop() {
@@ -47,48 +110,91 @@ export fn std.async.loop() {
         return
     }
 
-    // Condition fix: Exit when no more active fibers exist
     while active_fibers > 0 {
         while std.task.has_ready_fibers() {
             f: *Fiber = std.task.dequeue()
-            if f.state == 2 { continue }
+            if f.state == 2 {
+                continue
+            }
             std.task.resume(f)
         }
 
-        if active_fibers > 0 {
-            if !polling_enabled {
-                return
-            }
-            std.async.poll_events()
+        if active_fibers <= 0 {
+            return
         }
+
+        if cast(i64, waiting_head) == 0 {
+            return
+        }
+
+        std.async.poll_events()
     }
 }
 
 fn std.async.poll_events() {
-    if !std.async.is_supported() {
+    if cast(i64, waiting_head) == 0 {
         return
     }
 
-    if !polling_enabled {
+    timeout_ms: i32 = 0
+    if cast(i64, ready_queue_head) == 0 {
+        timeout_ms = -1
+    }
+
+    poll_storage: [64]std.net.PollFd
+    waiting_fibers: [64]i64
+    count: i64 = 0
+    cursor: *Fiber = waiting_head
+
+    while cast(i64, cursor) != 0 && count < 64 {
+        poll_storage[count].fd = cursor.wait_fd
+        poll_storage[count].events = cursor.wait_events
+        poll_storage[count].revents = cast(i16, 0)
+        waiting_fibers[count] = cast(i64, cursor)
+        cursor = cursor.waiting_next
+        count = count + 1
+    }
+
+    if count == 0 {
         return
     }
 
-    // If tasks are running, don't block (timeout 0)
-    // If waiting for IO, block (timeout -1)
-    timeout: i64 = 0
-    if cast(i64, ready_queue_head) == 0 { timeout = -1 }
-    
-    events: [128]u8
-    if Builtin.IsLinux {
-        epoll_wait_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            epoll_wait_nr = 281
+    ready: i64 = std.net.poll(poll_storage, count, timeout_ms)
+    if ready <= 0 {
+        return
+    }
+
+    i: i64 = 0
+    while i < count {
+        if poll_storage[i].revents != cast(i16, 0) {
+            std.async.wake_waiting_fiber(cast(*Fiber, waiting_fibers[i]), poll_storage[i].revents)
         }
-        if Builtin.IsAArch64 {
-            epoll_wait_nr = 22
+        i = i + 1
+    }
+}
+
+fn std.async.wake_waiting_fiber(target: *Fiber, revents: i16) {
+    prev: *Fiber = cast(*Fiber, 0)
+    cursor: *Fiber = waiting_head
+
+    while cast(i64, cursor) != 0 {
+        if cursor == target {
+            if cast(i64, prev) == 0 {
+                waiting_head = cursor.waiting_next
+            } else {
+                prev.waiting_next = cursor.waiting_next
+            }
+
+            cursor.waiting_next = cast(*Fiber, 0)
+            cursor.wait_revents = revents
+            cursor.wait_fd = -1
+            cursor.wait_events = cast(i16, 0)
+            cursor.state = 0
+            std.task.enqueue(cursor)
+            return
         }
-        if epoll_wait_nr != 0 {
-            syscall(epoll_wait_nr, cast(i64, epoll_fd), cast(i64, &events), 10, timeout, 0, 0)
-        }
+
+        prev = cursor
+        cursor = cursor.waiting_next
     }
 }
