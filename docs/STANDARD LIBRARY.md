@@ -797,7 +797,8 @@ fn std.task.swap_context(old_sp_ptr: **u8, new_sp: *u8)
 `swap_context` is architecture-specific inline assembly:
 
 ```text
-x86_64: saves/restores rbp, rbx, rdi, rsi, r12-r15 and switches rsp
+x86_64 Linux/ELF: saves/restores rbp, rbx, rdi, rsi, r12-r15 and switches rsp
+x86_64 Windows: also preserves xmm6-xmm15 to satisfy the Win64 ABI before switching rsp
 AArch64: saves/restores x19-x30 and switches sp
 ```
 
@@ -818,6 +819,8 @@ allocation failure: error.OutOfMemory
 ```
 
 Both supported architectures allocate a 65536-byte stack and a `Fiber` object from the provided `HeapAllocator`.
+
+On Windows x86_64, the initial fiber stack bootstrap also reserves the 32-byte Win64 shadow space plus the entry return slot before `fiber_entry_point` runs.
 
 The private `fiber_entry_point` calls `f.func(f.arg)`, marks the fiber dead with `state = 2`, decrements `active_fibers`, and yields to the scheduler.
 
@@ -2155,9 +2158,16 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         active_fibers = active_fibers + 1
         
         top: i64 = (cast(i64, raw_stack) + stack_size) & -16
+        if Builtin.IsWindows {
+            top = top - 40
+        }
         sp_exec: **u8 = cast(**u8, top - 8)
         sp_exec[0] = cast(*u8, fiber_entry_point)
-        f.stack_ptr = cast(*u8, top - 72)
+        if Builtin.IsWindows {
+            f.stack_ptr = cast(*u8, top - 232)
+        } else {
+            f.stack_ptr = cast(*u8, top - 72)
+        }
         
         std.task.enqueue(f)
         return 0

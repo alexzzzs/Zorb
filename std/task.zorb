@@ -174,7 +174,10 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         
         top: i64 = (cast(i64, raw_stack) + stack_size) & -16
         if Builtin.IsWindows {
-            top = top - 8
+            // Reserve the initial Win64 shadow space plus the entry return slot.
+            // After swap_context restores and returns into fiber_entry_point,
+            // rsp must be 8 mod 16 and still leave 32 bytes of home space.
+            top = top - 40
         }
         sp_exec: **u8 = cast(**u8, top - 8)
         sp_exec[0] = cast(*u8, fiber_entry_point)
