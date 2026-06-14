@@ -6,6 +6,7 @@ on:
 
 jobs:
   test:
+    name: linux-hosted-x64
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -55,6 +56,7 @@ jobs:
         run: dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj --configuration Release
 
   linux-aarch64-cross:
+    name: linux-aarch64-cross
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -107,6 +109,7 @@ jobs:
         run: dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj --configuration Release
 
   windows-hosted-smoke:
+    name: windows-hosted-x64
     runs-on: windows-latest
     timeout-minutes: 20
 

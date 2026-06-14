@@ -34,7 +34,8 @@ public static class ExternalTools
                 $"/Fe:{outputPath}",
                 "/link",
                 "/subsystem:console",
-                "kernel32.lib"
+                "kernel32.lib",
+                "ws2_32.lib"
             ],
             _ => throw new ZorbCompilerException($"Unsupported Windows compiler '{compiler}'.")
         };

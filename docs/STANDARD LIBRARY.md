@@ -578,7 +578,9 @@ fn main() -> i64 {
 
 ## Networking: `std/net.zorb`
 
-`std/net.zorb` is a Linux-first low-level networking layer. It currently focuses on raw TCP socket setup rather than higher-level protocols.
+`std/net.zorb` is a low-level cross-platform networking layer for the current
+hosted targets. It focuses on raw TCP socket setup and readiness polling rather
+than higher-level protocols.
 
 ### Internal Definitions
 
@@ -605,9 +607,10 @@ Current behavior:
 
 ```text
 bare-metal: false
-Linux x86_64: true
-Linux AArch64: true
-Windows: false
+ Linux x86_64: true
+ Linux AArch64: true
+ Windows x86_64: true
+ Windows AArch64: true
 other targets: false
 ```
 
@@ -626,8 +629,8 @@ export fn std.net.sockaddr_v4_any(port: u16) -> std.net.SockAddrV4
 Notes:
 
 ```text
-errno(result): returns 0 on success, otherwise -result cast to i32
-htons/htonl: current implementations assume the supported little-endian Linux targets in this repo
+errno(result): returns 0 on success; on Windows it prefers WSAGetLastError(), otherwise it converts the negative raw result
+htons/htonl: current implementations assume the supported little-endian hosted targets in this repo
 sockaddr_v4 helpers write family = AF_INET and store port/address in network byte order
 ```
 
@@ -643,17 +646,23 @@ export fn std.net.connect_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64
 export fn std.net.send(fd: i32, buf: []u8) -> i64
 export fn std.net.recv(fd: i32, buf: []u8) -> i64
 export fn std.net.close(fd: i32) -> i64
+export fn std.net.poll(fds: *std.net.PollFd, count: i64, timeout_ms: i32) -> i64
+export fn std.net.poll_readable(fd: i32, timeout_ms: i32) -> i64
+export fn std.net.poll_writable(fd: i32, timeout_ms: i32) -> i64
 ```
 
 Behavior:
 
 ```text
-on supported Linux targets: these return raw syscall-style results
+on Linux targets: socket operations lower through raw syscalls
+on Windows targets: socket operations lower through Winsock and WSAStartup is initialized lazily
 on unsupported targets: these return negative sentinel values derived from std.errors
 socket_tcp_v4(): shorthand for socket(AF_INET, SOCK_STREAM, 0)
 bind_v4/connect_v4(): pass a 16-byte IPv4 sockaddr
-send/recv(): lower through sendto/recvfrom with null address arguments
+send/recv(): lower through sendto/recvfrom on Linux and send/recv on Windows
 accept(): currently accepts without returning peer address metadata
+poll(): lowers through poll on Linux and WSAPoll on Windows
+poll_readable/poll_writable(): convenience wrappers for one descriptor
 ```
 
 Example:
@@ -711,10 +720,14 @@ import "errors.zorb"
 export struct Fiber {
     id: i64,
     stack_ptr: *u8,
-    state: i32, // 0: Ready, 2: Dead
+    state: i32, // 0: Ready, 1: Waiting, 2: Dead
     func: fn(*void) -> void,
     arg: *void,
     next: *Fiber
+    wait_fd: i32,
+    wait_events: i16,
+    wait_revents: i16,
+    waiting_next: *Fiber
 }
 
 export current_fiber: *Fiber = cast(*Fiber, 0)
@@ -736,8 +749,7 @@ Current behavior:
 
 ```text
 bare-metal: false
-x86_64 non-Windows: true
-x86_64 Windows: false
+x86_64: true
 AArch64: true
 otherwise: false
 ```
@@ -782,10 +794,11 @@ fn std.task.swap_context(old_sp_ptr: **u8, new_sp: *u8)
 
 `resume` sets `current_fiber`, saves `scheduler_sp`, and switches to the fiber stack pointer.
 
-`swap_context` is architecture-specific inline assembly:
+`swap_context` is architecture-specific inline assembly on non-Windows targets:
 
 ```text
-x86_64: saves/restores rbp, rbx, r12-r15 and switches rsp
+x86_64 Linux/ELF: saves/restores rbp, rbx, rdi, rsi, r12-r15 and switches rsp
+x86_64 Windows: uses native Windows fibers via ConvertThreadToFiber/CreateFiber/SwitchToFiber
 AArch64: saves/restores x19-x30 and switches sp
 ```
 
@@ -800,12 +813,15 @@ Behavior:
 ```text
 gpa == null: error.InvalidArgument
 !std.task.is_supported(): error.UnsupportedPlatform
-x86_64: allocate stack and Fiber, initialize x86_64 stack frame, enqueue, return 0
+x86_64 Linux/ELF: allocate stack and Fiber, initialize x86_64 stack frame, enqueue, return 0
+x86_64 Windows: allocate Fiber metadata, create a native Windows fiber, enqueue, return 0
 AArch64: allocate stack and Fiber, initialize AArch64 context frame, enqueue, return 0
 allocation failure: error.OutOfMemory
 ```
 
-Both supported architectures allocate a 65536-byte stack and a `Fiber` object from the provided `HeapAllocator`.
+Linux x86_64 and AArch64 allocate a 65536-byte stack plus a `Fiber` object from the provided `HeapAllocator`.
+
+Windows x86_64 allocates the `Fiber` metadata from the provided `HeapAllocator` and uses the operating system fiber scheduler for the execution stack.
 
 The private `fiber_entry_point` calls `f.func(f.arg)`, marks the fiber dead with `state = 2`, decrements `active_fibers`, and yields to the scheduler.
 
@@ -871,16 +887,18 @@ export fn std.task.dequeue() -> *Fiber
 
 ## Async: `std/async.zorb`
 
-`std/async.zorb` imports `task.zorb` and implements a minimal Linux epoll-backed scheduler loop.
+`std/async.zorb` imports `errors.zorb`, `net.zorb`, and `task.zorb` and
+implements a cooperative socket-wait scheduler layer on top of fibers.
 
 ### Internal Definitions
 
 ```zorb
+import "errors.zorb"
+import "net.zorb"
 import "task.zorb"
 
 export struct std.async {}
-epoll_fd: i32 = -1
-polling_enabled: bool = false
+waiting_head: *Fiber = cast(*Fiber, 0)
 ```
 
 These globals are module-private because they are not exported.
@@ -895,7 +913,6 @@ Returns `true` only when:
 
 ```text
 not bare-metal
-Linux target
 std.task.is_supported()
 ```
 
@@ -905,14 +922,25 @@ std.task.is_supported()
 export fn std.async.init()
 ```
 
-Resets `epoll_fd` to `-1` and `polling_enabled` to `false`, then, if async is supported, calls `epoll_create1(0)` using raw syscall numbers:
+Resets the waiting queue head to null. There is no separate kernel poller
+handle; async waiting builds on `std.net.poll(...)`.
 
-```text
-x86_64: 291
-AArch64: 20
+### Wait Primitives
+
+```zorb
+export fn std.async.wait_readable(fd: i32) !i32
+export fn std.async.wait_writable(fd: i32) !i32
 ```
 
-When `epoll_create1` succeeds, the returned descriptor is stored in `epoll_fd` and `polling_enabled` becomes `true`.
+Behavior:
+
+```text
+fd < 0: error.InvalidArgument
+!std.async.is_supported(): error.UnsupportedPlatform
+outside a fiber: blocks in std.net.poll_* with timeout -1
+inside a fiber: registers the current fiber as waiting, yields, and resumes when the fd becomes ready
+poll failure: error.IOError
+```
 
 ### Event Loop
 
@@ -927,7 +955,7 @@ Otherwise:
 1. Runs while `active_fibers > 0`.
 2. Dequeues and resumes ready fibers.
 3. Skips fibers whose `state == 2`.
-4. If active fibers remain but polling is unavailable, returns immediately.
+4. If no fibers are waiting on I/O, returns immediately.
 5. Otherwise calls `std.async.poll_events()`.
 
 Internal polling:
@@ -936,15 +964,12 @@ Internal polling:
 fn std.async.poll_events()
 ```
 
-Returns immediately when async support or polling setup is unavailable.
-Otherwise it uses timeout `0` when the ready queue is non-empty and `-1` when it is empty, allocates a local `[128]u8` event buffer, and calls `epoll_wait`.
-
-Syscall numbers:
-
-```text
-x86_64: 281
-AArch64: 22
-```
+Returns immediately when no fibers are waiting. Otherwise it batches waiting
+fibers into a local 64-element poll array, uses timeout `0` when the ready
+queue is non-empty and `-1` when it is empty, calls `std.net.poll(...)`, and
+wakes any fibers whose descriptors became ready. The implementation rotates its
+batch cursor across polling passes so waiters beyond the first 64 still make
+progress. Each individual poll pass still only examines up to 64 waiters.
 
 Example:
 
@@ -2003,7 +2028,11 @@ export struct Fiber {
     state: i32,
     func: fn(*void) -> void,
     arg: *void,
-    next: *Fiber
+    next: *Fiber,
+    wait_fd: i32,
+    wait_events: i16,
+    wait_revents: i16,
+    waiting_next: *Fiber
 }
 
 export current_fiber: *Fiber = cast(*Fiber, 0)
@@ -2018,11 +2047,7 @@ export fn std.task.is_supported() -> bool {
     }
 
     if Builtin.IsX86_64 {
-        if !Builtin.IsWindows {
-            return true
-        }
-
-        return false
+        return true
     }
 
     if Builtin.IsAArch64 {
@@ -2073,10 +2098,10 @@ export [noinline, noclone]
 fn std.task.swap_context(old_sp_ptr: **u8, new_sp: *u8) {
     if Builtin.IsX86_64 {
         asm {
-            "pushq %%rbp; pushq %%rbx; pushq %%r12; pushq %%r13; pushq %%r14; pushq %%r15"
+            "pushq %%rbp; pushq %%rbx; pushq %%rdi; pushq %%rsi; pushq %%r12; pushq %%r13; pushq %%r14; pushq %%r15"
             "movq %%rsp, (%0)"
             "movq %1, %%rsp"
-            "popq %%r15; popq %%r14; popq %%r13; popq %%r12; popq %%rbx; popq %%rbp"
+            "popq %%r15; popq %%r14; popq %%r13; popq %%r12; popq %%rsi; popq %%rdi; popq %%rbx; popq %%rbp"
             : : "r"(old_sp_ptr), "r"(new_sp) : "memory"
         }
         return
@@ -2127,12 +2152,17 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         f.arg = arg
         f.state = 0
         f.next = cast(*Fiber, 0)
+        f.wait_fd = -1
+        f.wait_events = cast(i16, 0)
+        f.wait_revents = cast(i16, 0)
+        f.waiting_next = cast(*Fiber, 0)
         active_fibers = active_fibers + 1
         
-        top: i64 = (cast(i64, raw_stack) + stack_size) & -16
-        sp_exec: **u8 = cast(**u8, top - 8)
-        sp_exec[0] = cast(*u8, fiber_entry_point)
-        f.stack_ptr = cast(*u8, top - 56)
+        fiber_handle: *void = CreateFiber(stack_size, fiber_entry_point_windows, cast(*void, f))
+        if cast(i64, fiber_handle) == 0 {
+            return error.OutOfMemory
+        }
+        f.stack_ptr = cast(*u8, fiber_handle)
         
         std.task.enqueue(f)
         return 0
@@ -2150,6 +2180,10 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         f.arg = arg
         f.state = 0
         f.next = cast(*Fiber, 0)
+        f.wait_fd = -1
+        f.wait_events = cast(i16, 0)
+        f.wait_revents = cast(i16, 0)
+        f.waiting_next = cast(*Fiber, 0)
         active_fibers = active_fibers + 1
 
         top: i64 = (cast(i64, raw_stack) + stack_size) & -16
@@ -2196,7 +2230,7 @@ export fn std.task.has_ready_fibers() -> bool {
     return true
 }
 
-fn std.task.enqueue(f: *Fiber) {
+export fn std.task.enqueue(f: *Fiber) {
     f.next = cast(*Fiber, 0)
     if cast(i64, ready_queue_tail) == 0 {
         ready_queue_head = f
@@ -2219,18 +2253,15 @@ export fn std.task.dequeue() -> *Fiber {
 ### `std/async.zorb`
 
 ```zorb
+import "errors.zorb"
+import "net.zorb"
 import "task.zorb"
 
 export struct std.async {}
-epoll_fd: i32 = -1
-polling_enabled: bool = false
+waiting_head: *Fiber = cast(*Fiber, 0)
 
 export fn std.async.is_supported() -> bool {
     if Builtin.IsBareMetal {
-        return false
-    }
-
-    if !Builtin.IsLinux {
         return false
     }
 
@@ -2242,25 +2273,21 @@ export fn std.async.is_supported() -> bool {
 }
 
 export fn std.async.init() {
-    epoll_fd = -1
-    polling_enabled = false
+    waiting_head = cast(*Fiber, 0)
+}
 
-    if std.async.is_supported() {
-        epoll_create1_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            epoll_create1_nr = 291
-        }
-        if Builtin.IsAArch64 {
-            epoll_create1_nr = 20
-        }
-        if epoll_create1_nr != 0 {
-            created_fd: i64 = syscall(epoll_create1_nr, 0)
-            if created_fd >= 0 {
-                epoll_fd = cast(i32, created_fd)
-                polling_enabled = true
-            }
-        }
+export fn std.async.wait_readable(fd: i32) !i32 {
+    result: i32 = std.async.wait_for_fd(fd, std.async.read_event()) catch |err| {
+        return err
     }
+    return result
+}
+
+export fn std.async.wait_writable(fd: i32) !i32 {
+    result: i32 = std.async.wait_for_fd(fd, std.async.write_event()) catch |err| {
+        return err
+    }
+    return result
 }
 
 export fn std.async.loop() {
@@ -2275,39 +2302,53 @@ export fn std.async.loop() {
             std.task.resume(f)
         }
 
-        if active_fibers > 0 {
-            if !polling_enabled {
-                return
-            }
-            std.async.poll_events()
+        if active_fibers <= 0 {
+            return
         }
+
+        if cast(i64, waiting_head) == 0 {
+            return
+        }
+
+        std.async.poll_events()
     }
 }
 
 fn std.async.poll_events() {
-    if !std.async.is_supported() {
+    if cast(i64, waiting_head) == 0 {
         return
     }
 
-    if !polling_enabled {
+    timeout_ms: i32 = 0
+    if cast(i64, ready_queue_head) == 0 {
+        timeout_ms = -1
+    }
+
+    poll_storage: [64]std.net.PollFd
+    waiting_fibers: [64]i64
+    count: i64 = 0
+    cursor: *Fiber = waiting_head
+
+    while cast(i64, cursor) != 0 && count < 64 {
+        poll_storage[count].fd = cursor.wait_fd
+        poll_storage[count].events = cursor.wait_events
+        poll_storage[count].revents = cast(i16, 0)
+        waiting_fibers[count] = cast(i64, cursor)
+        cursor = cursor.waiting_next
+        count = count + 1
+    }
+
+    ready: i64 = std.net.poll(poll_storage, count, timeout_ms)
+    if ready <= 0 {
         return
     }
 
-    timeout: i64 = 0
-    if cast(i64, ready_queue_head) == 0 { timeout = -1 }
-    
-    events: [128]u8
-    if Builtin.IsLinux {
-        epoll_wait_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            epoll_wait_nr = 281
+    i: i64 = 0
+    while i < count {
+        if poll_storage[i].revents != cast(i16, 0) {
+            std.async.wake_waiting_fiber(cast(*Fiber, waiting_fibers[i]), poll_storage[i].revents)
         }
-        if Builtin.IsAArch64 {
-            epoll_wait_nr = 22
-        }
-        if epoll_wait_nr != 0 {
-            syscall(epoll_wait_nr, cast(i64, epoll_fd), cast(i64, &events), 10, timeout, 0, 0)
-        }
+        i = i + 1
     }
 }
 ```
