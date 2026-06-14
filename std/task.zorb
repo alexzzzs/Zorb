@@ -1,5 +1,11 @@
 import "mem.zorb"
 import "errors.zorb"
+import c "windows.h"
+
+extern fn ConvertThreadToFiber(lpParameter: *void) -> *void
+extern fn CreateFiber(dwStackSize: i64, lpStartAddress: fn(*void) -> void, lpParameter: *void) -> *void
+extern fn SwitchToFiber(lpFiber: *void) -> void
+extern fn DeleteFiber(lpFiber: *void) -> void
 
 export struct Fiber {
     id: i64,
@@ -57,13 +63,58 @@ fn std.task.context_switch_barrier() {
 fn fiber_entry_point() {
     f: *Fiber = current_fiber
     f.func(f.arg)
+    std.task.finish_fiber(f)
+}
+
+fn fiber_entry_point_windows(param: *void) {
+    f: *Fiber = cast(*Fiber, param)
+    current_fiber = f
+    f.func(f.arg)
+    std.task.finish_fiber(f)
+}
+
+fn std.task.finish_fiber(f: *Fiber) {
     f.state = 2 
     active_fibers = active_fibers - 1 // Decrement when finished
+
+    if Builtin.IsWindows {
+        if cast(i64, scheduler_sp) != 0 {
+            SwitchToFiber(cast(*void, scheduler_sp))
+        }
+        return
+    }
+
     std.task.yield_to_scheduler()
+}
+
+fn std.task.ensure_windows_scheduler_fiber() -> bool {
+    if !Builtin.IsWindows {
+        return true
+    }
+
+    if cast(i64, scheduler_sp) != 0 {
+        return true
+    }
+
+    scheduler_fiber: *void = ConvertThreadToFiber(cast(*void, 0))
+    if cast(i64, scheduler_fiber) == 0 {
+        return false
+    }
+
+    scheduler_sp = cast(*u8, scheduler_fiber)
+    return true
 }
 
 export [noinline]
 fn std.task.yield_to_scheduler() {
+    if Builtin.IsWindows {
+        if cast(i64, scheduler_sp) == 0 {
+            return
+        }
+        SwitchToFiber(cast(*void, scheduler_sp))
+        return
+    }
+
     std.task.context_switch_barrier()
     std.task.swap_context(&(current_fiber.stack_ptr), scheduler_sp)
 }
@@ -71,6 +122,15 @@ fn std.task.yield_to_scheduler() {
 export [noinline]
 fn std.task.resume(f: *Fiber) {
     current_fiber = f
+
+    if Builtin.IsWindows {
+        if !std.task.ensure_windows_scheduler_fiber() {
+            return
+        }
+        SwitchToFiber(cast(*void, f.stack_ptr))
+        return
+    }
+
     std.task.context_switch_barrier()
     std.task.swap_context(&scheduler_sp, f.stack_ptr)
 }
@@ -153,6 +213,37 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
     }
 
     if Builtin.IsX86_64 {
+        if Builtin.IsWindows {
+            if !std.task.ensure_windows_scheduler_fiber() {
+                return error.IOError
+            }
+
+            fiber_mem: *u8 = (std.mem.HeapAllocator.alloc(gpa, Builtin.sizeof(Fiber))) catch |fiber_err| {
+                return error.OutOfMemory
+            }
+            f: *Fiber = cast(*Fiber, fiber_mem)
+
+            f.func = taskFunc
+            f.arg = arg
+            f.state = 0
+            f.next = cast(*Fiber, 0)
+            f.wait_fd = -1
+            f.wait_events = cast(i16, 0)
+            f.wait_revents = cast(i16, 0)
+            f.waiting_next = cast(*Fiber, 0)
+
+            stack_size: i64 = 65536
+            fiber_handle: *void = CreateFiber(stack_size, fiber_entry_point_windows, cast(*void, f))
+            if cast(i64, fiber_handle) == 0 {
+                return error.OutOfMemory
+            }
+
+            f.stack_ptr = cast(*u8, fiber_handle)
+            active_fibers = active_fibers + 1
+            std.task.enqueue(f)
+            return 0
+        }
+
         stack_size: i64 = 65536
         raw_stack: *u8 = (std.mem.HeapAllocator.alloc(gpa, stack_size)) catch |stack_err| {
             return error.OutOfMemory
@@ -270,4 +361,21 @@ export fn std.task.dequeue() -> *Fiber {
     ready_queue_head = f.next
     if cast(i64, ready_queue_head) == 0 { ready_queue_tail = cast(*Fiber, 0) }
     return f
+}
+
+export fn std.task.dispose_dead_fiber(f: *Fiber) {
+    if !Builtin.IsWindows {
+        return
+    }
+
+    if f.state != 2 {
+        return
+    }
+
+    if cast(i64, f.stack_ptr) == 0 {
+        return
+    }
+
+    DeleteFiber(cast(*void, f.stack_ptr))
+    f.stack_ptr = cast(*u8, 0)
 }

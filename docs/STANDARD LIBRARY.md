@@ -794,11 +794,11 @@ fn std.task.swap_context(old_sp_ptr: **u8, new_sp: *u8)
 
 `resume` sets `current_fiber`, saves `scheduler_sp`, and switches to the fiber stack pointer.
 
-`swap_context` is architecture-specific inline assembly:
+`swap_context` is architecture-specific inline assembly on non-Windows targets:
 
 ```text
 x86_64 Linux/ELF: saves/restores rbp, rbx, rdi, rsi, r12-r15 and switches rsp
-x86_64 Windows: also preserves xmm6-xmm15 to satisfy the Win64 ABI before switching rsp
+x86_64 Windows: uses native Windows fibers via ConvertThreadToFiber/CreateFiber/SwitchToFiber
 AArch64: saves/restores x19-x30 and switches sp
 ```
 
@@ -813,14 +813,15 @@ Behavior:
 ```text
 gpa == null: error.InvalidArgument
 !std.task.is_supported(): error.UnsupportedPlatform
-x86_64: allocate stack and Fiber, initialize x86_64 stack frame, enqueue, return 0
+x86_64 Linux/ELF: allocate stack and Fiber, initialize x86_64 stack frame, enqueue, return 0
+x86_64 Windows: allocate Fiber metadata, create a native Windows fiber, enqueue, return 0
 AArch64: allocate stack and Fiber, initialize AArch64 context frame, enqueue, return 0
 allocation failure: error.OutOfMemory
 ```
 
-Both supported architectures allocate a 65536-byte stack and a `Fiber` object from the provided `HeapAllocator`.
+Linux x86_64 and AArch64 allocate a 65536-byte stack plus a `Fiber` object from the provided `HeapAllocator`.
 
-On Windows x86_64, the initial fiber stack bootstrap also reserves the 32-byte Win64 shadow space plus the entry return slot before `fiber_entry_point` runs.
+Windows x86_64 allocates the `Fiber` metadata from the provided `HeapAllocator` and uses the operating system fiber scheduler for the execution stack.
 
 The private `fiber_entry_point` calls `f.func(f.arg)`, marks the fiber dead with `state = 2`, decrements `active_fibers`, and yields to the scheduler.
 
@@ -2157,17 +2158,11 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         f.waiting_next = cast(*Fiber, 0)
         active_fibers = active_fibers + 1
         
-        top: i64 = (cast(i64, raw_stack) + stack_size) & -16
-        if Builtin.IsWindows {
-            top = top - 40
+        fiber_handle: *void = CreateFiber(stack_size, fiber_entry_point_windows, cast(*void, f))
+        if cast(i64, fiber_handle) == 0 {
+            return error.OutOfMemory
         }
-        sp_exec: **u8 = cast(**u8, top - 8)
-        sp_exec[0] = cast(*u8, fiber_entry_point)
-        if Builtin.IsWindows {
-            f.stack_ptr = cast(*u8, top - 232)
-        } else {
-            f.stack_ptr = cast(*u8, top - 72)
-        }
+        f.stack_ptr = cast(*u8, fiber_handle)
         
         std.task.enqueue(f)
         return 0

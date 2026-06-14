@@ -159,9 +159,11 @@ export fn std.async.loop() {
         while std.task.has_ready_fibers() {
             f: *Fiber = std.task.dequeue()
             if f.state == 2 {
+                std.task.dispose_dead_fiber(f)
                 continue
             }
             std.task.resume(f)
+            std.task.dispose_dead_fiber(f)
         }
 
         if active_fibers <= 0 {
