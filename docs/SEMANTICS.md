@@ -129,9 +129,11 @@ A source file may contain:
 - global variable declarations
 - `const` global variable declarations
 - `struct` declarations
+- `enum` declarations
+- `union` declarations
 - function declarations
 - `extern fn` declarations
-- top-level attributes applied to functions or variable declarations
+- top-level attributes applied to functions, variable declarations, or structs
 
 Empty top-level semicolons and stray `}` are skipped by the parser.
 
@@ -154,11 +156,11 @@ import c "header.h"
 - Alias qualification preserves the exported name beneath the alias:
   `answer` becomes `alias.answer`, and `math.add` becomes `alias.math.add`.
 - Aliased imports do not inject unqualified exported names into the importing file.
-- `import c "header.h"` registers a C header for code generation and does not participate in semantic symbol loading.
+- `import c "header.h"` registers a native header dependency for lowering and does not participate in semantic symbol loading.
 
 ### Visibility
 
-- Only exported functions, structs, and global variables from an imported file become visible in the importing file.
+- Only exported declarations from an imported file become visible in the importing file.
 - For `import "path.zorb" as alias`, imported exports are visible only through the alias-qualified form.
 - Visibility is file-oriented, not package-oriented.
 - Imported names are not re-exported transitively through another imported file.
@@ -194,10 +196,10 @@ Notes:
 - Struct names may be qualified with namespace path segments, for example `std.io.Writer`.
 - Struct declarations may introduce type parameters, for example `struct Box<T> { value: T }`.
 - Generic struct instantiations are written with angle brackets, for example `Box<i64>`.
-- Generic structs are monomorphized during C generation. Each concrete instantiation emits a concrete C struct.
+- Generic structs are monomorphized during native lowering. Each concrete instantiation emits a distinct concrete lowered type.
 - Functions may also introduce type parameters, for example `fn identity<T>(value: T) -> T`.
-- Generic function calls must provide explicit type arguments, for example `identity<i64>(42)`.
-- Generic functions are monomorphized during C generation. Type inference is not currently supported.
+- Generic function calls may provide explicit type arguments, for example `identity<i64>(42)`.
+- Generic functions are monomorphized during native lowering.
 - Type parameters are scoped to the generic declaration.
 - Generic declarations may have multiple distinct type parameters.
 - Generic struct uses must provide exactly the declared number of type arguments.
@@ -348,8 +350,8 @@ Meaning:
 - Recognized struct attributes are `packed`, `align(N)`, and `layout(explicit)`.
 - Recognized struct-field attributes are `offset(N)`.
 - `layout(explicit)` requires every field to declare `offset(N)`.
-- `layout(explicit)` currently means byte-precise packed layout; code generation inserts explicit padding fields as needed and emits `_Static_assert` checks for the final field offsets.
-- Byte-precise layout currently rejects field types that do not have a stable compile-time C layout in the compiler model, such as function types, slices, and error unions.
+- `layout(explicit)` currently means byte-precise packed layout; the compiler validates the final field offsets during semantic checking and lowering.
+- Byte-precise layout currently rejects field types that do not have a stable compile-time native layout in the compiler model, such as function types, slices, and error unions.
 
 ### Function Declarations
 
@@ -966,7 +968,7 @@ object code.
 The current compiler line treats these behaviors as settled semantics:
 
 - Conditions require `bool`; numeric and pointer truthiness is rejected.
-- Arrays decay only to exact `*T` in call position and do not implicitly decay to `*void`.
+- Arrays decay only to exact `*T` in contexts that explicitly expect that type and do not implicitly decay to `*void`.
 - `&array` yields an element pointer `*T`, not a pointer-to-array type.
 - `error.Name` resolves through visible `error Name = <integer-literal>` declarations.
 - Distinct visible error declarations must use distinct integer values.

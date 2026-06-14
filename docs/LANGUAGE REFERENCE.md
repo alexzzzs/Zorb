@@ -21,6 +21,8 @@ The compiler supports these output targets:
 ```text
 host-linux
 freestanding-linux
+host-linux-aarch64
+freestanding-linux-aarch64
 bare-metal-x86_64
 host-windows
 ```
@@ -32,6 +34,9 @@ on Windows. Plain backend emission defaults to `host-linux`.
 Windows hosts. It uses LLVM object emission and LLD rather than the host C
 compiler. Hosted Windows GNU/MinGW output is not currently supported;
 `host-windows` uses the MSVC ABI.
+
+The AArch64 Linux targets are intended for Linux hosts with either native
+AArch64 execution or an AArch64 cross-toolchain and QEMU-backed runtime path.
 
 ## Lexical Structure
 
@@ -307,7 +312,7 @@ fn make_pair() -> Pair<i64, bool> {
 }
 ```
 
-Generic structs are nominal types and are monomorphized during C generation: each concrete instantiation emits its own C `struct`. Type arguments are written with angle brackets in every type position and in typed struct literals. Nested instantiations such as `Box<Box<i64>>` are supported.
+Generic structs are nominal types and are monomorphized during native lowering: each concrete instantiation emits its own concrete lowered type. Type arguments are written with angle brackets in every type position and in typed struct literals. Nested instantiations such as `Box<Box<i64>>` are supported.
 
 Type parameters may be used through supported type wrappers:
 
@@ -323,7 +328,7 @@ Generic structs support the same `packed`, `align(N)`, `layout(explicit)`, and f
 
 Current limits:
 
-- Type arguments are explicit; there is no generic type inference yet.
+- Struct type arguments are always explicit; generic function-call inference is a separate feature.
 - Every use must provide exactly the declared number of type arguments.
 - Type parameters are scoped to the generic declaration.
 - Generic arguments may themselves be built-in or user-defined types, including concrete generic instantiations.
@@ -383,7 +388,8 @@ fn demo() -> i64 {
 }
 ```
 
-Generic function calls must provide explicit type arguments. Each concrete
+Generic function calls may provide explicit type arguments or omit them when the
+parameter types determine the concrete instantiation directly. Each concrete
 instantiation is monomorphized into a distinct lowered function.
 
 Generic functions may use their type parameters in parameters, return types, local declarations, casts, `Builtin.sizeof(...)`, struct literals, arrays, slices, pointers, function types, and error unions. Calls may use imported declarations and nested generic types:
@@ -400,7 +406,8 @@ fn demo(value: Box<i64>) -> i64 {
 
 Rules:
 
-- Calls must provide exactly the declared number of type arguments.
+- Calls with explicit type arguments must provide exactly the declared number of type arguments.
+- Calls that omit type arguments must allow the compiler to infer one concrete instantiation directly from the argument types.
 - Type arguments are validated like any other type reference.
 - A non-generic function rejects type arguments.
 - Function-pointer calls do not accept type arguments.
@@ -449,7 +456,8 @@ abi(ms)
 abi(win64)
 ```
 
-`sysv` and `sysv64` lower to C `sysv_abi`. `ms` and `win64` lower to C `ms_abi`.
+`sysv` and `sysv64` lower to the SysV calling convention. `ms` and `win64`
+lower to the Microsoft x64 calling convention.
 
 `noclone` is omitted on Windows codegen because it is GCC-specific.
 
@@ -463,7 +471,7 @@ section("name")
 volatile
 ```
 
-`section("name")` is only supported on global variables. Local variables with `section` are rejected.
+`section("name")` is supported on functions and global variables. Local variables with `section` are rejected.
 
 `volatile` can also be written as a type qualifier:
 
@@ -487,9 +495,9 @@ Allowed on struct fields:
 offset(N)
 ```
 
-`layout(explicit)` requires every field to declare `[offset(N)]`. It uses byte-precise packed layout and generates C padding fields and `_Static_assert` offset checks.
+`layout(explicit)` requires every field to declare `[offset(N)]`. It uses byte-precise packed layout, and the compiler validates the final field offsets during semantic checking and lowering.
 
-Explicit byte-precise layout rejects field types whose stable C layout is not modeled by the compiler, including function types, slices, error unions, and `void`.
+Explicit byte-precise layout rejects field types whose stable native layout is not modeled by the compiler, including function types, slices, error unions, and `void`.
 
 ### Constant Attribute Arguments
 
