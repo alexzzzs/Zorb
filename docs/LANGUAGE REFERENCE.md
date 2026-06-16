@@ -1,7 +1,7 @@
 # Zorb Language Reference
 
 Zorb is a small ahead-of-time systems language. Native builds lower through a
-versioned backend IR to a Zig 0.16/LLVM 20 backend.
+versioned backend IR to a Zig 0.16/LLVM 21 backend.
 
 ## Source Files And Compilation Model
 

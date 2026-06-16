@@ -1,7 +1,7 @@
 # Zorb
 
 Zorb is a small ahead-of-time compiler for a systems language. Native
-compilation lowers through a Zig 0.16 backend over LLVM 20.
+compilation lowers through a Zig 0.16 backend over LLVM 21.
 
 The project already has:
 
@@ -91,7 +91,7 @@ zig build test
 zig build
 ```
 
-Backend development requires Zig 0.16 and LLVM 20 development headers and
+Backend development requires Zig 0.16 and LLVM 21 development headers and
 libraries. The release scripts package the backend and LLD with the compiler,
 so released archives do not require a separate Zig installation. Linux release
 builds statically link LLVM; Windows release builds bundle `LLVM-C.dll`.

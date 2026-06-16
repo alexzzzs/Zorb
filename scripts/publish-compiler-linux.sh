@@ -8,7 +8,7 @@ OUTPUT_DIR="${1:-$ROOT_DIR/artifacts/compiler/linux-x64}"
 VERSION="${VERSION:-}"
 INFORMATIONAL_VERSION="${INFORMATIONAL_VERSION:-}"
 ZIG="${ZIG:-zig}"
-LLVM_PREFIX="${LLVM_PREFIX:-/usr/lib/llvm-20}"
+LLVM_PREFIX="${LLVM_PREFIX:-/usr/lib/llvm-21}"
 CXX_RUNTIME="${CXX_RUNTIME:-}"
 LLD="${LLD:-}"
 

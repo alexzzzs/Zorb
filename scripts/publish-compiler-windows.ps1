@@ -14,7 +14,7 @@ $InformationalVersion = $env:INFORMATIONAL_VERSION
 $Zig = if ($env:ZIG) { $env:ZIG } else { "zig" }
 $LlvmPrefix = if ($env:LLVM_PREFIX) { $env:LLVM_PREFIX } else { Join-Path $env:ProgramFiles "LLVM" }
 if (-not (Test-Path -LiteralPath $LlvmPrefix -PathType Container)) {
-    throw "LLVM prefix '$LlvmPrefix' does not exist. Install LLVM 20 or set LLVM_PREFIX."
+    throw "LLVM prefix '$LlvmPrefix' does not exist. Install LLVM 21 or set LLVM_PREFIX."
 }
 $LlvmLibDir = if ($env:LLVM_LIB_DIR) { $env:LLVM_LIB_DIR } else { Join-Path $LlvmPrefix "lib" }
 

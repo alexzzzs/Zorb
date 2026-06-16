@@ -1,16 +1,16 @@
 # Zorb LLVM Backend
 
-This project is the Zig 0.16/LLVM 20 code-generation backend for Zorb. It reads
+This project is the Zig 0.16/LLVM 21 code-generation backend for Zorb. It reads
 the versioned JSON backend IR emitted by `Zorb.Compiler` and writes LLVM IR,
 bitcode, assembly, or a target object file.
 
 ## Development Build
 
-Install Zig 0.16 and LLVM 20 development headers and libraries, then run:
+Install Zig 0.16 and LLVM 21 development headers and libraries, then run:
 
 ```bash
 zig build test
-zig build -Dllvm-prefix=/usr/lib/llvm-20
+zig build -Dllvm-prefix=/usr/lib/llvm-21
 ```
 
 The default build links against the shared LLVM C API for quick local
@@ -24,7 +24,7 @@ Linux release packages statically link LLVM component archives:
 zig build \
   -Doptimize=ReleaseSafe \
   -Dstatic-llvm=true \
-  -Dllvm-prefix=/usr/lib/llvm-20 \
+  -Dllvm-prefix=/usr/lib/llvm-21 \
   -Dcxx-runtime="$(g++ -print-file-name=libstdc++.so)"
 ```
 

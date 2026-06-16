@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
         []const u8,
         "llvm-prefix",
         "LLVM installation prefix",
-    ) orelse "/usr/lib/llvm-20";
+    ) orelse "/usr/lib/llvm-21";
     const llvm_include_dir = b.option(
         []const u8,
         "llvm-include-dir",
@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) void {
         []const u8,
         "llvm-library",
         "LLVM C API library name for shared linking",
-    ) orelse if (target.result.os.tag == .windows) "LLVM-C" else "LLVM-20";
+    ) orelse if (target.result.os.tag == .windows) "LLVM-C" else "LLVM-21";
 
     const llvm_header = b.addTranslateC(.{
         .root_source_file = b.path("include/zorb_llvm.h"),
@@ -138,6 +138,7 @@ fn linkStaticLlvm(module: *std.Build.Module, cxx_runtime: []const u8) void {
         "LLVMDebugInfoMSF",
         "LLVMDebugInfoCodeView",
         "LLVMDebugInfoDWARF",
+        "LLVMDebugInfoDWARFLowLevel",
         "LLVMObject",
         "LLVMTextAPI",
         "LLVMMCParser",

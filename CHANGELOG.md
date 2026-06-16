@@ -53,7 +53,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - A Zig 0.16 backend that consumes versioned backend IR and emits verified LLVM
-  IR, assembly, bitcode, or native object files through LLVM 20.
+  IR, assembly, bitcode, or native object files through LLVM 21.
 - `--emit-llvm` for writing verified LLVM IR.
 - Production packaging for the LLVM backend and LLD, with static LLVM linkage
   on Linux and a bundled `LLVM-C.dll` on Windows.
