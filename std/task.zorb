@@ -33,6 +33,10 @@ export fn std.task.is_supported() -> bool {
         return false
     }
 
+    if !Builtin.IsLinux && !Builtin.IsWindows {
+        return false
+    }
+
     if Builtin.IsX86_64 {
         return true
     }
@@ -319,7 +323,7 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         std.task.enqueue(f)
         return 0
     } else {
-        return error.NotImplemented
+        return error.UnsupportedPlatform
     }
 }
 

@@ -576,6 +576,191 @@ fn main() -> i64 {
 }
 ```
 
+## File System: `std/fs.zorb`
+
+`std/fs.zorb` provides small cross-platform file helpers for the hosted
+targets. It currently exposes open-for-read, open-for-write, close, existence
+checks, simple metadata, rename/delete operations, and whole-file read/write
+helpers.
+
+### Open For Read
+
+```zorb
+export fn std.fs.open_read(path: string) !i32
+```
+
+Behavior:
+
+```text
+Linux x86_64/AArch64: uses openat with O_RDONLY
+Windows x86_64/AArch64: uses the CRT _open(path, O_RDONLY | O_BINARY, 0)
+missing file or open failure: error.NotFound
+other targets: error.UnsupportedPlatform
+```
+
+### Open For Write
+
+```zorb
+export fn std.fs.open_write(path: string) !i32
+```
+
+Behavior:
+
+```text
+Linux x86_64/AArch64: uses openat with O_WRONLY | O_CREAT | O_TRUNC and mode 0644
+Windows x86_64/AArch64: uses the CRT _open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, owner read/write mode bits)
+open failure: error.IOError
+other targets: error.UnsupportedPlatform
+```
+
+### Close
+
+```zorb
+export fn std.fs.close(fd: i32)
+```
+
+Behavior:
+
+```text
+Linux x86_64/AArch64: closes the descriptor with close
+Windows x86_64/AArch64: closes the descriptor with _close
+other targets: no-op
+```
+
+### Exists
+
+```zorb
+export fn std.fs.exists(path: string) -> bool
+```
+
+Behavior:
+
+```text
+existing readable file: true
+missing or unreadable file: false
+unsupported targets: false
+```
+
+### Size
+
+```zorb
+export fn std.fs.size(path: string) !i64
+```
+
+Behavior:
+
+```text
+missing file: error.NotFound
+Linux x86_64/AArch64: opens the file and uses lseek(fd, 0, SEEK_END)
+Windows x86_64/AArch64: opens the file and uses _lseeki64(fd, 0, SEEK_END)
+seek failure: error.IOError
+unsupported targets: error.UnsupportedPlatform
+```
+
+### Read All
+
+```zorb
+export fn std.fs.read_all(path: string, allocator: *std.mem.HeapAllocator) ![]u8
+```
+
+Behavior:
+
+```text
+open failure: forwards error.NotFound or error.UnsupportedPlatform
+read failure: error.IOError
+allocation failure: error.InvalidSize or error.OutOfMemory
+success: returns an owned []u8 containing the file contents
+```
+
+### Write All
+
+```zorb
+export fn std.fs.write_all(path: string, buf: []u8) !i32
+```
+
+Behavior:
+
+```text
+buf.len < 0: error.InvalidSize
+open failure: forwards error.IOError or error.UnsupportedPlatform
+write failure or partial-progress failure: error.IOError
+success: truncates/creates the target file and returns 0 after writing the full buffer
+```
+
+### Delete
+
+```zorb
+export fn std.fs.delete(path: string) !i32
+```
+
+Behavior:
+
+```text
+Linux x86_64/AArch64: uses unlinkat(path, 0)
+Windows x86_64/AArch64: uses the CRT _unlink(path)
+missing path: error.NotFound
+unsupported targets: error.UnsupportedPlatform
+success: returns 0
+```
+
+### Rename
+
+```zorb
+export fn std.fs.rename(old_path: string, new_path: string) !i32
+```
+
+Behavior:
+
+```text
+Linux x86_64/AArch64: uses renameat(old_path, new_path)
+Windows x86_64/AArch64: uses the CRT rename(old_path, new_path)
+missing source path: error.NotFound
+unsupported targets: error.UnsupportedPlatform
+success: returns 0
+```
+
+Example:
+
+```zorb
+import "std/fs.zorb"
+import "std/io.zorb"
+import "std/mem.zorb"
+
+fn main() -> i64 {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(8192) catch |err| {
+        return err
+    }
+
+    message: []u8
+    message.ptr = cast(*u8, "hello file\n")
+    message.len = 11
+
+    std.fs.write_all("note.txt", message) catch |err| {
+        return err
+    }
+
+    size: i64 = std.fs.size("note.txt") catch |err| {
+        return err
+    }
+    std.io.println_i64(size)
+
+    std.fs.rename("note.txt", "note-old.txt") catch |err| {
+        return err
+    }
+
+    data: []u8 = std.fs.read_all("note-old.txt", &heap) catch |err| {
+        return err
+    }
+    std.io.write(1, data)
+
+    std.fs.delete("note-old.txt") catch |err| {
+        return err
+    }
+
+    return 0
+}
+```
+
 ## Networking: `std/net.zorb`
 
 `std/net.zorb` is a low-level cross-platform networking layer for the current
@@ -749,8 +934,8 @@ Current behavior:
 
 ```text
 bare-metal: false
-x86_64: true
-AArch64: true
+x86_64 Linux/Windows: true
+AArch64 Linux/Windows: true
 otherwise: false
 ```
 
@@ -1207,7 +1392,7 @@ export fn std.os.get_pages(size: i64) !*u8 {
             mmap_nr = 222
         }
         if mmap_nr == 0 {
-            return error.NotImplemented
+            return error.UnsupportedPlatform
         }
 
         addr: i64 = syscall(mmap_nr, 0, size, 3, 34, -1, 0)
@@ -1914,7 +2099,7 @@ export fn std.net.socket(domain: i32, kind: i32, protocol: i32) -> i64 {
 
     nr: i64 = std.net.socket_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, domain, kind, protocol)
@@ -1931,7 +2116,7 @@ export fn std.net.bind_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
 
     nr: i64 = std.net.bind_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, cast(i64, addr), 16)
@@ -1944,7 +2129,7 @@ export fn std.net.listen(fd: i32, backlog: i32) -> i64 {
 
     nr: i64 = std.net.listen_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, backlog)
@@ -1957,7 +2142,7 @@ export fn std.net.accept(fd: i32) -> i64 {
 
     nr: i64 = std.net.accept_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, 0, 0)
@@ -1970,7 +2155,7 @@ export fn std.net.connect_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
 
     nr: i64 = std.net.connect_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, cast(i64, addr), 16)
@@ -1983,7 +2168,7 @@ export fn std.net.send(fd: i32, buf: []u8) -> i64 {
 
     nr: i64 = std.net.sendto_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, cast(i64, buf.ptr), buf.len, 0, 0, 0)
@@ -1996,7 +2181,7 @@ export fn std.net.recv(fd: i32, buf: []u8) -> i64 {
 
     nr: i64 = std.net.recvfrom_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, cast(i64, buf.ptr), buf.len, 0, 0, 0)
@@ -2009,7 +2194,7 @@ export fn std.net.close(fd: i32) -> i64 {
 
     nr: i64 = std.net.close_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd)
@@ -2043,6 +2228,10 @@ export active_fibers: i64 = 0
 
 export fn std.task.is_supported() -> bool {
     if Builtin.IsBareMetal {
+        return false
+    }
+
+    if !Builtin.IsLinux && !Builtin.IsWindows {
         return false
     }
 
@@ -2205,7 +2394,7 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         std.task.enqueue(f)
         return 0
     } else {
-        return error.NotImplemented
+        return error.UnsupportedPlatform
     }
 }
 

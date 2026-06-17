@@ -5,26 +5,156 @@ import "io.zorb"
 import "mem.zorb"
 import "str.zorb"
 
+extern fn _open(path: *u8, flags: i32, mode: i32) -> i32
+extern fn _read(fd: i32, buf: *u8, len: i32) -> i32
+extern fn _write(fd: i32, buf: *u8, len: i32) -> i32
+extern fn _close(fd: i32) -> i32
+extern fn _lseeki64(fd: i32, offset: i64, origin: i32) -> i64
+extern fn _unlink(path: *u8) -> i32
+extern fn rename(old_path: *u8, new_path: *u8) -> i32
+
 export struct std.fs {}
+
+const LINUX_AT_FDCWD: i64 = -100
+const LINUX_OPEN_READ_ONLY: i64 = 0
+const LINUX_OPEN_WRITE_ONLY: i64 = 1
+const LINUX_OPEN_CREATE: i64 = 64
+const LINUX_OPEN_TRUNCATE: i64 = 512
+const LINUX_DEFAULT_FILE_MODE: i64 = 420
+const LINUX_SEEK_END: i64 = 2
+const WINDOWS_OPEN_READ_ONLY: i32 = 0
+const WINDOWS_OPEN_WRITE_ONLY: i32 = 1
+const WINDOWS_OPEN_CREATE: i32 = 256
+const WINDOWS_OPEN_TRUNCATE: i32 = 512
+const WINDOWS_OPEN_BINARY: i32 = 32768
+const WINDOWS_DEFAULT_FILE_MODE: i32 = 384
+const WINDOWS_MAX_IO_LEN: i32 = 2147483647
+const WINDOWS_SEEK_END: i32 = 2
+
+fn std.fs.openat_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 257
+    }
+
+    if Builtin.IsAArch64 {
+        return 56
+    }
+
+    return 0
+}
+
+fn std.fs.close_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 3
+    }
+
+    if Builtin.IsAArch64 {
+        return 57
+    }
+
+    return 0
+}
+
+fn std.fs.write_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 1
+    }
+
+    if Builtin.IsAArch64 {
+        return 64
+    }
+
+    return 0
+}
+
+fn std.fs.lseek_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 8
+    }
+
+    if Builtin.IsAArch64 {
+        return 62
+    }
+
+    return 0
+}
+
+fn std.fs.unlinkat_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 263
+    }
+
+    if Builtin.IsAArch64 {
+        return 35
+    }
+
+    return 0
+}
+
+fn std.fs.renameat_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 264
+    }
+
+    if Builtin.IsAArch64 {
+        return 38
+    }
+
+    return 0
+}
 
 export fn std.fs.open_read(path: string) !i32 {
     if Builtin.IsLinux {
-        openat_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            openat_nr = 257
-        }
-        if Builtin.IsAArch64 {
-            openat_nr = 56
-        }
+        openat_nr: i64 = std.fs.openat_nr()
         if openat_nr == 0 {
             return error.UnsupportedPlatform
         }
 
-        fd: i64 = syscall(openat_nr, -100, cast(i64, cast(*u8, path)), 0, 0)
+        fd: i64 = syscall(openat_nr, LINUX_AT_FDCWD, cast(i64, cast(*u8, path)), LINUX_OPEN_READ_ONLY, 0)
         if fd < 0 {
             return error.NotFound
         }
         return cast(i32, fd)
+    }
+
+    if Builtin.IsWindows {
+        read_flags: i32 = WINDOWS_OPEN_READ_ONLY | WINDOWS_OPEN_BINARY
+        fd: i32 = _open(cast(*u8, path), read_flags, 0)
+        if fd < 0 {
+            return error.NotFound
+        }
+        return fd
+    }
+
+    return error.UnsupportedPlatform
+}
+
+export fn std.fs.open_write(path: string) !i32 {
+    if Builtin.IsLinux {
+        openat_nr: i64 = std.fs.openat_nr()
+        if openat_nr == 0 {
+            return error.UnsupportedPlatform
+        }
+
+        fd: i64 = syscall(
+            openat_nr,
+            LINUX_AT_FDCWD,
+            cast(i64, cast(*u8, path)),
+            LINUX_OPEN_WRITE_ONLY | LINUX_OPEN_CREATE | LINUX_OPEN_TRUNCATE,
+            LINUX_DEFAULT_FILE_MODE)
+        if fd < 0 {
+            return error.IOError
+        }
+        return cast(i32, fd)
+    }
+
+    if Builtin.IsWindows {
+        write_flags: i32 = WINDOWS_OPEN_WRITE_ONLY | WINDOWS_OPEN_CREATE | WINDOWS_OPEN_TRUNCATE | WINDOWS_OPEN_BINARY
+        fd: i32 = _open(cast(*u8, path), write_flags, WINDOWS_DEFAULT_FILE_MODE)
+        if fd < 0 {
+            return error.IOError
+        }
+        return fd
     }
 
     return error.UnsupportedPlatform
@@ -32,17 +162,114 @@ export fn std.fs.open_read(path: string) !i32 {
 
 export fn std.fs.close(fd: i32) {
     if Builtin.IsLinux {
-        close_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            close_nr = 3
-        }
-        if Builtin.IsAArch64 {
-            close_nr = 57
-        }
+        close_nr: i64 = std.fs.close_nr()
         if close_nr != 0 {
             syscall(close_nr, cast(i64, fd))
         }
     }
+
+    if Builtin.IsWindows {
+        _close(fd)
+    }
+}
+
+fn std.fs.read(fd: i32, buf: []u8) -> i64 {
+    if Builtin.IsLinux {
+        return std.io.read(fd, buf)
+    }
+
+    if Builtin.IsWindows {
+        if buf.len < 0 {
+            return -1
+        }
+
+        windows_len: i32 = cast(i32, buf.len)
+        if buf.len > cast(i64, WINDOWS_MAX_IO_LEN) {
+            windows_len = WINDOWS_MAX_IO_LEN
+        }
+
+        bytes_read: i32 = _read(fd, buf.ptr, windows_len)
+        if bytes_read < 0 {
+            return -1
+        }
+
+        return cast(i64, bytes_read)
+    }
+
+    return -1
+}
+
+fn std.fs.write(fd: i32, buf: []u8) -> i64 {
+    if Builtin.IsLinux {
+        write_nr: i64 = std.fs.write_nr()
+        if write_nr == 0 {
+            return -1
+        }
+
+        return syscall(write_nr, cast(i64, fd), cast(i64, buf.ptr), buf.len)
+    }
+
+    if Builtin.IsWindows {
+        if buf.len < 0 {
+            return -1
+        }
+
+        windows_len: i32 = cast(i32, buf.len)
+        if buf.len > cast(i64, WINDOWS_MAX_IO_LEN) {
+            windows_len = WINDOWS_MAX_IO_LEN
+        }
+
+        bytes_written: i32 = _write(fd, buf.ptr, windows_len)
+        if bytes_written < 0 {
+            return -1
+        }
+
+        return cast(i64, bytes_written)
+    }
+
+    return -1
+}
+
+export fn std.fs.exists(path: string) -> bool {
+    fd: i32 = std.fs.open_read(path) catch |err| {
+        return false
+    }
+
+    std.fs.close(fd)
+    return true
+}
+
+export fn std.fs.size(path: string) !i64 {
+    fd: i32 = std.fs.open_read(path) catch |err| {
+        return err
+    }
+
+    if Builtin.IsLinux {
+        lseek_nr: i64 = std.fs.lseek_nr()
+        if lseek_nr == 0 {
+            std.fs.close(fd)
+            return error.UnsupportedPlatform
+        }
+
+        size_value: i64 = syscall(lseek_nr, cast(i64, fd), 0, LINUX_SEEK_END)
+        std.fs.close(fd)
+        if size_value < 0 {
+            return error.IOError
+        }
+        return size_value
+    }
+
+    if Builtin.IsWindows {
+        size_value: i64 = _lseeki64(fd, 0, WINDOWS_SEEK_END)
+        std.fs.close(fd)
+        if size_value < 0 {
+            return error.IOError
+        }
+        return size_value
+    }
+
+    std.fs.close(fd)
+    return error.UnsupportedPlatform
 }
 
 export fn std.fs.read_all(path: string, allocator: *std.mem.HeapAllocator) ![]u8 {
@@ -65,7 +292,7 @@ export fn std.fs.read_all(path: string, allocator: *std.mem.HeapAllocator) ![]u8
     scratch: []u8 = scratch_storage
 
     while true {
-        n: i64 = std.io.read(fd, scratch)
+        n: i64 = std.fs.read(fd, scratch)
         if n < 0 {
             std.fs.close(fd)
             return error.IOError
@@ -88,4 +315,87 @@ export fn std.fs.read_all(path: string, allocator: *std.mem.HeapAllocator) ![]u8
     }
 
     return error.IOError
+}
+
+export fn std.fs.write_all(path: string, buf: []u8) !i32 {
+    if buf.len < 0 {
+        return error.InvalidSize
+    }
+
+    fd: i32 = std.fs.open_write(path) catch |err| {
+        return err
+    }
+
+    offset: i64 = 0
+    while offset < buf.len {
+        chunk: []u8
+        chunk.ptr = cast(*u8, cast(i64, buf.ptr) + offset)
+        chunk.len = buf.len - offset
+
+        wrote: i64 = std.fs.write(fd, chunk)
+        if wrote <= 0 {
+            std.fs.close(fd)
+            return error.IOError
+        }
+
+        offset = offset + wrote
+    }
+
+    std.fs.close(fd)
+    return 0
+}
+
+export fn std.fs.delete(path: string) !i32 {
+    if Builtin.IsLinux {
+        unlinkat_nr: i64 = std.fs.unlinkat_nr()
+        if unlinkat_nr == 0 {
+            return error.UnsupportedPlatform
+        }
+
+        result: i64 = syscall(unlinkat_nr, LINUX_AT_FDCWD, cast(i64, cast(*u8, path)), 0)
+        if result < 0 {
+            return error.NotFound
+        }
+        return cast(i32, result)
+    }
+
+    if Builtin.IsWindows {
+        result: i32 = _unlink(cast(*u8, path))
+        if result < 0 {
+            return error.NotFound
+        }
+        return result
+    }
+
+    return error.UnsupportedPlatform
+}
+
+export fn std.fs.rename(old_path: string, new_path: string) !i32 {
+    if Builtin.IsLinux {
+        renameat_nr: i64 = std.fs.renameat_nr()
+        if renameat_nr == 0 {
+            return error.UnsupportedPlatform
+        }
+
+        result: i64 = syscall(
+            renameat_nr,
+            LINUX_AT_FDCWD,
+            cast(i64, cast(*u8, old_path)),
+            LINUX_AT_FDCWD,
+            cast(i64, cast(*u8, new_path)))
+        if result < 0 {
+            return error.NotFound
+        }
+        return cast(i32, result)
+    }
+
+    if Builtin.IsWindows {
+        result: i32 = rename(cast(*u8, old_path), cast(*u8, new_path))
+        if result < 0 {
+            return error.NotFound
+        }
+        return result
+    }
+
+    return error.UnsupportedPlatform
 }
