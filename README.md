@@ -389,7 +389,7 @@ Current checked-in examples:
 - [`examples/basics/stdlib_helpers.zorb`](./examples/basics/stdlib_helpers.zorb): string, memory, and formatted output helpers from the standard library.
 - [`examples/basics/literals.zorb`](./examples/basics/literals.zorb): typed struct and array literals combined with logical operators.
 - [`examples/basics/generics.zorb`](./examples/basics/generics.zorb): explicit generic structs and functions with nested concrete instantiations.
-- [`examples/basics/generic_adts.zorb`](./examples/basics/generic_adts.zorb): generic enums and tagged unions, including concrete tag comparisons and payload-binding `match`.
+- [`examples/basics/generic_adts.zorb`](./examples/basics/generic_adts.zorb): generic enums and tagged unions, including phantom-type stage markers, concrete tag comparisons, and payload-binding `match`.
 - [`examples/basics/switch_for.zorb`](./examples/basics/switch_for.zorb): `for` loops and `switch` with an `else` branch.
 - [`examples/dogfood/lexer/main.zorb`](./examples/dogfood/lexer/main.zorb): a small lexer demo written in Zorb that exercises real control flow, slices, and token handling.
 - [`examples/advanced/threads.zorb`](./examples/advanced/threads.zorb): lower-level task/thread setup using inline assembly and Linux syscalls.

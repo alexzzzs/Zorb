@@ -1,26 +1,36 @@
 import "../../std/io.zorb"
 import "../../std/os.zorb"
 
+struct JobId {
+    raw: i64
+}
+
 union Result<T, E> {
     Ok: T,
     Err: E
 }
 
-enum Phase<T>: i32 {
-    Start,
-    Done
+enum Stage<T>: i32 {
+    Queued,
+    Running,
+    Finished
 }
 
-fn describe(value: Result<i64, bool>, phase: Phase<i64>) -> i64 {
-    if value.tag == Result<i64, bool>.Tag.Ok && phase == Phase<i64>.Done {
-        return value.Ok
+fn score_job(result: Result<JobId, bool>, stage: Stage<JobId>) -> i64 {
+    if result.tag == Result<JobId, bool>.Tag.Ok && stage == Stage<JobId>.Finished {
+        return result.Ok.raw
     }
 
-    match value {
-        case Result<i64, bool>.Ok(number) {
-            return number
+    match result {
+        case Result<JobId, bool>.Ok(job) {
+            if stage == Stage<JobId>.Running {
+                return job.raw + 1
+            }
+
+            return job.raw
         }
-        case Result<i64, bool>.Err(flag) {
+
+        case Result<JobId, bool>.Err(flag) {
             if flag {
                 return -1
             }
@@ -31,9 +41,9 @@ fn describe(value: Result<i64, bool>, phase: Phase<i64>) -> i64 {
 }
 
 fn _start() {
-    value: Result<i64, bool> = Result<i64, bool>{ Ok: 5 }
-    phase: Phase<i64> = Phase<i64>.Done
-    std.io.print_i64(describe(value, phase))
+    result: Result<JobId, bool> = Result<JobId, bool>{ Ok: JobId{ raw: 5 } }
+    stage: Stage<JobId> = Stage<JobId>.Finished
+    std.io.print_i64(score_job(result, stage))
     std.io.print("\n")
     std.os.exit(0)
 }
