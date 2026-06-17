@@ -332,7 +332,8 @@ Current limits:
 - Every use must provide exactly the declared number of type arguments.
 - Type parameters are scoped to the generic declaration.
 - Generic arguments may themselves be built-in or user-defined types, including concrete generic instantiations.
-- Enums, unions, extern types, and built-in types cannot declare or accept type arguments.
+- Structs, enums, unions, and functions may declare type parameters. Extern types and built-in types cannot.
+- Generic tagged unions also expose concrete tag enums such as `Result<i64, bool>.Tag.Ok`.
 - Generic declarations do not currently support constraints or default type arguments.
 
 ### Tagged Unions

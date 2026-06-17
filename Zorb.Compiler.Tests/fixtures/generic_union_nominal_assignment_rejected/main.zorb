@@ -1,0 +1,10 @@
+union Packet<T> {
+    Payload: T,
+    Empty: bool
+}
+
+fn main() -> i64 {
+    unsigned: Packet<u64> = Packet<u64>{ Payload: 1 }
+    signed: Packet<i64> = unsigned
+    return 0
+}

@@ -1,0 +1,9 @@
+union Value {
+    Number: i64,
+    Flag: bool
+}
+
+fn main() -> i64 {
+    value: Value<i64>
+    return 0
+}

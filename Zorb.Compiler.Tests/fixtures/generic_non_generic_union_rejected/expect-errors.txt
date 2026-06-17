@@ -1,0 +1,1 @@
+Union 'Value' is not generic and does not accept type arguments.

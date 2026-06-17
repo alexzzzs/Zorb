@@ -1,0 +1,9 @@
+union Pair<T, U> {
+    Left: T,
+    Right: U
+}
+
+fn main() -> i64 {
+    value: Pair<i64> = Pair<i64>{ Left: 1 }
+    return 0
+}

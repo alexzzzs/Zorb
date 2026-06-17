@@ -15,7 +15,7 @@ The project already has:
 The compiler supports a focused language subset:
 
 - functions, `extern fn`, and namespaced declarations
-- `struct` types plus explicit generic structs and functions, monomorphized per concrete use
+- `struct`, `enum`, and tagged `union` types plus explicit generic structs, enums, unions, and functions, monomorphized per concrete use
 - `enum` types with explicit integer backing types
 - tagged `union` types with generated tag enums
 - globals, `const` declarations, and error declarations
@@ -65,12 +65,11 @@ fn make() -> Box<i64> {
 }
 ```
 
-Generic calls may provide explicit type arguments such as `identity<i64>(42)`, or omit them when the parameter types make the concrete instantiation obvious, such as `identity(42)`. Generic types such as `Box<i64>` still provide explicit type arguments. Nested forms such as `Box<Box<i64>>`, imported generic declarations, pointers, slices, arrays, error unions, and generic struct layout attributes are supported.
+Generic calls may provide explicit type arguments such as `identity<i64>(42)`, or omit them when the parameter types make the concrete instantiation obvious, such as `identity(42)`. Generic types such as `Box<i64>`, `Mode<i64>`, and `Result<i64, bool>` still provide explicit type arguments. Nested forms such as `Box<Box<i64>>`, imported generic declarations, pointers, slices, arrays, error unions, and generic struct layout attributes are supported.
 
-Each concrete use is monomorphized into a distinct backend function or struct.
+Each concrete use is monomorphized into a distinct backend function or concrete nominal type. Generic unions also monomorphize their generated `.Tag` enums per concrete use, so expressions such as `Result<i64, bool>.Tag.Ok` remain type-safe.
 Zorb does not currently provide constraints, default type arguments, generic
-enums or unions, generic extern functions, or first-class values for
-uninstantiated generic functions.
+extern functions, or first-class values for uninstantiated generic functions.
 
 Cross-platform stdlib helpers currently include:
 
@@ -390,6 +389,7 @@ Current checked-in examples:
 - [`examples/basics/stdlib_helpers.zorb`](./examples/basics/stdlib_helpers.zorb): string, memory, and formatted output helpers from the standard library.
 - [`examples/basics/literals.zorb`](./examples/basics/literals.zorb): typed struct and array literals combined with logical operators.
 - [`examples/basics/generics.zorb`](./examples/basics/generics.zorb): explicit generic structs and functions with nested concrete instantiations.
+- [`examples/basics/generic_adts.zorb`](./examples/basics/generic_adts.zorb): generic enums and tagged unions, including concrete tag comparisons and payload-binding `match`.
 - [`examples/basics/switch_for.zorb`](./examples/basics/switch_for.zorb): `for` loops and `switch` with an `else` branch.
 - [`examples/dogfood/lexer/main.zorb`](./examples/dogfood/lexer/main.zorb): a small lexer demo written in Zorb that exercises real control flow, slices, and token handling.
 - [`examples/advanced/threads.zorb`](./examples/advanced/threads.zorb): lower-level task/thread setup using inline assembly and Linux syscalls.
@@ -397,7 +397,7 @@ Current checked-in examples:
 
 ## Project Shape
 
-- `Zorb.Compiler/`: lexer, parser, semantic checker, and C codegen
+- `Zorb.Compiler/`: lexer, parser, semantic checker, CLI, and LLVM backend IR emission
 - `Zorb.Compiler.Tests/`: fixture runner and regression fixtures
 - `std/`: standard library modules used by runtime-oriented examples
 - `SEMANTICS.md`: language behavior and current design constraints

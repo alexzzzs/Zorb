@@ -200,6 +200,10 @@ public class TypeChecker
             case SizeofExpr sizeofExpr:
                 return sizeofExpr;
 
+            case TypeReferenceExpr typeReference:
+                NormalizeTypeReferenceInPlace(typeReference.TypeName);
+                return typeReference;
+
             case StructLiteralExpr structLiteral:
                 NormalizeTypeReferenceInPlace(structLiteral.TypeName);
                 for (int i = 0; i < structLiteral.Fields.Count; i++)
@@ -618,11 +622,27 @@ public class TypeChecker
             }
             else if (node is EnumNode enumNode)
             {
-                ValidateEnumDeclaration(enumNode);
+                PushTypeParameterScope(enumNode.TypeParameters);
+                try
+                {
+                    ValidateEnumDeclaration(enumNode);
+                }
+                finally
+                {
+                    PopTypeParameterScope();
+                }
             }
             else if (node is UnionNode unionNode)
             {
-                ValidateUnionDeclaration(unionNode);
+                PushTypeParameterScope(unionNode.TypeParameters);
+                try
+                {
+                    ValidateUnionDeclaration(unionNode);
+                }
+                finally
+                {
+                    PopTypeParameterScope();
+                }
             }
             else if (node is FunctionDecl functionDecl)
             {
@@ -1570,27 +1590,14 @@ public class TypeChecker
                 continue;
             }
 
-            var variantQualifiedName = TryGetQualifiedName(variantExpr);
-            if (string.IsNullOrEmpty(variantQualifiedName))
+            if (!TryResolveStaticVariantReference(variantExpr, out var ownerType, out var variantName))
             {
                 _errors.Error(variantExpr, "Union match patterns must be qualified variant names.");
                 caseOutcomes.Add(CheckBlock(matchCase.Body));
                 continue;
             }
 
-            var resolvedVariantName = TryResolveAliasQualifiedName(variantQualifiedName, out var aliasResolvedVariantName)
-                ? aliasResolvedVariantName
-                : variantQualifiedName;
-            var lastDot = resolvedVariantName.LastIndexOf('.');
-            if (lastDot < 0)
-            {
-                _errors.Error(variantExpr, "Union match patterns must reference a specific variant.");
-                caseOutcomes.Add(CheckBlock(matchCase.Body));
-                continue;
-            }
-
-            var resolvedUnionName = resolvedVariantName[..lastDot];
-            var variantName = resolvedVariantName[(lastDot + 1)..];
+            var resolvedUnionName = QualifiedNames.GetFullName(ownerType.NamespacePath, ownerType.Name);
             if (bindingPattern != null)
             {
                 bindingPattern.ResolvedUnionName = resolvedUnionName;
@@ -1598,11 +1605,11 @@ public class TypeChecker
             }
 
             var expectedUnionName = QualifiedNames.GetFullName(matchType.NamespacePath, matchType.Name);
-            var expectedTagUnionName = expectedUnionName + ".Tag";
-            if (!string.Equals(resolvedUnionName, expectedUnionName, StringComparison.Ordinal) &&
-                !string.Equals(resolvedUnionName, expectedTagUnionName, StringComparison.Ordinal))
+            var expectedTagType = GetUnionTagType(matchType);
+            var ownerMatches = TypeHelpers.SameType(ownerType, matchType) || TypeHelpers.SameType(ownerType, expectedTagType);
+            if (!ownerMatches)
             {
-                _errors.Error(variantExpr, $"Match case variant '{resolvedVariantName}' does not belong to union '{FormatType(matchType)}'.");
+                _errors.Error(variantExpr, $"Match case variant '{FormatType(ownerType)}.{variantName}' does not belong to union '{FormatType(matchType)}'.");
                 caseOutcomes.Add(CheckBlock(matchCase.Body));
                 continue;
             }
@@ -1819,12 +1826,15 @@ public class TypeChecker
             member.ResolvedValue = resolvedValue;
             nextValue = resolvedValue + 1;
 
-            var memberFullName = $"{enumFullName}.{member.Name}";
-            MakeVisible(memberFullName);
-            if (!_symbolTable.IsDefined(memberFullName))
-                _symbolTable.DefineVariable(memberFullName, enumType.Clone(), isConst: true);
+            if (enumNode.TypeParameters.Count == 0)
+            {
+                var memberFullName = $"{enumFullName}.{member.Name}";
+                MakeVisible(memberFullName);
+                if (!_symbolTable.IsDefined(memberFullName))
+                    _symbolTable.DefineVariable(memberFullName, enumType.Clone(), isConst: true);
 
-            _constValueScopes.Peek()[memberFullName] = resolvedValue;
+                _constValueScopes.Peek()[memberFullName] = resolvedValue;
+            }
         }
     }
 
@@ -1874,6 +1884,23 @@ public class TypeChecker
             Name = "Tag",
             NamespacePath = unionNode.NamespacePath
                 .Concat(new[] { unionNode.Name })
+                .ToList(),
+            TypeArguments = unionNode.TypeParameters
+                .Select(parameter => new TypeNode { Name = parameter })
+                .ToList()
+        };
+    }
+
+    private static TypeNode GetUnionTagType(TypeNode unionType)
+    {
+        return new TypeNode
+        {
+            Name = "Tag",
+            NamespacePath = unionType.NamespacePath
+                .Concat(new[] { unionType.Name })
+                .ToList(),
+            TypeArguments = unionType.TypeArguments
+                .Select(argument => argument.Clone())
                 .ToList()
         };
     }
@@ -1886,6 +1913,7 @@ public class TypeChecker
             NamespacePath = unionNode.NamespacePath
                 .Concat(new[] { unionNode.Name })
                 .ToList(),
+            TypeParameters = new List<string>(unionNode.TypeParameters),
             UnderlyingType = new TypeNode { Name = "i32" },
             Members = unionNode.Variants
                 .Select((variant, index) => new EnumMember
@@ -2143,6 +2171,10 @@ public class TypeChecker
                 }
                 break;
 
+            case TypeReferenceExpr typeReference:
+                ValidateTypeReference(typeReference.TypeName, typeReference);
+                break;
+
             case ErrorNamespaceExpr:
                 _errors.Error(expr, "Expected '.Name' after 'error' in expression.");
                 break;
@@ -2161,6 +2193,24 @@ public class TypeChecker
             case FieldExpr field:
                 if (IsInvalidPostfixTarget(field.Target))
                     break;
+
+                if (TryResolveStaticEnumMember(field, out _, out _))
+                    break;
+
+                if (TryResolveStaticTypeReference(field.Target, out var staticOwnerType))
+                {
+                    if (IsEnumType(staticOwnerType))
+                    {
+                        _errors.Error(field, $"Enum '{FormatType(staticOwnerType)}' does not have a member named '{field.Field}'.");
+                        break;
+                    }
+
+                    if (IsUnionType(staticOwnerType) && field.Field != "Tag")
+                    {
+                        _errors.Error(field, $"Union type '{FormatType(staticOwnerType)}' exposes only '.Tag' in static member position.");
+                        break;
+                    }
+                }
 
                 if (ResolveQualifiedFieldSymbol(field) is ResolvedFieldSymbolInfo resolvedField)
                 {
@@ -2528,19 +2578,31 @@ public class TypeChecker
 
         var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
 
-        if (_symbolTable.LookupEnumNode(fullName) != null)
+        if (_symbolTable.LookupEnumNode(fullName) is EnumNode enumNode)
         {
-            if (type.TypeArguments.Count > 0)
-                _errors.Error(context, $"Enum '{fullName}' does not accept type arguments.");
+            if (enumNode.TypeParameters.Count != type.TypeArguments.Count)
+            {
+                _errors.Error(
+                    context,
+                    enumNode.TypeParameters.Count == 0
+                        ? $"Enum '{fullName}' is not generic and does not accept type arguments."
+                        : $"Enum '{fullName}' expects {enumNode.TypeParameters.Count} type argument(s), got {type.TypeArguments.Count}.");
+            }
             if (!type.IsAliasQualifiedReference && !CheckVisibility(fullName))
                 ReportNotVisible(context, "Enum", fullName);
             return;
         }
 
-        if (_symbolTable.LookupUnionNode(fullName) != null)
+        if (_symbolTable.LookupUnionNode(fullName) is UnionNode unionNode)
         {
-            if (type.TypeArguments.Count > 0)
-                _errors.Error(context, $"Union '{fullName}' does not accept type arguments.");
+            if (unionNode.TypeParameters.Count != type.TypeArguments.Count)
+            {
+                _errors.Error(
+                    context,
+                    unionNode.TypeParameters.Count == 0
+                        ? $"Union '{fullName}' is not generic and does not accept type arguments."
+                        : $"Union '{fullName}' expects {unionNode.TypeParameters.Count} type argument(s), got {type.TypeArguments.Count}.");
+            }
             if (!type.IsAliasQualifiedReference && !CheckVisibility(fullName))
                 ReportNotVisible(context, "Union", fullName);
             return;
@@ -2769,7 +2831,7 @@ public class TypeChecker
         var field = unionLiteral.Fields[0];
         CheckExpression(field.Value);
 
-        var variant = unionNode.Variants.FirstOrDefault(candidate => candidate.Name == field.Name);
+        var variant = GetUnionVariantsForType(unionLiteral.TypeName).FirstOrDefault(candidate => candidate.Name == field.Name);
         if (variant == null)
         {
             _errors.Error(field, $"Union '{fullName}' does not have a variant named '{field.Name}'.");
@@ -2895,6 +2957,9 @@ public class TypeChecker
                 var info = _symbolTable.Lookup(resolvedName);
                 return info?.Type;
 
+            case TypeReferenceExpr:
+                return null;
+
             case BinaryExpr bin:
                 if (ComparisonOperators.Contains(bin.Operator) || LogicalOperators.Contains(bin.Operator))
                     return new TypeNode { Name = "bool" };
@@ -2969,6 +3034,16 @@ public class TypeChecker
                 if (IsInvalidPostfixTarget(field.Target))
                     return null;
 
+                if (TryResolveStaticEnumMember(field, out var staticEnumType, out _))
+                    return staticEnumType;
+
+                if (TryResolveStaticTypeReference(field.Target, out var staticOwnerType) &&
+                    IsUnionType(staticOwnerType) &&
+                    field.Field == "Tag")
+                {
+                    return GetUnionTagType(staticOwnerType);
+                }
+
                 if (ResolveQualifiedFieldSymbol(field) is ResolvedFieldSymbolInfo resolvedFieldSymbol)
                 {
                     if (resolvedFieldSymbol.SymbolInfo.Kind == SymbolKind.Variable || resolvedFieldSymbol.SymbolInfo.Kind == SymbolKind.Function)
@@ -3029,7 +3104,7 @@ public class TypeChecker
                     if (reportErrors)
                         _errors.Error(field, $"Struct '{structName}' does not have a field named '{field.Field}'.");
                 }
-                else if (_symbolTable.LookupUnionNode(structName) is UnionNode unionDefinition)
+                else if (LookupUnionDefinition(ft) is UnionNode unionDefinition)
                 {
                     if (!ft.IsAliasQualifiedReference && !CheckVisibility(structName)) {
                         if (reportErrors)
@@ -3038,7 +3113,7 @@ public class TypeChecker
                     }
 
                     if (field.Field == "tag")
-                        return GetUnionTagType(unionDefinition);
+                        return GetUnionTagType(ft);
 
                     var variant = unionDefinition.Variants.FirstOrDefault(candidate => candidate.Name == field.Field);
                     if (variant != null)
@@ -3154,7 +3229,11 @@ public class TypeChecker
             return null;
 
         var fullName = QualifiedNames.GetFullName(type!.NamespacePath, type.Name);
-        return _symbolTable.LookupEnumNode(fullName);
+        var definition = _symbolTable.LookupEnumNode(fullName);
+        if (definition == null)
+            return null;
+
+        return definition.TypeParameters.Count == 0 ? definition : InstantiateEnum(definition, type);
     }
 
     private UnionNode? LookupUnionDefinition(TypeNode? type)
@@ -3163,7 +3242,11 @@ public class TypeChecker
             return null;
 
         var fullName = QualifiedNames.GetFullName(type!.NamespacePath, type.Name);
-        return _symbolTable.LookupUnionNode(fullName);
+        var definition = _symbolTable.LookupUnionNode(fullName);
+        if (definition == null)
+            return null;
+
+        return definition.TypeParameters.Count == 0 ? definition : InstantiateUnion(definition, type);
     }
 
     private bool IsUnionType(TypeNode? type)
@@ -3190,6 +3273,86 @@ public class TypeChecker
             return false;
 
         return fieldName == "tag" || unionDefinition.Variants.Any(variant => variant.Name == fieldName);
+    }
+
+    private bool TryResolveStaticTypeReference(Expr expr, out TypeNode type)
+    {
+        switch (expr)
+        {
+            case TypeReferenceExpr typeReference:
+                type = typeReference.TypeName.Clone();
+                return true;
+
+            case IdentifierExpr identifier:
+                var resolvedIdentifier = ResolveQualifiedName(identifier.Name);
+                if (_symbolTable.TryLookup(resolvedIdentifier, out var identifierSymbol) &&
+                    identifierSymbol != null &&
+                    identifierSymbol.Kind is SymbolKind.Enum or SymbolKind.Union)
+                {
+                    type = identifierSymbol.Type.Clone();
+                    return true;
+                }
+                break;
+
+            case FieldExpr { Field: "Tag" } field when TryResolveStaticTypeReference(field.Target, out var unionType) && IsUnionType(unionType):
+                type = GetUnionTagType(unionType);
+                return true;
+
+            case FieldExpr field:
+                if (ResolveQualifiedFieldSymbol(field) is ResolvedFieldSymbolInfo resolvedField &&
+                    resolvedField.SymbolInfo.Kind is SymbolKind.Enum or SymbolKind.Union)
+                {
+                    type = resolvedField.SymbolInfo.Type.Clone();
+                    return true;
+                }
+                break;
+
+        }
+
+        type = null!;
+        return false;
+    }
+
+    private bool TryResolveStaticEnumMember(FieldExpr field, out TypeNode enumType, out long value)
+    {
+        enumType = null!;
+        value = 0;
+
+        if (!TryResolveStaticTypeReference(field.Target, out var ownerType))
+            return false;
+
+        if (IsEnumType(ownerType))
+        {
+            var enumDefinition = LookupEnumDefinition(ownerType);
+            var member = enumDefinition?.Members.FirstOrDefault(candidate => candidate.Name == field.Field);
+            if (member?.ResolvedValue is not long resolvedValue)
+                return false;
+
+            enumType = ownerType.Clone();
+            value = resolvedValue;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryResolveStaticVariantReference(Expr expr, out TypeNode ownerType, out string variantName)
+    {
+        if (expr is not FieldExpr field)
+        {
+            ownerType = null!;
+            variantName = "";
+            return false;
+        }
+
+        if (!TryResolveStaticTypeReference(field.Target, out ownerType))
+        {
+            variantName = "";
+            return false;
+        }
+
+        variantName = field.Field;
+        return true;
     }
 
     private static string FormatType(TypeNode? type)
@@ -3266,6 +3429,30 @@ public class TypeChecker
         var substitutions = BuildTypeSubstitutions(structNode.TypeParameters, structType.TypeArguments);
         return structNode.Fields
             .Select(field => (field.Name, SubstituteTypeParameters(field.TypeName, substitutions)))
+            .ToList();
+    }
+
+    private List<UnionVariant> GetUnionVariantsForType(TypeNode unionType)
+    {
+        var fullName = QualifiedNames.GetFullName(unionType.NamespacePath, unionType.Name);
+        var unionNode = _symbolTable.LookupUnionNode(fullName);
+        if (unionNode == null)
+            return new List<UnionVariant>();
+
+        if (unionNode.TypeParameters.Count == 0)
+            return unionNode.Variants.Select(CloneUnionVariant).ToList();
+
+        var substitutions = BuildTypeSubstitutions(unionNode.TypeParameters, unionType.TypeArguments);
+        return unionNode.Variants
+            .Select(variant => new UnionVariant
+            {
+                File = variant.File,
+                Line = variant.Line,
+                Column = variant.Column,
+                Length = variant.Length,
+                Name = variant.Name,
+                TypeName = SubstituteTypeParameters(variant.TypeName, substitutions)
+            })
             .ToList();
     }
 
@@ -3348,6 +3535,72 @@ public class TypeChecker
                 Attributes = new List<string>(field.Attributes),
                 OffsetExpr = field.OffsetExpr
             }).ToList()
+        };
+    }
+
+    private static EnumNode InstantiateEnum(EnumNode definition, TypeNode concreteType)
+    {
+        return new EnumNode
+        {
+            File = definition.File,
+            Line = definition.Line,
+            Column = definition.Column,
+            Length = definition.Length,
+            IsExported = definition.IsExported,
+            NamespacePath = new List<string>(definition.NamespacePath),
+            Name = concreteType.Name,
+            UnderlyingType = definition.UnderlyingType.Clone(),
+            Members = definition.Members
+                .Select(member => new EnumMember
+                {
+                    File = member.File,
+                    Line = member.Line,
+                    Column = member.Column,
+                    Length = member.Length,
+                    Name = member.Name,
+                    Value = member.Value,
+                    ResolvedValue = member.ResolvedValue
+                })
+                .ToList()
+        };
+    }
+
+    private static UnionNode InstantiateUnion(UnionNode definition, TypeNode concreteType)
+    {
+        var substitutions = BuildTypeSubstitutions(definition.TypeParameters, concreteType.TypeArguments);
+        return new UnionNode
+        {
+            File = definition.File,
+            Line = definition.Line,
+            Column = definition.Column,
+            Length = definition.Length,
+            IsExported = definition.IsExported,
+            NamespacePath = new List<string>(definition.NamespacePath),
+            Name = concreteType.Name,
+            Variants = definition.Variants
+                .Select(variant => new UnionVariant
+                {
+                    File = variant.File,
+                    Line = variant.Line,
+                    Column = variant.Column,
+                    Length = variant.Length,
+                    Name = variant.Name,
+                    TypeName = SubstituteTypeParameters(variant.TypeName, substitutions)
+                })
+                .ToList()
+        };
+    }
+
+    private static UnionVariant CloneUnionVariant(UnionVariant variant)
+    {
+        return new UnionVariant
+        {
+            File = variant.File,
+            Line = variant.Line,
+            Column = variant.Column,
+            Length = variant.Length,
+            Name = variant.Name,
+            TypeName = variant.TypeName.Clone()
         };
     }
 
@@ -3620,6 +3873,12 @@ public class TypeChecker
                 return false;
 
             case FieldExpr field:
+                if (TryResolveStaticEnumMember(field, out _, out value))
+                {
+                    error = null;
+                    return true;
+                }
+
                 if (TryGetQualifiedName(field) is string qualifiedName)
                 {
                     var resolvedQualifiedName = TryResolveAliasQualifiedName(qualifiedName, out var aliasResolvedQualifiedName)

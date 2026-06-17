@@ -1,0 +1,39 @@
+import "../../std/io.zorb"
+import "../../std/os.zorb"
+
+union Result<T, E> {
+    Ok: T,
+    Err: E
+}
+
+enum Phase<T>: i32 {
+    Start,
+    Done
+}
+
+fn describe(value: Result<i64, bool>, phase: Phase<i64>) -> i64 {
+    if value.tag == Result<i64, bool>.Tag.Ok && phase == Phase<i64>.Done {
+        return value.Ok
+    }
+
+    match value {
+        case Result<i64, bool>.Ok(number) {
+            return number
+        }
+        case Result<i64, bool>.Err(flag) {
+            if flag {
+                return -1
+            }
+
+            return 0
+        }
+    }
+}
+
+fn _start() {
+    value: Result<i64, bool> = Result<i64, bool>{ Ok: 5 }
+    phase: Phase<i64> = Phase<i64>.Done
+    std.io.print_i64(describe(value, phase))
+    std.io.print("\n")
+    std.os.exit(0)
+}

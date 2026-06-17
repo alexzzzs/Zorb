@@ -215,6 +215,7 @@ public class EnumNode : Node
     public bool IsExported { get; set; }
     public List<string> NamespacePath { get; set; } = new();
     public string Name { get; set; } = null!;
+    public List<string> TypeParameters { get; set; } = new();
     public TypeNode UnderlyingType { get; set; } = null!;
     public List<EnumMember> Members { get; set; } = new();
 }
@@ -230,6 +231,7 @@ public class UnionNode : Node
     public bool IsExported { get; set; }
     public List<string> NamespacePath { get; set; } = new();
     public string Name { get; set; } = null!;
+    public List<string> TypeParameters { get; set; } = new();
     public List<UnionVariant> Variants { get; set; } = new();
 }
 

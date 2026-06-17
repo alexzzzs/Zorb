@@ -552,6 +552,9 @@ public partial class Parser
 
         if (Current.Type == TokenType.Identifier)
         {
+            if (IsStaticTypeReferenceStart())
+                return ParseStaticTypeReference();
+
             var startToken = Current;
             var name = Current.Value;
             Advance();
@@ -584,6 +587,52 @@ public partial class Parser
         var expr = new InvalidExpr();
         StampNode(expr, token);
         return expr;
+    }
+
+    private bool IsStaticTypeReferenceStart()
+    {
+        if (Current.Type != TokenType.Identifier)
+            return false;
+
+        var offset = 1;
+        while (Peek(offset).Type == TokenType.Dot && Peek(offset + 1).Type == TokenType.Identifier)
+            offset += 2;
+
+        if (Peek(offset).Type != TokenType.Less)
+            return false;
+
+        if (!TrySkipTypeArgumentList(ref offset))
+            return false;
+
+        return Peek(offset).Type == TokenType.Dot;
+    }
+
+    private Expr ParseStaticTypeReference()
+    {
+        var startToken = Current;
+        var path = new List<string>
+        {
+            Expect(TokenType.Identifier, "Expected type name.").Value
+        };
+
+        while (Match(TokenType.Dot))
+            path.Add(Expect(TokenType.Identifier, "Expected identifier after '.' in type reference.").Value);
+
+        var name = path[^1];
+        path.RemoveAt(path.Count - 1);
+        var typeArguments = ParseTypeArgumentList();
+
+        var typeReference = new TypeReferenceExpr
+        {
+            TypeName = new TypeNode
+            {
+                Name = name,
+                NamespacePath = path,
+                TypeArguments = typeArguments
+            }
+        };
+        StampNode(typeReference, startToken);
+        return typeReference;
     }
 
     private int GetPrecedence(TokenType type) => type switch

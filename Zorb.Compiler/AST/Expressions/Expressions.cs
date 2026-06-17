@@ -27,6 +27,11 @@ public class IdentifierExpr : Expr
     public string Name { get; set; } = null!;
 }
 
+public class TypeReferenceExpr : Expr
+{
+    public TypeNode TypeName { get; set; } = null!;
+}
+
 public class StringExpr : Expr
 {
     public string Value { get; set; } = null!;

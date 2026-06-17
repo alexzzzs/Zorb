@@ -107,6 +107,7 @@ public class SymbolTable
         {
             Name = name,
             Kind = SymbolKind.Struct,
+            TypeParameters = new List<string>(structDefinition.TypeParameters),
             Type = new TypeNode { Name = structDefinition.Name, NamespacePath = new List<string>(structDefinition.NamespacePath) },
             StructDefinition = structDefinition
         };
@@ -119,6 +120,7 @@ public class SymbolTable
         {
             Name = name,
             Kind = SymbolKind.Enum,
+            TypeParameters = new List<string>(enumDefinition.TypeParameters),
             Type = new TypeNode { Name = enumDefinition.Name, NamespacePath = new List<string>(enumDefinition.NamespacePath) },
             EnumDefinition = enumDefinition
         };
@@ -131,6 +133,7 @@ public class SymbolTable
         {
             Name = name,
             Kind = SymbolKind.Union,
+            TypeParameters = new List<string>(unionDefinition.TypeParameters),
             Type = new TypeNode { Name = unionDefinition.Name, NamespacePath = new List<string>(unionDefinition.NamespacePath) },
             UnionDefinition = unionDefinition
         };

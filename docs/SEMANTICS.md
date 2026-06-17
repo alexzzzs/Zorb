@@ -207,9 +207,10 @@ Notes:
 - Type arguments may be nested and may use pointers, slices, fixed arrays, function types, and error unions.
 - Different concrete argument lists are distinct nominal types and distinct
   monomorphized lowered declarations.
-- Imported exported generic structs and functions can be instantiated through their import alias.
+- Imported exported generic structs, enums, unions, and functions can be instantiated through their import alias.
 - Generic structs preserve normal struct layout attributes for each concrete instantiation.
-- Generic `extern fn` declarations, constraints, default type arguments, generic enums, and generic unions are not supported.
+- Generic tagged unions also monomorphize their generated tag enums per concrete instantiation, so `Result<i64, bool>.Tag.Ok` and `Result<u64, bool>.Tag.Ok` are distinct nominal enum values.
+- Generic `extern fn` declarations, constraints, and default type arguments are not supported.
 
 ### Pointer Types
 

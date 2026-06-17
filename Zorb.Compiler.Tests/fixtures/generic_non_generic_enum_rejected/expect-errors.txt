@@ -1,0 +1,1 @@
+Enum 'Mode' is not generic and does not accept type arguments.
