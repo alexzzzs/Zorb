@@ -8,10 +8,17 @@ fn main() -> i64 {
         return err
     }
 
+    original_text: []u8
+    original_text.ptr = cast(*u8, "this text will be replaced\n")
+    original_text.len = 27
+    std.fs.write_all("existing.txt", original_text) catch |err| {
+        return err
+    }
+
     original_size: i64 = std.fs.size("existing.txt") catch |err| {
         return err
     }
-    if original_size != 27 {
+    if original_size != original_text.len {
         return 1
     }
 

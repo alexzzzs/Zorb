@@ -37,6 +37,9 @@ jobs:
       - name: Install release toolchain
         if: matrix.os == 'ubuntu-latest'
         run: |
+          . /etc/os-release
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
           sudo apt-get install -y llvm-21-dev lld-21 g++
           curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
