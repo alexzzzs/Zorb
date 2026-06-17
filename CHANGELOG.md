@@ -21,6 +21,10 @@ All notable changes to this project will be documented in this file.
 - Scalar `match` support for numeric and `bool` expressions, with shared
   ordered-case lowering alongside enum `match` and tagged-union payload
   matching.
+- Cross-platform `std.fs` growth with Windows support for `open_read`,
+  `open_write`, `close`, `exists`, `size`, `delete`, `rename`, `read_all`,
+  and `write_all` through descriptor-backed helpers, plus expanded Linux and
+  Windows runtime coverage.
 
 ### Changed
 
@@ -32,6 +36,9 @@ All notable changes to this project will be documented in this file.
   instantiation can be inferred directly from the argument types.
 - `match` now acts as the general ordered-case branching form for scalars and
   enums, while retaining tagged-union payload binding as its richer extension.
+- `std.net`, `std.os`, and `std.task` now report `UnsupportedPlatform`
+  consistently for unsupported target paths instead of exposing stale
+  `NotImplemented` fallback branches.
 
 ### Fixed
 

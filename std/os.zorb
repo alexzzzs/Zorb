@@ -135,7 +135,7 @@ export fn std.os.get_pages(size: i64) !*u8 {
             mmap_nr = 222
         }
         if mmap_nr == 0 {
-            return error.NotImplemented
+            return error.UnsupportedPlatform
         }
 
         // addr: 0, len: size, prot: 3 (READ|WRITE), flags: 34 (PRIVATE|ANON), fd: -1, offset: 0

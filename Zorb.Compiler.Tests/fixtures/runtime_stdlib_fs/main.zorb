@@ -5,21 +5,92 @@ import "../../../std/os.zorb"
 import "../../../std/str.zorb"
 
 fn main() -> i64 {
+    if std.fs.exists("missing.txt") {
+        return 3
+    }
+
+    if !std.fs.exists("input.txt") {
+        return 4
+    }
+
     heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(65536) catch |err| {
         return err
     }
+
+    input_fd: i32 = std.fs.open_read("input.txt") catch |err| {
+        return err
+    }
+    std.fs.close(input_fd)
 
     bytes: []u8 = std.fs.read_all("input.txt", &heap) catch |err| {
         return err
     }
 
-    expected: []u8
-    expected.ptr = cast(*u8, "file contents\nsecond line\n")
-    expected.len = 26
-    if !std.str.slice_eql(bytes, expected) {
+    input_size: i64 = std.fs.size("input.txt") catch |err| {
+        return err
+    }
+    if input_size != bytes.len {
+        return 5
+    }
+    if bytes.len <= 0 {
         return 8
     }
 
+    output_fd: i32 = std.fs.open_write("output.txt") catch |err| {
+        return err
+    }
+    std.fs.close(output_fd)
+
+    if !std.fs.exists("output.txt") {
+        return 9
+    }
+
+    generated_expected: []u8
+    generated_expected.ptr = cast(*u8, "generated output\nthird line\n")
+    generated_expected.len = 28
+    std.fs.write_all("output.txt", generated_expected) catch |err| {
+        return err
+    }
+
+    output_size: i64 = std.fs.size("output.txt") catch |err| {
+        return err
+    }
+    if output_size != generated_expected.len {
+        return 11
+    }
+
+    generated: []u8 = std.fs.read_all("output.txt", &heap) catch |err| {
+        return err
+    }
+    if !std.str.slice_eql(generated, generated_expected) {
+        return 10
+    }
+
+    std.fs.rename("output.txt", "renamed.txt") catch |err| {
+        return err
+    }
+    if std.fs.exists("output.txt") {
+        return 12
+    }
+    if !std.fs.exists("renamed.txt") {
+        return 13
+    }
+
+    renamed: []u8 = std.fs.read_all("renamed.txt", &heap) catch |err| {
+        return err
+    }
+    if !std.str.slice_eql(renamed, generated_expected) {
+        return 14
+    }
+
+    std.fs.delete("renamed.txt") catch |err| {
+        return err
+    }
+    if std.fs.exists("renamed.txt") {
+        return 15
+    }
+
     std.io.write(1, bytes)
+    std.io.write(1, generated)
     return 0
 }

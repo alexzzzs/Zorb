@@ -77,6 +77,7 @@ Cross-platform stdlib helpers currently include:
 - `std.os.is_linux()`, `std.os.is_windows()`, `std.os.platform_name()`
 - `std.os.is_x86_64()`, `std.os.is_aarch64()`, `std.os.arch_name()`
 - `std.io.print(...)`, `std.io.println(...)`, `std.io.eprint(...)`, `std.io.eprintln(...)`, boolean and integer print helpers, slice-based `std.io.write(fd, buf)`, and `std.io.read(fd, buf)`
+- `std.fs.open_read(...)`, `std.fs.open_write(...)`, `std.fs.exists(...)`, `std.fs.size(...)`, `std.fs.read_all(...)`, `std.fs.write_all(...)`, `std.fs.rename(...)`, and `std.fs.delete(...)`
 - low-level Linux-first networking helpers in `std.net` for raw TCP socket setup, IPv4 socket addresses, send/recv, and close
 - `std.task.is_supported()` and `std.async.is_supported()` for checking runtime capability before using task or async features
 - `std.str.eql(...)`, `std.str.starts_with(...)`, `std.str.ends_with(...)`, `std.str.copy(...)`, and `std.str.from_u64(...)`

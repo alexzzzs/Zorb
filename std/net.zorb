@@ -300,7 +300,7 @@ export fn std.net.socket(domain: i32, kind: i32, protocol: i32) -> i64 {
 
     nr: i64 = std.net.socket_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, domain, kind, protocol)
@@ -330,7 +330,7 @@ export fn std.net.bind_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
 
     nr: i64 = std.net.bind_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, cast(i64, addr), Builtin.sizeof(std.net.SockAddrV4))
@@ -356,7 +356,7 @@ export fn std.net.listen(fd: i32, backlog: i32) -> i64 {
 
     nr: i64 = std.net.listen_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, backlog)
@@ -382,7 +382,7 @@ export fn std.net.accept(fd: i32) -> i64 {
 
     nr: i64 = std.net.accept_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, 0, 0)
@@ -408,7 +408,7 @@ export fn std.net.connect_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
 
     nr: i64 = std.net.connect_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, cast(i64, addr), Builtin.sizeof(std.net.SockAddrV4))
@@ -439,7 +439,7 @@ export fn std.net.send(fd: i32, buf: []u8) -> i64 {
 
     nr: i64 = std.net.sendto_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, cast(i64, buf.ptr), buf.len, 0, 0, 0)
@@ -470,7 +470,7 @@ export fn std.net.recv(fd: i32, buf: []u8) -> i64 {
 
     nr: i64 = std.net.recvfrom_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd, cast(i64, buf.ptr), buf.len, 0, 0, 0)
@@ -496,7 +496,7 @@ export fn std.net.close(fd: i32) -> i64 {
 
     nr: i64 = std.net.close_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, fd)
@@ -541,7 +541,7 @@ export fn std.net.poll(fds: *std.net.PollFd, count: i64, timeout_ms: i32) -> i64
 
     nr: i64 = std.net.poll_nr()
     if nr == 0 {
-        return -cast(i64, error.NotImplemented)
+        return -cast(i64, error.UnsupportedPlatform)
     }
 
     return syscall(nr, cast(i64, fds), count, cast(i64, timeout_ms))

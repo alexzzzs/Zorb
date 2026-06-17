@@ -1,0 +1,64 @@
+import "../../../std/fs.zorb"
+import "../../../std/io.zorb"
+import "../../../std/mem.zorb"
+import "../../../std/str.zorb"
+
+fn main() -> i64 {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(16384) catch |err| {
+        return err
+    }
+
+    original_text: []u8
+    original_text.ptr = cast(*u8, "this text will be replaced\n")
+    original_text.len = 27
+    std.fs.write_all("existing.txt", original_text) catch |err| {
+        return err
+    }
+
+    original_size: i64 = std.fs.size("existing.txt") catch |err| {
+        return err
+    }
+    if original_size != original_text.len {
+        return 1
+    }
+
+    short_text: []u8
+    short_text.ptr = cast(*u8, "short\n")
+    short_text.len = 6
+    std.fs.write_all("existing.txt", short_text) catch |err| {
+        return err
+    }
+
+    truncated_size: i64 = std.fs.size("existing.txt") catch |err| {
+        return err
+    }
+    if truncated_size != 6 {
+        return 2
+    }
+
+    contents: []u8 = std.fs.read_all("existing.txt", &heap) catch |err| {
+        return err
+    }
+    if !std.str.slice_eql(contents, short_text) {
+        return 3
+    }
+
+    fd: i32 = std.fs.open_write("empty.txt") catch |err| {
+        return err
+    }
+    std.fs.close(fd)
+
+    empty_size: i64 = std.fs.size("empty.txt") catch |err| {
+        return err
+    }
+    if empty_size != 0 {
+        return 4
+    }
+
+    std.fs.delete("empty.txt") catch |err| {
+        return err
+    }
+
+    std.io.write(1, contents)
+    return 0
+}
