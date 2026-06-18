@@ -1,0 +1,26 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+import "lib.zorb" as util
+
+fn read_mode(mode: util.Mode<i64>) -> i64 {
+    switch mode {
+        case util.Mode<i64>.Idle {
+            return 10
+        }
+        case util.Mode<i64>.Busy {
+            return 20
+        }
+    }
+}
+
+fn _start() {
+    value: util.Result<i64, bool> = util.Result<i64, bool>{ Ok: 9 }
+    mode: util.Mode<i64> = util.Mode<i64>.Busy
+
+    if value.tag == util.Result<i64, bool>.Tag.Ok {
+        std.io.print_i64(value.Ok + read_mode(mode))
+        std.io.print("\n")
+    }
+
+    std.os.exit(0)
+}

@@ -279,9 +279,7 @@ public partial class Parser
             return scalarPattern;
         }
 
-        var patternExpr = ParseQualifiedReferenceExpression(
-            "Expected match pattern name.",
-            "Expected identifier after '.'.");
+        var patternExpr = ParseMatchPatternReference();
 
         if (Current.Type == TokenType.LParen)
         {
@@ -302,13 +300,23 @@ public partial class Parser
         return qualifiedPattern;
     }
 
-    private Expr ParseQualifiedReferenceExpression(string missingNameMessage, string missingSegmentMessage)
+    private Expr ParseMatchPatternReference()
     {
-        Expr expr = new IdentifierExpr { Name = Expect(TokenType.Identifier, missingNameMessage).Value };
-        StampNode(expr, Previous);
+        Expr expr;
+        if (IsStaticTypeReferenceStart())
+        {
+            expr = ParseStaticTypeReference();
+        }
+        else
+        {
+            var startToken = Expect(TokenType.Identifier, "Expected match pattern name.");
+            expr = new IdentifierExpr { Name = startToken.Value };
+            StampNode(expr, startToken);
+        }
+
         while (Match(TokenType.Dot))
         {
-            var fieldToken = Expect(TokenType.Identifier, missingSegmentMessage);
+            var fieldToken = Expect(TokenType.Identifier, "Expected identifier after '.'.");
             var field = new FieldExpr
             {
                 Target = expr,

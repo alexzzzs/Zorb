@@ -1,0 +1,9 @@
+export union Result<T, E> {
+    Ok: T,
+    Err: E
+}
+
+export enum Mode<T>: i32 {
+    Idle,
+    Busy
+}

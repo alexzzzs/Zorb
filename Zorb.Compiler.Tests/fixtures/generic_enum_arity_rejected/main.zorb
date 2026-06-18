@@ -1,0 +1,9 @@
+enum Mode<T, U>: i32 {
+    Idle,
+    Busy
+}
+
+fn main() -> i64 {
+    mode: Mode<i64> = Mode<i64>.Idle
+    return 0
+}

@@ -1,0 +1,1 @@
+Union 'Pair' expects 2 type argument(s), got 1.

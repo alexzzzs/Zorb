@@ -200,6 +200,11 @@ internal static class AstSpecialization
                 return CopyNode(text, new StringExpr { Value = text.Value });
             case IdentifierExpr identifier:
                 return CopyNode(identifier, new IdentifierExpr { Name = identifier.Name });
+            case TypeReferenceExpr typeReference:
+                return CopyNode(typeReference, new TypeReferenceExpr
+                {
+                    TypeName = SubstituteTypeParameters(typeReference.TypeName, substitutions)
+                });
             case BinaryExpr binary:
                 return CopyNode(binary, new BinaryExpr
                 {

@@ -1,0 +1,24 @@
+union Maybe<T> {
+    Some: T,
+    None: bool
+}
+
+fn unwrap_or(value: Maybe<i64>, fallback: i64) -> i64 {
+    match value {
+        case Maybe<i64>.Some(number) {
+            return number
+        }
+        case Maybe<i64>.None(flag) {
+            if flag {
+                return fallback
+            }
+
+            return 0
+        }
+    }
+}
+
+fn main() -> i64 {
+    value: Maybe<i64> = Maybe<i64>{ Some: 7 }
+    return unwrap_or(value, 3)
+}

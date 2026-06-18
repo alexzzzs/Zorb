@@ -1,0 +1,49 @@
+import "../../std/io.zorb"
+import "../../std/os.zorb"
+
+struct JobId {
+    raw: i64
+}
+
+union Result<T, E> {
+    Ok: T,
+    Err: E
+}
+
+enum Stage<T>: i32 {
+    Queued,
+    Running,
+    Finished
+}
+
+fn score_job(result: Result<JobId, bool>, stage: Stage<JobId>) -> i64 {
+    if result.tag == Result<JobId, bool>.Tag.Ok && stage == Stage<JobId>.Finished {
+        return result.Ok.raw
+    }
+
+    match result {
+        case Result<JobId, bool>.Ok(job) {
+            if stage == Stage<JobId>.Running {
+                return job.raw + 1
+            }
+
+            return job.raw
+        }
+
+        case Result<JobId, bool>.Err(flag) {
+            if flag {
+                return -1
+            }
+
+            return 0
+        }
+    }
+}
+
+fn _start() {
+    result: Result<JobId, bool> = Result<JobId, bool>{ Ok: JobId{ raw: 5 } }
+    stage: Stage<JobId> = Stage<JobId>.Finished
+    std.io.print_i64(score_job(result, stage))
+    std.io.print("\n")
+    std.os.exit(0)
+}

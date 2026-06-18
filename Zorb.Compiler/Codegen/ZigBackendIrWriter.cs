@@ -2460,9 +2460,24 @@ public sealed class ZigBackendIrWriter
         public IReadOnlyList<UnionVariant> GetUnionVariants(TypeNode type)
         {
             var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
-            return _unions.TryGetValue(fullName, out var unionNode)
-                ? unionNode.Variants
-                : throw Unsupported(type, $"unknown union '{fullName}'");
+            if (!_unions.TryGetValue(fullName, out var unionNode))
+                throw Unsupported(type, $"unknown union '{fullName}'");
+
+            if (unionNode.TypeParameters.Count == 0)
+                return unionNode.Variants;
+
+            var substitutions = AstSpecialization.BuildTypeSubstitutions(
+                unionNode.TypeParameters,
+                type.TypeArguments);
+            return unionNode.Variants.Select(variant => new UnionVariant
+            {
+                File = variant.File,
+                Line = variant.Line,
+                Column = variant.Column,
+                Length = variant.Length,
+                Name = variant.Name,
+                TypeName = AstSpecialization.SubstituteTypeParameters(variant.TypeName, substitutions)
+            }).ToList();
         }
 
         public uint GetUnionVariantIndex(TypeNode type, string variantName)
@@ -2565,6 +2580,9 @@ public sealed class ZigBackendIrWriter
         {
             enumType = null!;
             value = 0;
+            if (TryResolveStaticEnumMember(field, out enumType, out value))
+                return true;
+
             var resolvedFieldName = field.ResolvedQualifiedName
                 ?? QualifiedNames.TryGetQualifiedName(field);
             if (resolvedFieldName is string qualifiedName)
@@ -2630,6 +2648,101 @@ public sealed class ZigBackendIrWriter
             };
             value = resolvedValue;
             return true;
+        }
+
+        private bool TryResolveStaticEnumMember(FieldExpr field, out TypeNode enumType, out long value)
+        {
+            enumType = null!;
+            value = 0;
+            if (!TryResolveStaticTypeReference(field.Target, out var ownerType))
+                return false;
+
+            if (IsEnumType(ownerType))
+            {
+                var enumDefinition = GetEnumDefinition(ownerType);
+                var member = enumDefinition?.Members.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Name, field.Field, StringComparison.Ordinal));
+                if (member?.ResolvedValue is not long resolvedValue)
+                    return false;
+
+                enumType = ownerType.Clone();
+                value = resolvedValue;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryResolveStaticTypeReference(Expr expr, out TypeNode type)
+        {
+            switch (expr)
+            {
+                case TypeReferenceExpr typeReference:
+                    type = typeReference.TypeName.Clone();
+                    return true;
+
+                case FieldExpr { Field: "Tag" } field when TryResolveStaticTypeReference(field.Target, out var unionType) && IsUnionType(unionType):
+                    type = new TypeNode
+                    {
+                        Name = "Tag",
+                        NamespacePath = unionType.NamespacePath.Concat(new[] { unionType.Name }).ToList(),
+                        TypeArguments = unionType.TypeArguments.Select(argument => argument.Clone()).ToList()
+                    };
+                    return true;
+
+                default:
+                    type = null!;
+                    return false;
+            }
+        }
+
+        private EnumNode? GetEnumDefinition(TypeNode type)
+        {
+            var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
+            if (TryGetTagUnion(fullName, out var unionNode))
+                return BuildConcreteTagEnum(unionNode);
+
+            if (!_enums.TryGetValue(fullName, out var enumNode))
+                return null;
+
+            return enumNode.TypeParameters.Count == 0
+                ? enumNode
+                : new EnumNode
+                {
+                    File = enumNode.File,
+                    Line = enumNode.Line,
+                    Column = enumNode.Column,
+                    Length = enumNode.Length,
+                    IsExported = enumNode.IsExported,
+                    NamespacePath = new List<string>(enumNode.NamespacePath),
+                    Name = enumNode.Name,
+                    UnderlyingType = enumNode.UnderlyingType.Clone(),
+                    Members = enumNode.Members.Select(member => new EnumMember
+                    {
+                        File = member.File,
+                        Line = member.Line,
+                        Column = member.Column,
+                        Length = member.Length,
+                        Name = member.Name,
+                        Value = member.Value,
+                        ResolvedValue = member.ResolvedValue
+                    }).ToList()
+                };
+        }
+
+        private static EnumNode BuildConcreteTagEnum(UnionNode unionNode)
+        {
+            return new EnumNode
+            {
+                Name = "Tag",
+                NamespacePath = unionNode.NamespacePath.Concat(new[] { unionNode.Name }).ToList(),
+                UnderlyingType = new TypeNode { Name = "i32" },
+                Members = unionNode.Variants.Select((variant, index) => new EnumMember
+                {
+                    Name = variant.Name,
+                    ResolvedValue = index
+                }).ToList()
+            };
         }
 
         private static TypeNode Dereference(TypeNode type)
@@ -2739,7 +2852,9 @@ public sealed class ZigBackendIrWriter
             if (TryGetTagUnion(fullName, out _))
             {
                 backendType.Kind = "enum";
-                backendType.Name = fullName;
+                backendType.Name = type.TypeArguments.Count == 0
+                    ? fullName
+                    : fullName + "$" + string.Join("$", type.TypeArguments.Select(FormatTypeKey));
                 backendType.ElementType = Intern(new TypeNode { Name = "i32" });
                 return id;
             }
@@ -2761,7 +2876,9 @@ public sealed class ZigBackendIrWriter
             if (_enums.TryGetValue(fullName, out var enumNode))
             {
                 backendType.Kind = "enum";
-                backendType.Name = fullName;
+                backendType.Name = type.TypeArguments.Count == 0
+                    ? fullName
+                    : fullName + "$" + string.Join("$", type.TypeArguments.Select(FormatTypeKey));
                 backendType.ElementType = Intern(enumNode.UnderlyingType);
                 return id;
             }
@@ -2769,8 +2886,10 @@ public sealed class ZigBackendIrWriter
             if (_unions.TryGetValue(fullName, out var unionNode))
             {
                 backendType.Kind = "union";
-                backendType.Name = fullName;
-                backendType.Fields = unionNode.Variants.Select(variant => new BackendTypeField
+                backendType.Name = type.TypeArguments.Count == 0
+                    ? fullName
+                    : fullName + "$" + string.Join("$", type.TypeArguments.Select(FormatTypeKey));
+                backendType.Fields = GetUnionVariants(type).Select(variant => new BackendTypeField
                 {
                     Name = variant.Name,
                     Type = Intern(variant.TypeName)

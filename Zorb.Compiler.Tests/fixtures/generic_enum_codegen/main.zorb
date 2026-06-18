@@ -1,0 +1,25 @@
+enum Mode<T>: i32 {
+    Idle,
+    Busy = 3
+}
+
+fn choose(flag: bool) -> Mode<i64> {
+    if flag {
+        return Mode<i64>.Busy
+    }
+
+    return Mode<i64>.Idle
+}
+
+fn main() -> i64 {
+    mode: Mode<i64> = choose(true)
+
+    switch mode {
+        case Mode<i64>.Idle {
+            return 0
+        }
+        case Mode<i64>.Busy {
+            return 3
+        }
+    }
+}

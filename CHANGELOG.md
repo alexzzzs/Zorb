@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Generic enum and tagged-union support, including exact nominal typing per
+  concrete instantiation, generic union `.Tag` enum members such as
+  `Result<i64, bool>.Tag.Ok`, import-alias support, and payload-binding
+  `match` over concrete generic unions.
+- Additional fixture and runtime coverage for generic enums and unions,
+  including import aliases, nominal mismatch diagnostics, non-generic misuse,
+  and arity validation.
 - Explicit Linux AArch64 CLI targets: `host-linux-aarch64` and
   `freestanding-linux-aarch64`.
 - Linux AArch64 cross-build verification in the fixture suite, including LLVM

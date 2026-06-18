@@ -216,6 +216,7 @@ public partial class Parser
         var (path, name) = ParseDottedDeclName(
             "Expected enum name after 'enum'.",
             "Expected identifier after '.' in enum name.");
+        var typeParameters = ParseTypeParameterList();
 
         Expect(TokenType.Colon, "Expected ':' after enum name.");
         var underlyingType = ParseType();
@@ -260,6 +261,7 @@ public partial class Parser
         {
             NamespacePath = path,
             Name = name,
+            TypeParameters = typeParameters,
             UnderlyingType = underlyingType,
             Members = members
         };
@@ -274,6 +276,7 @@ public partial class Parser
         var (path, name) = ParseDottedDeclName(
             "Expected union name after 'union'.",
             "Expected identifier after '.' in union name.");
+        var typeParameters = ParseTypeParameterList();
 
         Expect(TokenType.LBrace, "Expected '{' to start union body.");
 
@@ -314,6 +317,7 @@ public partial class Parser
         {
             NamespacePath = path,
             Name = name,
+            TypeParameters = typeParameters,
             Variants = variants
         };
         StampNode(node, startToken);
