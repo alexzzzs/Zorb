@@ -2700,7 +2700,7 @@ public sealed class ZigBackendIrWriter
         {
             var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
             if (TryGetTagUnion(fullName, out var unionNode))
-                return BuildConcreteTagEnum(unionNode, type.TypeArguments);
+                return BuildConcreteTagEnum(unionNode);
 
             if (!_enums.TryGetValue(fullName, out var enumNode))
                 return null;
@@ -2730,7 +2730,7 @@ public sealed class ZigBackendIrWriter
                 };
         }
 
-        private static EnumNode BuildConcreteTagEnum(UnionNode unionNode, IReadOnlyList<TypeNode> typeArguments)
+        private static EnumNode BuildConcreteTagEnum(UnionNode unionNode)
         {
             return new EnumNode
             {
