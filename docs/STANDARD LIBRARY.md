@@ -1072,7 +1072,7 @@ export fn std.task.dequeue() -> *Fiber
 
 ## Async: `std/async.zorb`
 
-`std/async.zorb` imports `errors.zorb`, `net.zorb`, and `task.zorb` and
+`std/async.zorb` imports `errors.zorb`, `net.zorb`, `os.zorb`, and `task.zorb` and
 implements a cooperative socket-wait scheduler layer on top of fibers.
 
 ### Internal Definitions
@@ -1080,6 +1080,7 @@ implements a cooperative socket-wait scheduler layer on top of fibers.
 ```zorb
 import "errors.zorb"
 import "net.zorb"
+import "os.zorb"
 import "task.zorb"
 
 export struct std.async {}
@@ -1108,24 +1109,44 @@ export fn std.async.init()
 ```
 
 Resets the waiting queue head to null. There is no separate kernel poller
-handle; async waiting builds on `std.net.poll(...)`.
+handle; async waiting builds on `std.net.poll(...)` plus monotonic deadlines
+from `std.os.monotonic_millis()`.
 
 ### Wait Primitives
 
 ```zorb
 export fn std.async.wait_readable(fd: i32) !i32
 export fn std.async.wait_writable(fd: i32) !i32
+export fn std.async.wait_readable_timeout(fd: i32, timeout_ms: i32) !i32
+export fn std.async.wait_writable_timeout(fd: i32, timeout_ms: i32) !i32
 ```
 
 Behavior:
 
 ```text
 fd < 0: error.InvalidArgument
+timeout_ms < -1: error.InvalidArgument
 !std.async.is_supported(): error.UnsupportedPlatform
 outside a fiber: blocks in std.net.poll_* with timeout -1
+outside a fiber with timeout helpers: blocks in std.net.poll_* up to timeout_ms and returns error.TimedOut on expiry
 inside a fiber: registers the current fiber as waiting, yields, and resumes when the fd becomes ready
+timeout helpers inside a fiber: attach a deadline to the waiting fiber and return error.TimedOut on expiry
 poll failure: error.IOError
 ```
+
+### Exact I/O Helpers
+
+```zorb
+export fn std.async.send_exact(fd: i32, buf: []u8) !i64
+export fn std.async.send_exact_timeout(fd: i32, buf: []u8, timeout_ms: i32) !i64
+export fn std.async.recv_exact(fd: i32, buf: []u8) !i64
+export fn std.async.recv_exact_timeout(fd: i32, buf: []u8, timeout_ms: i32) !i64
+```
+
+These helpers loop until the whole slice is written or read. They wait for
+socket readiness between partial operations, return `error.TimedOut` when a
+timeout variant expires, `error.EndOfFile` on clean peer close during an exact
+read or write, and `error.IOError` for transport failures.
 
 ### Event Loop
 
@@ -1151,10 +1172,11 @@ fn std.async.poll_events()
 
 Returns immediately when no fibers are waiting. Otherwise it batches waiting
 fibers into a local 64-element poll array, uses timeout `0` when the ready
-queue is non-empty and `-1` when it is empty, calls `std.net.poll(...)`, and
-wakes any fibers whose descriptors became ready. The implementation rotates its
-batch cursor across polling passes so waiters beyond the first 64 still make
-progress. Each individual poll pass still only examines up to 64 waiters.
+queue is non-empty, otherwise chooses the nearest waiting-fiber deadline when
+timeouts are present and `-1` when no deadlines exist, calls `std.net.poll(...)`,
+and wakes any fibers whose descriptors became ready. The implementation rotates
+its batch cursor across polling passes so waiters beyond the first 64 still
+make progress. Each individual poll pass still only examines up to 64 waiters.
 
 Example:
 

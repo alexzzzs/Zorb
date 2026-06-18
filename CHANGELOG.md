@@ -32,6 +32,11 @@ All notable changes to this project will be documented in this file.
   `open_write`, `close`, `exists`, `size`, `delete`, `rename`, `read_all`,
   and `write_all` through descriptor-backed helpers, plus expanded Linux and
   Windows runtime coverage.
+- Async wait timeouts through `std.async.wait_readable_timeout(...)` and
+  `std.async.wait_writable_timeout(...)`, plus higher-level
+  `std.async.send_exact(...)` and `std.async.recv_exact(...)` helpers.
+- Additional async runtime coverage for timeout expiry, helper-based socket
+  ping-pong, and waiter fairness beyond the per-poll 64-fiber batch size.
 
 ### Changed
 
@@ -46,6 +51,10 @@ All notable changes to this project will be documented in this file.
 - `std.net`, `std.os`, and `std.task` now report `UnsupportedPlatform`
   consistently for unsupported target paths instead of exposing stale
   `NotImplemented` fallback branches.
+- `std.task.spawn(...)` now reserves task budget from the caller allocator
+  while backing runtime fiber records and stacks with reclaimable OS pages, so
+  completed tasks release their native allocations without changing existing
+  out-of-memory behavior.
 
 ### Fixed
 
@@ -55,6 +64,9 @@ All notable changes to this project will be documented in this file.
 - LLVM lowering now applies contextual array-to-pointer coercions consistently
   for returns, stores, and calls, so semantic acceptance and verified backend
   output stay aligned.
+- Finished tasks now release their owned runtime stack and fiber-record
+  allocations instead of leaking native memory for long-running async/task
+  workloads.
 
 ## [0.2.0] - June 12, 2026
 

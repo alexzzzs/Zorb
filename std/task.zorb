@@ -1,5 +1,6 @@
 import "mem.zorb"
 import "errors.zorb"
+import "os.zorb"
 import c "windows.h"
 
 extern fn ConvertThreadToFiber(lpParameter: *void) -> *void
@@ -10,6 +11,10 @@ extern fn DeleteFiber(lpFiber: *void) -> void
 export struct Fiber {
     id: i64,
     stack_ptr: *u8,
+    owned_stack_ptr: *u8,
+    owned_stack_len: i64,
+    owned_record_ptr: *u8,
+    owned_record_len: i64,
     state: i32, // 0: Ready, 1: Waiting, 2: Dead
     func: fn(*void) -> void,
     arg: *void,
@@ -17,6 +22,8 @@ export struct Fiber {
     wait_fd: i32,
     wait_events: i16,
     wait_revents: i16,
+    wait_deadline_ms: i64,
+    wait_timed_out: bool,
     waiting_next: *Fiber
 }
 
@@ -27,6 +34,8 @@ export scheduler_sp: *u8 = cast(*u8, 0)
 
 // The fix: track active fibers
 export active_fibers: i64 = 0
+
+task_next_id: i64 = 1
 
 export fn std.task.is_supported() -> bool {
     if Builtin.IsBareMetal {
@@ -216,17 +225,29 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         return error.UnsupportedPlatform
     }
 
+    task_budget_bytes: i64 = 69632
+    std.mem.HeapAllocator.alloc(gpa, task_budget_bytes) catch |reserve_err| {
+        return error.OutOfMemory
+    }
+
     if Builtin.IsX86_64 {
         if Builtin.IsWindows {
             if !std.task.ensure_windows_scheduler_fiber() {
                 return error.IOError
             }
 
-            fiber_mem: *u8 = (std.mem.HeapAllocator.alloc(gpa, Builtin.sizeof(Fiber))) catch |fiber_err| {
+            fiber_mem: *u8 = std.os.get_pages(4096) catch |fiber_err| {
                 return error.OutOfMemory
             }
             f: *Fiber = cast(*Fiber, fiber_mem)
 
+            f.id = task_next_id
+            task_next_id = task_next_id + 1
+            f.stack_ptr = cast(*u8, 0)
+            f.owned_stack_ptr = cast(*u8, 0)
+            f.owned_stack_len = 0
+            f.owned_record_ptr = fiber_mem
+            f.owned_record_len = 4096
             f.func = taskFunc
             f.arg = arg
             f.state = 0
@@ -234,11 +255,16 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
             f.wait_fd = -1
             f.wait_events = cast(i16, 0)
             f.wait_revents = cast(i16, 0)
+            f.wait_deadline_ms = -1
+            f.wait_timed_out = false
             f.waiting_next = cast(*Fiber, 0)
 
             stack_size: i64 = 65536
             fiber_handle: *void = CreateFiber(stack_size, fiber_entry_point_windows, cast(*void, f))
             if cast(i64, fiber_handle) == 0 {
+                std.os.free_pages(fiber_mem, 4096) catch |free_err| {
+                    return error.OutOfMemory
+                }
                 return error.OutOfMemory
             }
 
@@ -249,14 +275,24 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         }
 
         stack_size: i64 = 65536
-        raw_stack: *u8 = (std.mem.HeapAllocator.alloc(gpa, stack_size)) catch |stack_err| {
+        raw_stack: *u8 = std.os.get_pages(stack_size) catch |stack_err| {
             return error.OutOfMemory
         }
-        fiber_mem: *u8 = (std.mem.HeapAllocator.alloc(gpa, Builtin.sizeof(Fiber))) catch |fiber_err| {
+        fiber_mem: *u8 = std.os.get_pages(4096) catch |fiber_err| {
+            std.os.free_pages(raw_stack, stack_size) catch |free_err| {
+                return error.OutOfMemory
+            }
             return error.OutOfMemory
         }
         f: *Fiber = cast(*Fiber, fiber_mem)
         
+        f.id = task_next_id
+        task_next_id = task_next_id + 1
+        f.stack_ptr = cast(*u8, 0)
+        f.owned_stack_ptr = raw_stack
+        f.owned_stack_len = stack_size
+        f.owned_record_ptr = fiber_mem
+        f.owned_record_len = 4096
         f.func = taskFunc
         f.arg = arg
         f.state = 0
@@ -264,6 +300,8 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         f.wait_fd = -1
         f.wait_events = cast(i16, 0)
         f.wait_revents = cast(i16, 0)
+        f.wait_deadline_ms = -1
+        f.wait_timed_out = false
         f.waiting_next = cast(*Fiber, 0)
         active_fibers = active_fibers + 1 // Increment when created
         
@@ -286,14 +324,24 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         return 0
     } else if Builtin.IsAArch64 {
         stack_size: i64 = 65536
-        raw_stack: *u8 = (std.mem.HeapAllocator.alloc(gpa, stack_size)) catch |stack_err| {
+        raw_stack: *u8 = std.os.get_pages(stack_size) catch |stack_err| {
             return error.OutOfMemory
         }
-        fiber_mem: *u8 = (std.mem.HeapAllocator.alloc(gpa, Builtin.sizeof(Fiber))) catch |fiber_err| {
+        fiber_mem: *u8 = std.os.get_pages(4096) catch |fiber_err| {
+            std.os.free_pages(raw_stack, stack_size) catch |free_err| {
+                return error.OutOfMemory
+            }
             return error.OutOfMemory
         }
         f: *Fiber = cast(*Fiber, fiber_mem)
 
+        f.id = task_next_id
+        task_next_id = task_next_id + 1
+        f.stack_ptr = cast(*u8, 0)
+        f.owned_stack_ptr = raw_stack
+        f.owned_stack_len = stack_size
+        f.owned_record_ptr = fiber_mem
+        f.owned_record_len = 4096
         f.func = taskFunc
         f.arg = arg
         f.state = 0
@@ -301,6 +349,8 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         f.wait_fd = -1
         f.wait_events = cast(i16, 0)
         f.wait_revents = cast(i16, 0)
+        f.wait_deadline_ms = -1
+        f.wait_timed_out = false
         f.waiting_next = cast(*Fiber, 0)
         active_fibers = active_fibers + 1
 
@@ -368,18 +418,31 @@ export fn std.task.dequeue() -> *Fiber {
 }
 
 export fn std.task.dispose_dead_fiber(f: *Fiber) {
-    if !Builtin.IsWindows {
-        return
-    }
-
     if f.state != 2 {
         return
     }
 
-    if cast(i64, f.stack_ptr) == 0 {
+    owned_stack_ptr: *u8 = f.owned_stack_ptr
+    owned_stack_len: i64 = f.owned_stack_len
+    owned_record_ptr: *u8 = f.owned_record_ptr
+    owned_record_len: i64 = f.owned_record_len
+
+    if !Builtin.IsWindows {
+        if cast(i64, owned_stack_ptr) != 0 && owned_stack_len > 0 {
+            std.os.free_pages(owned_stack_ptr, owned_stack_len) catch |free_err| {}
+        }
+
+        if cast(i64, owned_record_ptr) != 0 && owned_record_len > 0 {
+            std.os.free_pages(owned_record_ptr, owned_record_len) catch |free_err| {}
+        }
         return
     }
 
-    DeleteFiber(cast(*void, f.stack_ptr))
-    f.stack_ptr = cast(*u8, 0)
+    if cast(i64, f.stack_ptr) != 0 {
+        DeleteFiber(cast(*void, f.stack_ptr))
+    }
+
+    if cast(i64, owned_record_ptr) != 0 && owned_record_len > 0 {
+        std.os.free_pages(owned_record_ptr, owned_record_len) catch |free_err| {}
+    }
 }

@@ -5,12 +5,14 @@ import "../../../std/net.zorb"
 import "../../../std/os.zorb"
 import "../../../std/task.zorb"
 
+reader_count: i64 = 80
 client_fd_global: i32 = 0
 conn_fd_global: i32 = 0
+readers_done: i64 = 0
 
 fn bind_loopback_port(server_fd: i32, addr: *std.net.SockAddrV4) -> bool {
-    port: i64 = 19140
-    while port < 20140 {
+    port: i64 = 20141
+    while port < 21141 {
         candidate: std.net.SockAddrV4 = std.net.sockaddr_v4_loopback(cast(u16, port))
         bind_result: i64 = std.net.bind_v4(server_fd, &candidate)
         if bind_result >= 0 {
@@ -31,62 +33,34 @@ fn bind_loopback_port(server_fd: i32, addr: *std.net.SockAddrV4) -> bool {
 }
 
 fn reader(arg: *void) {
-    round: i64 = 0
-    while round < 3 {
-        expected: u8 = cast(u8, 65 + round)
-        response: u8 = cast(u8, 97 + round)
-
-        inbound_storage: [1]u8
-        inbound: []u8 = inbound_storage
-        std.async.recv_exact_timeout(conn_fd_global, inbound, 1000) catch |recv_err| {
-            std.os.exit(recv_err)
-            return
-        }
-
-        if inbound[0] != expected {
-            std.os.exit(31)
-            return
-        }
-
-        outbound_storage: [1]u8
-        outbound_storage[0] = response
-        outbound: []u8 = outbound_storage
-        std.async.send_exact_timeout(conn_fd_global, outbound, 1000) catch |send_err| {
-            std.os.exit(send_err)
-            return
-        }
-
-        round = round + 1
+    buf_storage: [1]u8
+    buf: []u8 = buf_storage
+    std.async.recv_exact_timeout(conn_fd_global, buf, 2000) catch |recv_err| {
+        std.os.exit(recv_err)
+        return
     }
+
+    if buf[0] != cast(u8, 90) {
+        std.os.exit(31)
+        return
+    }
+
+    readers_done = readers_done + 1
 }
 
 fn writer(arg: *void) {
-    round: i64 = 0
-    while round < 3 {
-        outbound_storage: [1]u8
-        outbound_storage[0] = cast(u8, 65 + round)
-        outbound: []u8 = outbound_storage
-        std.async.send_exact_timeout(client_fd_global, outbound, 1000) catch |send_err| {
-            std.os.exit(send_err)
-            return
-        }
-
-        inbound_storage: [1]u8
-        inbound: []u8 = inbound_storage
-        std.async.recv_exact_timeout(client_fd_global, inbound, 1000) catch |recv_err| {
-            std.os.exit(recv_err)
-            return
-        }
-
-        if inbound[0] != cast(u8, 97 + round) {
-            std.os.exit(41)
-            return
-        }
-
-        round = round + 1
+    payload_storage: [80]u8
+    i: i64 = 0
+    while i < reader_count {
+        payload_storage[i] = cast(u8, 90)
+        i = i + 1
     }
 
-    std.io.print("async net ok\n")
+    payload: []u8 = payload_storage
+    std.async.send_exact_timeout(client_fd_global, payload, 2000) catch |send_err| {
+        std.os.exit(send_err)
+        return
+    }
 }
 
 fn _start() {
@@ -96,7 +70,7 @@ fn _start() {
         return
     }
 
-    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(262144) catch |init_err| {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(8388608) catch |init_err| {
         std.os.exit(init_err)
         return
     }
@@ -144,12 +118,16 @@ fn _start() {
     conn_fd_global = cast(i32, conn_fd_raw)
     std.async.init()
 
-    std.task.spawn(&heap, reader, cast(*void, 0)) catch |spawn_err| {
-        std.net.close(conn_fd_global)
-        std.net.close(client_fd_global)
-        std.net.close(server_fd)
-        std.os.exit(spawn_err)
-        return
+    i: i64 = 0
+    while i < reader_count {
+        std.task.spawn(&heap, reader, cast(*void, 0)) catch |spawn_err| {
+            std.net.close(conn_fd_global)
+            std.net.close(client_fd_global)
+            std.net.close(server_fd)
+            std.os.exit(spawn_err)
+            return
+        }
+        i = i + 1
     }
 
     std.task.spawn(&heap, writer, cast(*void, 0)) catch |spawn_err| {
@@ -162,8 +140,14 @@ fn _start() {
 
     std.async.loop()
 
+    if readers_done != reader_count {
+        std.os.exit(6)
+        return
+    }
+
     std.net.close(conn_fd_global)
     std.net.close(client_fd_global)
     std.net.close(server_fd)
+    std.io.print("many waiters ok\n")
     std.os.exit(0)
 }

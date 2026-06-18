@@ -15,3 +15,4 @@ export error EndOfFile = 11
 export error IOError = 12
 export error UnsupportedPlatform = 13
 export error NotImplemented = 14
+export error TimedOut = 15
