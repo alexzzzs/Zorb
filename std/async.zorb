@@ -1,5 +1,6 @@
 import "errors.zorb"
 import "net.zorb"
+import "os.zorb"
 import "task.zorb"
 
 export struct std.async {}
@@ -53,21 +54,39 @@ export fn std.async.init() {
 }
 
 export fn std.async.wait_readable(fd: i32) !i32 {
-    result: i32 = std.async.wait_for_fd(fd, std.async.read_event()) catch |err| {
+    result: i32 = std.async.wait_for_fd(fd, std.async.read_event(), -1) catch |err| {
         return err
     }
     return result
 }
 
 export fn std.async.wait_writable(fd: i32) !i32 {
-    result: i32 = std.async.wait_for_fd(fd, std.async.write_event()) catch |err| {
+    result: i32 = std.async.wait_for_fd(fd, std.async.write_event(), -1) catch |err| {
         return err
     }
     return result
 }
 
-fn std.async.wait_for_fd(fd: i32, events: i16) !i32 {
+export fn std.async.wait_readable_timeout(fd: i32, timeout_ms: i32) !i32 {
+    result: i32 = std.async.wait_for_fd(fd, std.async.read_event(), timeout_ms) catch |err| {
+        return err
+    }
+    return result
+}
+
+export fn std.async.wait_writable_timeout(fd: i32, timeout_ms: i32) !i32 {
+    result: i32 = std.async.wait_for_fd(fd, std.async.write_event(), timeout_ms) catch |err| {
+        return err
+    }
+    return result
+}
+
+fn std.async.wait_for_fd(fd: i32, events: i16, timeout_ms: i32) !i32 {
     if fd < 0 {
+        return error.InvalidArgument
+    }
+
+    if timeout_ms < -1 {
         return error.InvalidArgument
     }
 
@@ -76,8 +95,13 @@ fn std.async.wait_for_fd(fd: i32, events: i16) !i32 {
     }
 
     if cast(i64, current_fiber) == 0 {
-        if std.async.poll_single(fd, events, -1) > 0 {
+        ready_single: i64 = std.async.poll_single(fd, events, timeout_ms)
+        if ready_single > 0 {
             return 0
+        }
+
+        if ready_single == 0 {
+            return error.TimedOut
         }
 
         return error.IOError
@@ -93,10 +117,20 @@ fn std.async.wait_for_fd(fd: i32, events: i16) !i32 {
             return error.IOError
         }
 
-        std.async.register_current_wait(fd, events)
+        if timeout_ms == 0 {
+            return error.TimedOut
+        }
+
+        std.async.register_current_wait(fd, events, timeout_ms) catch |err| {
+            return err
+        }
         std.task.yield_to_scheduler()
 
         current_fiber.state = 0
+        if current_fiber.wait_timed_out {
+            current_fiber.wait_timed_out = false
+            return error.TimedOut
+        }
         if current_fiber.wait_revents != cast(i16, 0) {
             wake_result: i64 = std.async.decode_ready_events(events, current_fiber.wait_revents)
             current_fiber.wait_revents = cast(i16, 0)
@@ -113,13 +147,23 @@ fn std.async.wait_for_fd(fd: i32, events: i16) !i32 {
     return error.IOError
 }
 
-fn std.async.register_current_wait(fd: i32, events: i16) {
+fn std.async.register_current_wait(fd: i32, events: i16, timeout_ms: i32) !i32 {
+    deadline_ms: i64 = -1
+    if timeout_ms >= 0 {
+        deadline_ms = std.async.deadline_from_timeout(timeout_ms) catch |err| {
+            return err
+        }
+    }
+
     current_fiber.state = 1
     current_fiber.wait_fd = fd
     current_fiber.wait_events = events
     current_fiber.wait_revents = cast(i16, 0)
+    current_fiber.wait_deadline_ms = deadline_ms
+    current_fiber.wait_timed_out = false
     current_fiber.waiting_next = waiting_head
     waiting_head = current_fiber
+    return 0
 }
 
 fn std.async.poll_single(fd: i32, events: i16, timeout_ms: i32) -> i64 {
@@ -163,6 +207,7 @@ export fn std.async.loop() {
                 continue
             }
             std.task.resume(f)
+            current_fiber = cast(*Fiber, 0)
             std.task.dispose_dead_fiber(f)
         }
 
@@ -183,10 +228,11 @@ fn std.async.poll_events() {
         return
     }
 
-    timeout_ms: i32 = 0
-    if cast(i64, ready_queue_head) == 0 {
-        timeout_ms = -1
+    now_ms: i64 = std.os.monotonic_millis() catch |time_err| {
+        std.async.wake_all_waiting_with_error()
+        return
     }
+    timeout_ms: i32 = std.async.resolve_poll_timeout_ms(now_ms)
 
     poll_storage: [64]std.net.PollFd
     waiting_fibers: [64]i64
@@ -213,10 +259,19 @@ fn std.async.poll_events() {
         return
     }
 
+    if count == 64 && cast(i64, cursor) != 0 && cursor != batch_start {
+        timeout_ms = 0
+    }
+
     waiting_poll_cursor = cursor
 
     ready: i64 = std.net.poll(poll_storage, count, timeout_ms)
     if ready <= 0 {
+        now_after: i64 = std.os.monotonic_millis() catch |time_err| {
+            std.async.wake_all_waiting_with_error()
+            return
+        }
+        std.async.wake_timed_out_fibers(now_after)
         return
     }
 
@@ -227,6 +282,12 @@ fn std.async.poll_events() {
         }
         i = i + 1
     }
+
+    now_after: i64 = std.os.monotonic_millis() catch |time_err| {
+        std.async.wake_all_waiting_with_error()
+        return
+    }
+    std.async.wake_timed_out_fibers(now_after)
 }
 
 fn std.async.resolve_waiting_cursor() -> *Fiber {
@@ -244,6 +305,12 @@ fn std.async.resolve_waiting_cursor() -> *Fiber {
     }
 
     return waiting_head
+}
+
+fn std.async.wake_all_waiting_with_error() {
+    while cast(i64, waiting_head) != 0 {
+        std.async.wake_waiting_fiber(waiting_head, std.async.error_event_mask())
+    }
 }
 
 fn std.async.wake_waiting_fiber(target: *Fiber, revents: i16) {
@@ -266,6 +333,8 @@ fn std.async.wake_waiting_fiber(target: *Fiber, revents: i16) {
             cursor.wait_revents = revents
             cursor.wait_fd = -1
             cursor.wait_events = cast(i16, 0)
+            cursor.wait_deadline_ms = -1
+            cursor.wait_timed_out = false
             cursor.state = 0
             std.task.enqueue(cursor)
             return
@@ -274,4 +343,142 @@ fn std.async.wake_waiting_fiber(target: *Fiber, revents: i16) {
         prev = cursor
         cursor = cursor.waiting_next
     }
+}
+
+fn std.async.deadline_from_timeout(timeout_ms: i32) !i64 {
+    now_ms: i64 = std.os.monotonic_millis() catch |err| {
+        return err
+    }
+    return now_ms + cast(i64, timeout_ms)
+}
+
+fn std.async.resolve_poll_timeout_ms(now_ms: i64) -> i32 {
+    if cast(i64, ready_queue_head) != 0 {
+        return 0
+    }
+
+    cursor: *Fiber = waiting_head
+    has_deadline: bool = false
+    min_remaining: i64 = 0
+    while cast(i64, cursor) != 0 {
+        if cursor.wait_deadline_ms >= 0 {
+            remaining: i64 = cursor.wait_deadline_ms - now_ms
+            if remaining <= 0 {
+                return 0
+            }
+
+            if !has_deadline || remaining < min_remaining {
+                min_remaining = remaining
+                has_deadline = true
+            }
+        }
+
+        cursor = cursor.waiting_next
+    }
+
+    if !has_deadline {
+        return -1
+    }
+
+    if min_remaining > 2147483647 {
+        return 2147483647
+    }
+
+    return cast(i32, min_remaining)
+}
+
+fn std.async.wake_timed_out_fibers(now_ms: i64) {
+    prev: *Fiber = cast(*Fiber, 0)
+    cursor: *Fiber = waiting_head
+
+    while cast(i64, cursor) != 0 {
+        next: *Fiber = cursor.waiting_next
+        if cursor.wait_deadline_ms >= 0 && cursor.wait_deadline_ms <= now_ms {
+            if cast(i64, prev) == 0 {
+                waiting_head = next
+            } else {
+                prev.waiting_next = next
+            }
+
+            if waiting_poll_cursor == cursor {
+                waiting_poll_cursor = next
+            }
+
+            cursor.waiting_next = cast(*Fiber, 0)
+            cursor.wait_revents = cast(i16, 0)
+            cursor.wait_fd = -1
+            cursor.wait_events = cast(i16, 0)
+            cursor.wait_deadline_ms = -1
+            cursor.wait_timed_out = true
+            cursor.state = 0
+            std.task.enqueue(cursor)
+            cursor = next
+            continue
+        }
+
+        prev = cursor
+        cursor = next
+    }
+}
+
+export fn std.async.send_exact(fd: i32, buf: []u8) !i64 {
+    result: i64 = std.async.send_exact_timeout(fd, buf, -1) catch |err| {
+        return err
+    }
+    return result
+}
+
+export fn std.async.send_exact_timeout(fd: i32, buf: []u8, timeout_ms: i32) !i64 {
+    sent: i64 = 0
+    while sent < buf.len {
+        std.async.wait_writable_timeout(fd, timeout_ms) catch |err| {
+            return err
+        }
+
+        chunk: []u8 = buf
+        chunk.ptr = buf.ptr + sent
+        chunk.len = buf.len - sent
+        wrote: i64 = std.net.send(fd, chunk)
+        if wrote < 0 {
+            return error.IOError
+        }
+        if wrote == 0 {
+            return error.EndOfFile
+        }
+
+        sent = sent + wrote
+    }
+
+    return sent
+}
+
+export fn std.async.recv_exact(fd: i32, buf: []u8) !i64 {
+    result: i64 = std.async.recv_exact_timeout(fd, buf, -1) catch |err| {
+        return err
+    }
+    return result
+}
+
+export fn std.async.recv_exact_timeout(fd: i32, buf: []u8, timeout_ms: i32) !i64 {
+    received: i64 = 0
+    while received < buf.len {
+        std.async.wait_readable_timeout(fd, timeout_ms) catch |err| {
+            return err
+        }
+
+        chunk: []u8 = buf
+        chunk.ptr = buf.ptr + received
+        chunk.len = buf.len - received
+        read: i64 = std.net.recv(fd, chunk)
+        if read < 0 {
+            return error.IOError
+        }
+        if read == 0 {
+            return error.EndOfFile
+        }
+
+        received = received + read
+    }
+
+    return received
 }

@@ -7,6 +7,13 @@ export struct std.os {}
 import c "windows.h"
 extern fn ExitProcess(uExitCode: u32) -> void
 extern fn VirtualAlloc(addr: *u8, size: i64, type: u32, protect: u32) -> *u8
+extern fn VirtualFree(addr: *u8, size: i64, free_type: u32) -> i32
+extern fn GetTickCount64() -> u64
+
+struct std.os.Timespec {
+    tv_sec: i64,
+    tv_nsec: i64
+}
 
 export fn std.os.is_linux() -> bool {
     if Builtin.IsLinux {
@@ -154,6 +161,82 @@ export fn std.os.get_pages(size: i64) !*u8 {
             return error.OutOfMemory
         }
         return pages
+    }
+
+    return error.UnsupportedPlatform
+}
+
+export fn std.os.free_pages(addr: *u8, size: i64) !i32 {
+    if cast(i64, addr) == 0 {
+        return error.InvalidArgument
+    }
+
+    if size <= 0 {
+        return error.InvalidSize
+    }
+
+    if Builtin.IsBareMetal {
+        return error.UnsupportedPlatform
+    }
+
+    if Builtin.IsLinux {
+        munmap_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            munmap_nr = 11
+        }
+        if Builtin.IsAArch64 {
+            munmap_nr = 215
+        }
+        if munmap_nr == 0 {
+            return error.UnsupportedPlatform
+        }
+
+        result: i64 = syscall(munmap_nr, cast(i64, addr), size)
+        if result < 0 {
+            return error.IOError
+        }
+        return 0
+    }
+
+    if Builtin.IsWindows {
+        result: i32 = VirtualFree(addr, 0, 32768)
+        if result == 0 {
+            return error.IOError
+        }
+        return 0
+    }
+
+    return error.UnsupportedPlatform
+}
+
+export fn std.os.monotonic_millis() !i64 {
+    if Builtin.IsBareMetal {
+        return error.UnsupportedPlatform
+    }
+
+    if Builtin.IsLinux {
+        clock_gettime_nr: i64 = 0
+        if Builtin.IsX86_64 {
+            clock_gettime_nr = 228
+        }
+        if Builtin.IsAArch64 {
+            clock_gettime_nr = 113
+        }
+        if clock_gettime_nr == 0 {
+            return error.UnsupportedPlatform
+        }
+
+        ts: std.os.Timespec
+        result: i64 = syscall(clock_gettime_nr, 1, cast(i64, &ts))
+        if result < 0 {
+            return error.IOError
+        }
+
+        return ts.tv_sec * 1000 + (ts.tv_nsec / 1000000)
+    }
+
+    if Builtin.IsWindows {
+        return cast(i64, GetTickCount64())
     }
 
     return error.UnsupportedPlatform

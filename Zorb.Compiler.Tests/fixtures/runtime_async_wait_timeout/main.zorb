@@ -1,4 +1,5 @@
 import "../../../std/async.zorb"
+import "../../../std/errors.zorb"
 import "../../../std/io.zorb"
 import "../../../std/mem.zorb"
 import "../../../std/net.zorb"
@@ -9,8 +10,8 @@ client_fd_global: i32 = 0
 conn_fd_global: i32 = 0
 
 fn bind_loopback_port(server_fd: i32, addr: *std.net.SockAddrV4) -> bool {
-    port: i64 = 19140
-    while port < 20140 {
+    port: i64 = 21141
+    while port < 22141 {
         candidate: std.net.SockAddrV4 = std.net.sockaddr_v4_loopback(cast(u16, port))
         bind_result: i64 = std.net.bind_v4(server_fd, &candidate)
         if bind_result >= 0 {
@@ -30,63 +31,18 @@ fn bind_loopback_port(server_fd: i32, addr: *std.net.SockAddrV4) -> bool {
     return false
 }
 
-fn reader(arg: *void) {
-    round: i64 = 0
-    while round < 3 {
-        expected: u8 = cast(u8, 65 + round)
-        response: u8 = cast(u8, 97 + round)
-
-        inbound_storage: [1]u8
-        inbound: []u8 = inbound_storage
-        std.async.recv_exact_timeout(conn_fd_global, inbound, 1000) catch |recv_err| {
-            std.os.exit(recv_err)
+fn waiter(arg: *void) {
+    std.async.wait_readable_timeout(conn_fd_global, 50) catch |wait_err| {
+        if wait_err == error.TimedOut {
+            std.io.print("fiber timeout\n")
             return
         }
 
-        if inbound[0] != expected {
-            std.os.exit(31)
-            return
-        }
-
-        outbound_storage: [1]u8
-        outbound_storage[0] = response
-        outbound: []u8 = outbound_storage
-        std.async.send_exact_timeout(conn_fd_global, outbound, 1000) catch |send_err| {
-            std.os.exit(send_err)
-            return
-        }
-
-        round = round + 1
-    }
-}
-
-fn writer(arg: *void) {
-    round: i64 = 0
-    while round < 3 {
-        outbound_storage: [1]u8
-        outbound_storage[0] = cast(u8, 65 + round)
-        outbound: []u8 = outbound_storage
-        std.async.send_exact_timeout(client_fd_global, outbound, 1000) catch |send_err| {
-            std.os.exit(send_err)
-            return
-        }
-
-        inbound_storage: [1]u8
-        inbound: []u8 = inbound_storage
-        std.async.recv_exact_timeout(client_fd_global, inbound, 1000) catch |recv_err| {
-            std.os.exit(recv_err)
-            return
-        }
-
-        if inbound[0] != cast(u8, 97 + round) {
-            std.os.exit(41)
-            return
-        }
-
-        round = round + 1
+        std.os.exit(wait_err)
+        return
     }
 
-    std.io.print("async net ok\n")
+    std.os.exit(31)
 }
 
 fn _start() {
@@ -142,17 +98,18 @@ fn _start() {
     }
 
     conn_fd_global = cast(i32, conn_fd_raw)
-    std.async.init()
 
-    std.task.spawn(&heap, reader, cast(*void, 0)) catch |spawn_err| {
-        std.net.close(conn_fd_global)
-        std.net.close(client_fd_global)
-        std.net.close(server_fd)
-        std.os.exit(spawn_err)
-        return
+    std.async.wait_readable_timeout(conn_fd_global, 50) catch |wait_err| {
+        if wait_err == error.TimedOut {
+            std.io.print("direct timeout\n")
+        } else {
+            std.os.exit(wait_err)
+            return
+        }
     }
 
-    std.task.spawn(&heap, writer, cast(*void, 0)) catch |spawn_err| {
+    std.async.init()
+    std.task.spawn(&heap, waiter, cast(*void, 0)) catch |spawn_err| {
         std.net.close(conn_fd_global)
         std.net.close(client_fd_global)
         std.net.close(server_fd)
@@ -161,7 +118,6 @@ fn _start() {
     }
 
     std.async.loop()
-
     std.net.close(conn_fd_global)
     std.net.close(client_fd_global)
     std.net.close(server_fd)
