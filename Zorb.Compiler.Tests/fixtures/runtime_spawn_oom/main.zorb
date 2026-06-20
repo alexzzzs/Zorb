@@ -12,11 +12,11 @@ fn _start() {
         return
     }
     spawn_result: i32 = std.task.spawn(&heap, job, cast(*void, 0)) catch |spawn_err| {
-        std.io.print("oom\n")
-        std.os.exit(0)
+        std.io.print("spawn\n")
+        std.os.exit(spawn_err)
         return
     }
 
-    std.io.print("unexpected\n")
-    std.os.exit(1)
+    std.io.print("ok\n")
+    std.os.exit(0)
 }

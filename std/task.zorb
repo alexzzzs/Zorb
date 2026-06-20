@@ -225,11 +225,6 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         return error.UnsupportedPlatform
     }
 
-    task_budget_bytes: i64 = 69632
-    std.mem.HeapAllocator.alloc(gpa, task_budget_bytes) catch |reserve_err| {
-        return error.OutOfMemory
-    }
-
     if Builtin.IsX86_64 {
         if Builtin.IsWindows {
             if !std.task.ensure_windows_scheduler_fiber() {

@@ -229,6 +229,7 @@ fn std.async.poll_events() {
     }
 
     now_ms: i64 = std.os.monotonic_millis() catch |time_err| {
+        std.async.wake_all_waiting_with_error()
         return
     }
     timeout_ms: i32 = std.async.resolve_poll_timeout_ms(now_ms)
@@ -258,11 +259,16 @@ fn std.async.poll_events() {
         return
     }
 
+    if count == 64 && cast(i64, cursor) != 0 && cursor != batch_start {
+        timeout_ms = 0
+    }
+
     waiting_poll_cursor = cursor
 
     ready: i64 = std.net.poll(poll_storage, count, timeout_ms)
     if ready <= 0 {
         now_after: i64 = std.os.monotonic_millis() catch |time_err| {
+            std.async.wake_all_waiting_with_error()
             return
         }
         std.async.wake_timed_out_fibers(now_after)
@@ -278,6 +284,7 @@ fn std.async.poll_events() {
     }
 
     now_after: i64 = std.os.monotonic_millis() catch |time_err| {
+        std.async.wake_all_waiting_with_error()
         return
     }
     std.async.wake_timed_out_fibers(now_after)
@@ -298,6 +305,12 @@ fn std.async.resolve_waiting_cursor() -> *Fiber {
     }
 
     return waiting_head
+}
+
+fn std.async.wake_all_waiting_with_error() {
+    while cast(i64, waiting_head) != 0 {
+        std.async.wake_waiting_fiber(waiting_head, std.async.error_event_mask())
+    }
 }
 
 fn std.async.wake_waiting_fiber(target: *Fiber, revents: i16) {
