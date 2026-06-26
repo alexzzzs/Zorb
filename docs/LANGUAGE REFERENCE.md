@@ -329,12 +329,15 @@ Generic structs support the same `packed`, `align(N)`, `layout(explicit)`, and f
 Current limits:
 
 - Struct type arguments are always explicit; generic function-call inference is a separate feature.
-- Every use must provide exactly the declared number of type arguments.
+- Every use must provide all non-defaulted type arguments.
+- Trailing type arguments may be omitted when the declaration provides defaults.
 - Type parameters are scoped to the generic declaration.
 - Generic arguments may themselves be built-in or user-defined types, including concrete generic instantiations.
 - Structs, enums, unions, and functions may declare type parameters. Extern types and built-in types cannot.
 - Generic tagged unions also expose concrete tag enums such as `Result<i64, bool>.Tag.Ok`.
-- Generic declarations do not currently support constraints or default type arguments.
+- Generic type parameters may declare exact-type constraints with `: Type`.
+- Generic type parameters may declare trailing default type arguments with `= Type`.
+- Constraints are exact-type checks after substituting any earlier resolved type arguments; they are not traits or interfaces.
 
 ### Tagged Unions
 
@@ -390,8 +393,16 @@ fn demo() -> i64 {
 ```
 
 Generic function calls may provide explicit type arguments or omit them when the
-parameter types determine the concrete instantiation directly. Each concrete
-instantiation is monomorphized into a distinct lowered function.
+parameter types determine the concrete instantiation directly. Type parameters
+may also use exact-type constraints and trailing defaults:
+
+```zorb
+fn mirror<T, U: T = T>(left: T, right: U) -> U {
+    return right
+}
+```
+
+Each concrete instantiation is monomorphized into a distinct lowered function.
 
 Generic functions may use their type parameters in parameters, return types, local declarations, casts, `Builtin.sizeof(...)`, struct literals, arrays, slices, pointers, function types, and error unions. Calls may use imported declarations and nested generic types:
 

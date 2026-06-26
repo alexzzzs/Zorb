@@ -23,6 +23,9 @@ All notable changes to this project will be documented in this file.
 - Generic function type-argument inference for direct, obvious call sites,
   including imported generic declarations and parameter shapes involving
   pointers, slices, arrays, function types, and error unions.
+- Generic type-parameter constraints and trailing default type arguments for
+  structs, enums, unions, and non-extern functions, plus fixture and runtime
+  coverage for partial explicit instantiations and constraint rejection.
 - Additional fixture coverage for inferred generic calls, import-alias generic
   calls, and runtime coercion flows across arrays, pointers, and slices.
 - Scalar `match` support for numeric and `bool` expressions, with shared

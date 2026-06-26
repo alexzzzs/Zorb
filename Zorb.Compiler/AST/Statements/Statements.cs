@@ -64,6 +64,13 @@ public class Parameter
     public Parameter() { }
 }
 
+public class GenericTypeParameter
+{
+    public string Name { get; set; } = null!;
+    public TypeNode? Constraint { get; set; }
+    public TypeNode? DefaultType { get; set; }
+}
+
 public class StructField : Node
 {
     public string Name { get; set; } = null!;
@@ -78,6 +85,7 @@ public class FunctionDecl : Node
     public List<string> NamespacePath { get; set; } = new();
     public string Name { get; set; } = null!;
     public List<string> TypeParameters { get; set; } = new();
+    public List<GenericTypeParameter> TypeParameterSpecs { get; set; } = new();
     public List<Parameter> Parameters { get; set; } = new();
     public TypeNode ReturnType { get; set; } = new() { Name = "void" };
     public List<Statement> Body { get; set; } = new();
@@ -198,6 +206,7 @@ public class StructNode : Node
     public List<string> NamespacePath { get; set; } = new();
     public string Name { get; set; } = null!;
     public List<string> TypeParameters { get; set; } = new();
+    public List<GenericTypeParameter> TypeParameterSpecs { get; set; } = new();
     public List<string> Attributes { get; set; } = new();
     public List<StructField> Fields { get; set; } = new();
     public Expr? AlignExpr { get; set; }
@@ -216,6 +225,7 @@ public class EnumNode : Node
     public List<string> NamespacePath { get; set; } = new();
     public string Name { get; set; } = null!;
     public List<string> TypeParameters { get; set; } = new();
+    public List<GenericTypeParameter> TypeParameterSpecs { get; set; } = new();
     public TypeNode UnderlyingType { get; set; } = null!;
     public List<EnumMember> Members { get; set; } = new();
 }
@@ -232,6 +242,7 @@ public class UnionNode : Node
     public List<string> NamespacePath { get; set; } = new();
     public string Name { get; set; } = null!;
     public List<string> TypeParameters { get; set; } = new();
+    public List<GenericTypeParameter> TypeParameterSpecs { get; set; } = new();
     public List<UnionVariant> Variants { get; set; } = new();
 }
 

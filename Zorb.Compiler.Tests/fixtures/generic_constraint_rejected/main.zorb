@@ -1,0 +1,7 @@
+fn keep_same<T, U: T>(left: T, right: U) -> T {
+    return left
+}
+
+fn main() -> i64 {
+    return keep_same<i64, bool>(1, true)
+}

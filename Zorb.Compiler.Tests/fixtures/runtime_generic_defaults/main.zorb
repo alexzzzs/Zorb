@@ -1,0 +1,24 @@
+import "../../../std/io.zorb"
+import "../../../std/os.zorb"
+
+struct Box<T = i64> {
+    value: T,
+}
+
+fn choose_second<T, U = i64>(left: T, right: U) -> U {
+    return right
+}
+
+fn mirror<T, U: T = T>(left: T, right: U) -> U {
+    return right
+}
+
+fn _start() {
+    box: Box = Box{ value: 40 }
+    picked: i64 = choose_second<bool>(true, 1)
+    mirrored: i64 = mirror<i64>(0, 2)
+    total: i64 = box.value + picked + mirrored
+    std.io.print_i64(total)
+    std.io.print("\n")
+    std.os.exit(0)
+}

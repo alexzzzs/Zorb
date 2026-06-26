@@ -49,27 +49,31 @@ It does not currently mean:
 
 ## Generics
 
-Structs and non-extern functions may declare one or more type parameters:
+Structs and non-extern functions may declare one or more type parameters.
+Type parameters may optionally declare an exact-type constraint with `: Type`
+and a trailing default type with `= Type`:
 
 ```zorb
-struct Box<T> {
+struct Box<T = i64> {
     value: T,
 }
 
-fn identity<T>(value: T) -> T {
-    return value
+fn mirror<T, U: T = T>(left: T, right: U) -> U {
+    return right
 }
 
-fn make() -> Box<i64> {
-    return Box<i64>{ value: identity<i64>(42) }
+fn make() -> Box {
+    return Box{ value: mirror<i64>(0, 42) }
 }
 ```
 
-Generic calls may provide explicit type arguments such as `identity<i64>(42)`, or omit them when the parameter types make the concrete instantiation obvious, such as `identity(42)`. Generic types such as `Box<i64>`, `Mode<i64>`, and `Result<i64, bool>` still provide explicit type arguments. Nested forms such as `Box<Box<i64>>`, imported generic declarations, pointers, slices, arrays, error unions, and generic struct layout attributes are supported.
+Generic calls may provide explicit type arguments such as `identity<i64>(42)`, or omit them when the parameter types make the concrete instantiation obvious, such as `identity(42)`. Generic types such as `Box<i64>`, `Mode<i64>`, and `Result<i64, bool>` may provide explicit type arguments, and declarations with trailing defaults may omit those trailing positions. Nested forms such as `Box<Box<i64>>`, imported generic declarations, pointers, slices, arrays, error unions, and generic struct layout attributes are supported.
 
 Each concrete use is monomorphized into a distinct backend function or concrete nominal type. Generic unions also monomorphize their generated `.Tag` enums per concrete use, so expressions such as `Result<i64, bool>.Tag.Ok` remain type-safe.
-Zorb does not currently provide constraints, default type arguments, generic
-extern functions, or first-class values for uninstantiated generic functions.
+Constraints are exact-type requirements after substituting any earlier type
+arguments; they are not a trait or interface system. Generic extern functions
+and first-class values for uninstantiated generic functions are still not
+supported.
 
 Cross-platform stdlib helpers currently include:
 
