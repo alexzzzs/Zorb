@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Zorb.Compiler.AST;
@@ -23,152 +24,21 @@ var fixtureDirs = Directory.GetDirectories(fixtureRoot).OrderBy(path => path, St
 var failures = new List<string>();
 
 foreach (var fixtureDir in fixtureDirs)
-{
-    var fixtureName = Path.GetFileName(fixtureDir);
+    RunNamedTest(Path.GetFileName(fixtureDir), () => RunFixture(fixtureDir));
 
-    try
-    {
-        RunFixture(fixtureDir);
-        Console.WriteLine($"PASS {fixtureName}");
-    }
-    catch (Exception ex)
-    {
-        failures.Add($"{fixtureName}: {ex.Message}");
-        Console.WriteLine($"FAIL {fixtureName}");
-    }
-}
-
-try
-{
-    RunCliWorkflowTests(fixtureRoot);
-    Console.WriteLine("PASS cli_workflow");
-}
-catch (Exception ex)
-{
-    failures.Add($"cli_workflow: {ex.Message}");
-    Console.WriteLine("FAIL cli_workflow");
-}
-
-try
-{
-    RunAArch64LinuxCrossTargetTests(fixtureRoot);
-    Console.WriteLine("PASS aarch64_linux_targets");
-}
-catch (Exception ex)
-{
-    failures.Add($"aarch64_linux_targets: {ex.Message}");
-    Console.WriteLine("FAIL aarch64_linux_targets");
-}
-
-try
-{
-    RunBareMetalCliBuildTests(fixtureRoot);
-    Console.WriteLine("PASS cli_bare_metal");
-}
-catch (Exception ex)
-{
-    failures.Add($"cli_bare_metal: {ex.Message}");
-    Console.WriteLine("FAIL cli_bare_metal");
-}
-
-try
-{
-    RunCliArgumentValidationTests(fixtureRoot);
-    Console.WriteLine("PASS cli_args");
-}
-catch (Exception ex)
-{
-    failures.Add($"cli_args: {ex.Message}");
-    Console.WriteLine("FAIL cli_args");
-}
-
-try
-{
-    RunSemanticDiagnosticOutputTests(fixtureRoot);
-    Console.WriteLine("PASS semantic_output");
-}
-catch (Exception ex)
-{
-    failures.Add($"semantic_output: {ex.Message}");
-    Console.WriteLine("FAIL semantic_output");
-}
-
-try
-{
-    RunTypeCheckerStateResetTests();
-    Console.WriteLine("PASS type_checker_state_reset");
-}
-catch (Exception ex)
-{
-    failures.Add($"type_checker_state_reset: {ex.Message}");
-    Console.WriteLine("FAIL type_checker_state_reset");
-}
-
-try
-{
-    RunLlvmWriterStateResetTests(fixtureRoot);
-    Console.WriteLine("PASS llvm_writer_state_reset");
-}
-catch (Exception ex)
-{
-    failures.Add($"llvm_writer_state_reset: {ex.Message}");
-    Console.WriteLine("FAIL llvm_writer_state_reset");
-}
-
-try
-{
-    RunLlvmBackendOutputModeTests(fixtureRoot);
-    Console.WriteLine("PASS llvm_backend_output_modes");
-}
-catch (Exception ex)
-{
-    failures.Add($"llvm_backend_output_modes: {ex.Message}");
-    Console.WriteLine("FAIL llvm_backend_output_modes");
-}
-
-try
-{
-    RunUnknownTypeCascadeTests();
-    Console.WriteLine("PASS unknown_type_cascade");
-}
-catch (Exception ex)
-{
-    failures.Add($"unknown_type_cascade: {ex.Message}");
-    Console.WriteLine("FAIL unknown_type_cascade");
-}
-
-try
-{
-    RunInvalidPostfixCascadeTests();
-    Console.WriteLine("PASS invalid_postfix_cascade");
-}
-catch (Exception ex)
-{
-    failures.Add($"invalid_postfix_cascade: {ex.Message}");
-    Console.WriteLine("FAIL invalid_postfix_cascade");
-}
-
-try
-{
-    RunBuiltinParserReservedDeclarationTests();
-    Console.WriteLine("PASS builtin_parser_reserved_declarations");
-}
-catch (Exception ex)
-{
-    failures.Add($"builtin_parser_reserved_declarations: {ex.Message}");
-    Console.WriteLine("FAIL builtin_parser_reserved_declarations");
-}
-
-try
-{
-    RunResolvedCallMetadataTests();
-    Console.WriteLine("PASS resolved_call_metadata");
-}
-catch (Exception ex)
-{
-    failures.Add($"resolved_call_metadata: {ex.Message}");
-    Console.WriteLine("FAIL resolved_call_metadata");
-}
+RunNamedTest("cli_workflow", () => RunCliWorkflowTests(fixtureRoot));
+RunNamedTest("aarch64_linux_targets", () => RunAArch64LinuxCrossTargetTests(fixtureRoot));
+RunNamedTest("cli_bare_metal", () => RunBareMetalCliBuildTests(fixtureRoot));
+RunNamedTest("cli_args", () => RunCliArgumentValidationTests(fixtureRoot));
+RunNamedTest("semantic_output", () => RunSemanticDiagnosticOutputTests(fixtureRoot));
+RunNamedTest("type_checker_state_reset", RunTypeCheckerStateResetTests);
+RunNamedTest("llvm_writer_state_reset", () => RunLlvmWriterStateResetTests(fixtureRoot));
+RunNamedTest("llvm_backend_output_modes", () => RunLlvmBackendOutputModeTests(fixtureRoot));
+RunNamedTest("llvm_backend_regressions", () => RunLlvmBackendRegressionTests(fixtureRoot));
+RunNamedTest("unknown_type_cascade", RunUnknownTypeCascadeTests);
+RunNamedTest("invalid_postfix_cascade", RunInvalidPostfixCascadeTests);
+RunNamedTest("builtin_parser_reserved_declarations", RunBuiltinParserReservedDeclarationTests);
+RunNamedTest("resolved_call_metadata", RunResolvedCallMetadataTests);
 
 var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
     ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
@@ -191,20 +61,7 @@ var examplePaths = Directory.EnumerateFiles(examplesRoot, "*.zorb", SearchOption
     .ToArray();
 
 foreach (var examplePath in examplePaths)
-{
-    var exampleName = Path.GetRelativePath(projectRoot, examplePath);
-
-    try
-    {
-        RunExampleCompilationTest(examplePath);
-        Console.WriteLine($"PASS {exampleName}");
-    }
-    catch (Exception ex)
-    {
-        failures.Add($"{exampleName}: {ex.Message}");
-        Console.WriteLine($"FAIL {exampleName}");
-    }
-}
+    RunNamedTest(Path.GetRelativePath(projectRoot, examplePath), () => RunExampleCompilationTest(examplePath));
 
 if (failures.Count > 0)
 {
@@ -215,6 +72,20 @@ if (failures.Count > 0)
 }
 
 return 0;
+
+void RunNamedTest(string testName, Action action)
+{
+    try
+    {
+        action();
+        Console.WriteLine($"PASS {testName}");
+    }
+    catch (Exception ex)
+    {
+        failures.Add($"{testName}: {ex.Message}");
+        Console.WriteLine($"FAIL {testName}");
+    }
+}
 
 static void RunCliWorkflowTests(string fixtureRoot)
 {
@@ -416,21 +287,7 @@ static void RunLlvmWriterStateResetTests(string fixtureRoot)
 
 static void RunLlvmBackendOutputModeTests(string fixtureRoot)
 {
-    var fixtureDir = Path.Combine(fixtureRoot, "snapshot_minimal_program");
-    var mainPath = Path.Combine(fixtureDir, "main.zorb");
-    var parseResult = ParseFile(mainPath);
-    AssertNoErrors(parseResult.Errors);
-
-    var checker = new TypeChecker();
-    checker.Check(parseResult.EntryNodes, fixtureDir, parseResult.Files);
-    AssertNoErrors(checker.Errors.Errors);
-
-    var backendNodes = parseResult.Files.Values
-        .SelectMany(nodes => nodes)
-        .Distinct<Node>(ReferenceEqualityComparer.Instance)
-        .ToList();
-    var writer = new ZigBackendIrWriter(checker);
-    var target = new ZigBackendTarget(GetNativeLlvmTriple());
+    var fixture = LoadCheckedFixture(Path.Combine(fixtureRoot, "snapshot_minimal_program"));
     var backendPath = GetLlvmBackendPath();
 
     WithTempDirectory("zorb-llvm-output-modes", tempDir =>
@@ -447,19 +304,15 @@ static void RunLlvmBackendOutputModeTests(string fixtureRoot)
         {
             var outputPath = Path.Combine(tempDir, "out" + outputMode.Extension);
             var backendIrPath = Path.Combine(tempDir, outputMode.Kind + ".json");
-            var backendIr = writer.Write(
-                backendNodes,
+            var backendIr = WriteBackendIr(
+                fixture,
                 "output_mode_" + outputMode.Kind,
-                target,
+                GetNativeLlvmTriple(),
                 outputMode.Kind,
                 outputPath);
             File.WriteAllText(backendIrPath, backendIr, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-            var emission = RunProcessWithTimeoutArgs(
-                backendPath,
-                [backendIrPath],
-                tempDir,
-                TimeSpan.FromSeconds(30));
+            var emission = EmitBackendArtifact(backendPath, backendIrPath, tempDir);
             if (emission.ExitCode != 0)
             {
                 throw new Exception(
@@ -468,8 +321,174 @@ static void RunLlvmBackendOutputModeTests(string fixtureRoot)
 
             if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
                 throw new Exception($"Backend {outputMode.Kind} emission did not produce non-empty output.");
+
+            if (outputMode.Kind == ZigBackendOutputKind.LlvmIr)
+            {
+                var llvmIr = File.ReadAllText(outputPath, Encoding.UTF8);
+                AssertTextContains(llvmIr, "define");
+                AssertTextContains(llvmIr, "target triple");
+            }
         }
     });
+}
+
+static void RunLlvmBackendRegressionTests(string fixtureRoot)
+{
+    var backendPath = GetLlvmBackendPath();
+
+    WithTempDirectory("zorb-llvm-regressions", tempDir =>
+    {
+        foreach (var regressionCase in GetLlvmBackendRegressionCases())
+        {
+            var fixture = LoadCheckedFixture(Path.Combine(fixtureRoot, regressionCase.FixtureName));
+            var outputPath = Path.Combine(tempDir, regressionCase.FixtureName + ".ll");
+            var backendIrPath = Path.Combine(tempDir, regressionCase.FixtureName + ".json");
+            var backendIr = WriteBackendIr(
+                fixture,
+                "regression_" + regressionCase.FixtureName,
+                GetNativeLlvmTriple(),
+                ZigBackendOutputKind.LlvmIr,
+                outputPath);
+            File.WriteAllText(backendIrPath, backendIr, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+            foreach (var expectedBackendText in regressionCase.ExpectedBackendIrSubstrings)
+                AssertTextContains(backendIr, expectedBackendText);
+            foreach (var expectedInstruction in regressionCase.ExpectedInstructionCounts)
+            {
+                AssertBackendInstructionCountAtLeast(
+                    backendIr,
+                    regressionCase.FixtureName,
+                    expectedInstruction.Op,
+                    expectedInstruction.MinimumCount);
+            }
+
+            var emission = EmitBackendArtifact(backendPath, backendIrPath, tempDir);
+            if (emission.ExitCode != 0)
+            {
+                throw new Exception(
+                    $"Backend regression emission failed for fixture '{regressionCase.FixtureName}' with exit code {emission.ExitCode}.{Environment.NewLine}{emission.StdErr}{emission.StdOut}".Trim());
+            }
+
+            var llvmIr = File.ReadAllText(outputPath, Encoding.UTF8);
+            foreach (var expectedLlvmText in regressionCase.ExpectedLlvmIrSubstrings)
+                AssertTextContains(llvmIr, expectedLlvmText);
+        }
+    });
+}
+
+static CheckedFixture LoadCheckedFixture(string fixtureDir)
+{
+    var mainPath = Path.Combine(fixtureDir, "main.zorb");
+    var parseResult = ParseFile(mainPath);
+    AssertNoErrors(parseResult.Errors);
+
+    var checker = new TypeChecker();
+    checker.Check(parseResult.EntryNodes, fixtureDir, parseResult.Files);
+    AssertNoErrors(checker.Errors.Errors);
+
+    var backendNodes = parseResult.Files.Values
+        .SelectMany(nodes => nodes)
+        .Distinct<Node>(ReferenceEqualityComparer.Instance)
+        .ToList();
+    return new CheckedFixture(fixtureDir, mainPath, checker, backendNodes);
+}
+
+static string WriteBackendIr(
+    CheckedFixture fixture,
+    string moduleName,
+    string targetTriple,
+    ZigBackendOutputKind outputKind,
+    string outputPath)
+{
+    var writer = new ZigBackendIrWriter(fixture.Checker);
+    return writer.Write(
+        fixture.BackendNodes,
+        moduleName,
+        new ZigBackendTarget(targetTriple),
+        outputKind,
+        outputPath);
+}
+
+static ProcessResult EmitBackendArtifact(string backendPath, string backendIrPath, string workingDirectory)
+{
+    return RunProcessWithTimeoutArgs(
+        backendPath,
+        [backendIrPath],
+        workingDirectory,
+        TimeSpan.FromSeconds(30));
+}
+
+static void AssertBackendInstructionCountAtLeast(string backendIr, string fixtureName, string op, int minimumCount)
+{
+    using var document = JsonDocument.Parse(backendIr);
+    var actualCount = CountBackendInstructions(document.RootElement, op);
+    if (actualCount < minimumCount)
+    {
+        throw new Exception(
+            $"Fixture '{fixtureName}' expected at least {minimumCount} backend '{op}' instructions, got {actualCount}.{Environment.NewLine}{backendIr}");
+    }
+}
+
+static int CountBackendInstructions(JsonElement module, string op)
+{
+    var count = 0;
+    if (!module.TryGetProperty("functions", out var functions))
+        return count;
+
+    foreach (var function in functions.EnumerateArray())
+    {
+        if (!function.TryGetProperty("blocks", out var blocks))
+            continue;
+
+        foreach (var block in blocks.EnumerateArray())
+        {
+            if (!block.TryGetProperty("instructions", out var instructions))
+                continue;
+
+            foreach (var instruction in instructions.EnumerateArray())
+            {
+                if (instruction.TryGetProperty("op", out var opValue) &&
+                    string.Equals(opValue.GetString(), op, StringComparison.Ordinal))
+                {
+                    count++;
+                }
+            }
+        }
+    }
+
+    return count;
+}
+
+static LlvmBackendRegressionCase[] GetLlvmBackendRegressionCases()
+{
+    return
+    [
+        new LlvmBackendRegressionCase(
+            "runtime_generic_union",
+            ["Result$i64$bool"],
+            [new BackendInstructionExpectation("extract_value", 2), new BackendInstructionExpectation("aggregate", 1)],
+            ["extractvalue"]),
+        new LlvmBackendRegressionCase(
+            "runtime_generic_enum",
+            ["Token$i64"],
+            [new BackendInstructionExpectation("compare", 2)],
+            ["icmp eq"]),
+        new LlvmBackendRegressionCase(
+            "runtime_numeric_match",
+            [],
+            [new BackendInstructionExpectation("compare", 2)],
+            ["icmp eq"]),
+        new LlvmBackendRegressionCase(
+            "runtime_bool_match",
+            [],
+            [new BackendInstructionExpectation("compare", 2)],
+            ["icmp eq"]),
+        new LlvmBackendRegressionCase(
+            "runtime_generic_inference_and_coercions",
+            [],
+            [new BackendInstructionExpectation("index_address", 4)],
+            ["getelementptr"])
+    ];
 }
 
 static string GetNativeLlvmTriple()
@@ -1061,10 +1080,10 @@ static void RunAArch64EmissionVerification(CompilerInvocation compilerInvocation
 {
     var emissionCases = new[]
     {
-        new AArch64EmissionCase("runtime_hello_world", "freestanding-linux-aarch64"),
-        new AArch64EmissionCase("stdlib_linux_arch_syscall_codegen", "freestanding-linux-aarch64"),
-        new AArch64EmissionCase("stdlib_task_aarch64_codegen", "freestanding-linux-aarch64"),
-        new AArch64EmissionCase("runtime_host_platform_branch", "host-linux-aarch64")
+        new AArch64EmissionCase("runtime_hello_world", "freestanding-linux-aarch64", ["svc #0"]),
+        new AArch64EmissionCase("stdlib_linux_arch_syscall_codegen", "freestanding-linux-aarch64", ["svc #0"]),
+        new AArch64EmissionCase("stdlib_task_aarch64_codegen", "freestanding-linux-aarch64", ["svc #0"]),
+        new AArch64EmissionCase("runtime_host_platform_branch", "host-linux-aarch64", [])
     };
 
     WithTempDirectory("zorb-aarch64-emission", tempDir =>
@@ -1092,6 +1111,8 @@ static void RunAArch64EmissionVerification(CompilerInvocation compilerInvocation
 
             var llvmIr = File.ReadAllText(llvmPath, Encoding.UTF8);
             AssertTextContains(llvmIr, "target triple = \"aarch64-unknown-linux-gnu\"");
+            foreach (var expectedLlvmText in emissionCase.ExpectedLlvmIrSubstrings)
+                AssertTextContains(llvmIr, expectedLlvmText);
 
             var build = RunProcessWithTimeoutArgs(
                 compilerInvocation.FileName,
@@ -1267,37 +1288,68 @@ static void RunFixture(string fixtureDir)
     if (!File.Exists(mainPath))
         throw new Exception("Fixture is missing main.zorb");
 
-    var expectedPhase = ReadExpectedPhase(fixtureDir);
-    var expectedErrors = ReadExpectationLines(fixtureDir, "expect-errors.txt");
-    var expectedWarnings = ReadExpectationLines(fixtureDir, "expect-warnings.txt");
-    var shouldCaptureOutput = expectedPhase != FixturePhase.Success || expectedErrors.Count > 0 || expectedWarnings.Count > 0;
-    var compilation = shouldCaptureOutput
+    var expectations = LoadFixtureExpectations(fixtureDir);
+    var compilation = CompileFixtureForExpectations(mainPath, fixtureDir, expectations);
+    AssertFixtureDiagnostics(compilation, expectations);
+
+    if (expectations.ExpectedPhase != FixturePhase.Success || expectations.ExpectedErrors.Count > 0)
+        return;
+
+    RunFixtureRuntimeChecks(fixtureDir, mainPath);
+}
+
+static FixtureExpectations LoadFixtureExpectations(string fixtureDir)
+{
+    return new FixtureExpectations(
+        ReadExpectedPhase(fixtureDir),
+        ReadExpectationLines(fixtureDir, "expect-errors.txt"),
+        ReadExpectationLines(fixtureDir, "expect-warnings.txt"));
+}
+
+static CapturedCompilation CompileFixtureForExpectations(string mainPath, string fixtureDir, FixtureExpectations expectations)
+{
+    var shouldCaptureOutput = expectations.ExpectedPhase != FixturePhase.Success
+        || expectations.ExpectedErrors.Count > 0
+        || expectations.ExpectedWarnings.Count > 0;
+    return shouldCaptureOutput
         ? CaptureConsole(() => CompileFixture(mainPath, fixtureDir))
         : new CapturedCompilation(CompileFixture(mainPath, fixtureDir), "", "");
+}
 
-    AssertPhase(compilation.Result.Phase, expectedPhase, compilation.Result.FailureMessage);
+static void AssertFixtureDiagnostics(CapturedCompilation compilation, FixtureExpectations expectations)
+{
+    AssertPhase(compilation.Result.Phase, expectations.ExpectedPhase, compilation.Result.FailureMessage);
 
-    var allErrors = new List<string>();
-    allErrors.AddRange(compilation.Result.ParseErrors);
-    allErrors.AddRange(compilation.Result.Checker.Errors.Errors);
-    if (!string.IsNullOrEmpty(compilation.Result.FailureMessage))
-        allErrors.Add(compilation.Result.FailureMessage);
+    var allErrors = CollectFixtureErrors(compilation.Result);
     var allWarnings = compilation.Result.Checker.Errors.Warnings;
 
-    foreach (var expected in expectedWarnings)
+    foreach (var expected in expectations.ExpectedWarnings)
         AssertContains(allWarnings, expected, "warning");
 
-    if (expectedPhase != FixturePhase.Success || expectedErrors.Count > 0)
+    if (expectations.ExpectedPhase != FixturePhase.Success || expectations.ExpectedErrors.Count > 0)
     {
-        foreach (var expected in expectedErrors)
+        foreach (var expected in expectations.ExpectedErrors)
             AssertContains(allErrors, expected, "error");
         return;
     }
 
     AssertNoErrors(allErrors);
-    if (expectedWarnings.Count == 0)
+    if (expectations.ExpectedWarnings.Count == 0)
         AssertNoWarnings(allWarnings);
+}
 
+static List<string> CollectFixtureErrors(FixtureCompilation compilation)
+{
+    var allErrors = new List<string>();
+    allErrors.AddRange(compilation.ParseErrors);
+    allErrors.AddRange(compilation.Checker.Errors.Errors);
+    if (!string.IsNullOrEmpty(compilation.FailureMessage))
+        allErrors.Add(compilation.FailureMessage);
+    return allErrors;
+}
+
+static void RunFixtureRuntimeChecks(string fixtureDir, string mainPath)
+{
     RunLlvmEmissionTest(fixtureDir, mainPath);
     RunRuntimeExpectationsIfPresent(fixtureDir, mainPath);
 }
@@ -1837,6 +1889,11 @@ sealed record FixtureCompilation(
     FixturePhase Phase,
     string? FailureMessage);
 
+sealed record FixtureExpectations(
+    FixturePhase ExpectedPhase,
+    List<string> ExpectedErrors,
+    List<string> ExpectedWarnings);
+
 sealed record CapturedCompilation(FixtureCompilation Result, string StdOut, string StdErr);
 
 sealed record ProcessResult(int ExitCode, string StdOut, string StdErr);
@@ -1847,6 +1904,16 @@ sealed record CompilerInvocation(string FileName, IReadOnlyList<string> Argument
 
 sealed record CliWorkflowCase(string FixtureName, string TargetName);
 
-sealed record AArch64EmissionCase(string FixtureName, string TargetName);
+sealed record AArch64EmissionCase(string FixtureName, string TargetName, IReadOnlyList<string> ExpectedLlvmIrSubstrings);
+
+sealed record CheckedFixture(string FixtureDir, string MainPath, TypeChecker Checker, IReadOnlyList<Node> BackendNodes);
+
+sealed record BackendInstructionExpectation(string Op, int MinimumCount);
+
+sealed record LlvmBackendRegressionCase(
+    string FixtureName,
+    IReadOnlyList<string> ExpectedBackendIrSubstrings,
+    IReadOnlyList<BackendInstructionExpectation> ExpectedInstructionCounts,
+    IReadOnlyList<string> ExpectedLlvmIrSubstrings);
 
 sealed record CliArgumentCase(string Name, string Arguments, int ExpectedExitCode, string? ExpectedStdOutSubstring, string? ExpectedStdErrSubstring);

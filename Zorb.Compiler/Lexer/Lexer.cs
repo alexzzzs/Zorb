@@ -70,385 +70,278 @@ namespace Zorb.Compiler.Lexer;
         }
 
         public List<Token> Tokenize()
-    {
-        var tokens = new List<Token>();
-
-        while (_pos < _source.Length)
         {
-            char c = _source[_pos];
+            var tokens = new List<Token>();
 
-            if (char.IsWhiteSpace(c))
+            while (_pos < _source.Length)
             {
+                var c = _source[_pos];
+                if (char.IsWhiteSpace(c))
+                {
+                    Advance();
+                    continue;
+                }
+
+                var loc = (_line, _column);
+                if (TryTokenizeOperatorOrPunctuation(tokens, c, loc))
+                    continue;
+
+                if (c == '"')
+                {
+                    TokenizeStringLiteral(tokens, loc);
+                    continue;
+                }
+
+                if (char.IsDigit(c))
+                {
+                    TokenizeNumber(tokens, c, loc);
+                    continue;
+                }
+
+                if (char.IsLetter(c) || c == '_')
+                {
+                    TokenizeIdentifierOrKeyword(tokens, loc);
+                    continue;
+                }
+
                 Advance();
-                continue;
             }
 
-            var loc = (_line, _column);
+            tokens.Add(new Token(TokenType.Eof, "", _line, _column));
+            return tokens;
+        }
 
-            if (c == '{')
-            {
-                tokens.Add(new Token(TokenType.LBrace, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == '}')
-            {
-                tokens.Add(new Token(TokenType.RBrace, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == '(')
-            {
-                tokens.Add(new Token(TokenType.LParen, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == ')')
-            {
-                tokens.Add(new Token(TokenType.RParen, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == ',')
-            {
-                tokens.Add(new Token(TokenType.Comma, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == ':')
-            {
-                tokens.Add(new Token(TokenType.Colon, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == ';')
-            {
-                tokens.Add(new Token(TokenType.Semicolon, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == '-' && PeekChar(1) == '>')
-            {
-                tokens.Add(new Token(TokenType.Arrow, "", loc.Item1, loc.Item2));
-                _pos += 2;
-                _column += 2;
-                continue;
-            }
-
-            if (c == '=' && PeekChar(1) == '=')
-            {
-                tokens.Add(new Token(TokenType.EqualEqual, "", loc.Item1, loc.Item2));
-                _pos += 2;
-                _column += 2;
-                continue;
-            }
-
-            if (c == '!' && PeekChar(1) == '=')
-            {
-                tokens.Add(new Token(TokenType.BangEqual, "", loc.Item1, loc.Item2));
-                _pos += 2;
-                _column += 2;
-                continue;
-            }
-
-            if (c == '!')
-            {
-                tokens.Add(new Token(TokenType.Bang, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == '>' && PeekChar(1) == '=')
-            {
-                tokens.Add(new Token(TokenType.GreaterEqual, "", loc.Item1, loc.Item2));
-                _pos += 2;
-                _column += 2;
-                continue;
-            }
-
-            if (c == '<' && PeekChar(1) == '=')
-            {
-                tokens.Add(new Token(TokenType.LessEqual, "", loc.Item1, loc.Item2));
-                _pos += 2;
-                _column += 2;
-                continue;
-            }
-
-            if (c == '<' && PeekChar(1) == '<')
-            {
-                tokens.Add(new Token(TokenType.LShift, "", loc.Item1, loc.Item2));
-                _pos += 2;
-                _column += 2;
-                continue;
-            }
-
-            if (c == '>' && PeekChar(1) == '>')
-            {
-                tokens.Add(new Token(TokenType.RShift, "", loc.Item1, loc.Item2));
-                _pos += 2;
-                _column += 2;
-                continue;
-            }
-
-            if (c == '=')
-            {
-                tokens.Add(new Token(TokenType.Equals, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == '+')
-            {
-                tokens.Add(new Token(TokenType.Plus, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == '-')
-            {
-                tokens.Add(new Token(TokenType.Minus, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == '*')
-            {
-                tokens.Add(new Token(TokenType.Star, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
+        private bool TryTokenizeOperatorOrPunctuation(List<Token> tokens, char c, (int line, int col) loc)
+        {
+            if (TryTokenizeTwoCharacterOperator(tokens, c, loc))
+                return true;
 
             if (c == '/')
             {
                 if (PeekChar(1) == '/')
                 {
-                    _pos += 2;
-                    _column += 2;
-                    while (_pos < _source.Length && _source[_pos] != '\n')
-                    {
-                        _pos++;
-                        _column++;
-                    }
-                    continue;
-                }
-                tokens.Add(new Token(TokenType.Slash, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == '%')
-            {
-                tokens.Add(new Token(TokenType.Percent, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == '&')
-            {
-                if (PeekChar(1) == '&')
-                {
-                    tokens.Add(new Token(TokenType.AndAnd, "", loc.Item1, loc.Item2));
-                    _pos += 2;
-                    _column += 2;
-                    continue;
+                    SkipLineComment();
+                    return true;
                 }
 
-                tokens.Add(new Token(TokenType.Amp, "", loc.Item1, loc.Item2));
+                AddToken(tokens, TokenType.Slash, loc);
                 Advance();
-                continue;
+                return true;
             }
 
-            if (c == '|')
+            return c switch
             {
-                if (PeekChar(1) == '|')
-                {
-                    tokens.Add(new Token(TokenType.OrOr, "", loc.Item1, loc.Item2));
-                    _pos += 2;
-                    _column += 2;
-                    continue;
-                }
+                '{' => AddSingleCharacterToken(tokens, TokenType.LBrace, loc),
+                '}' => AddSingleCharacterToken(tokens, TokenType.RBrace, loc),
+                '(' => AddSingleCharacterToken(tokens, TokenType.LParen, loc),
+                ')' => AddSingleCharacterToken(tokens, TokenType.RParen, loc),
+                ',' => AddSingleCharacterToken(tokens, TokenType.Comma, loc),
+                ':' => AddSingleCharacterToken(tokens, TokenType.Colon, loc),
+                ';' => AddSingleCharacterToken(tokens, TokenType.Semicolon, loc),
+                '!' => AddSingleCharacterToken(tokens, TokenType.Bang, loc),
+                '=' => AddSingleCharacterToken(tokens, TokenType.Equals, loc),
+                '+' => AddSingleCharacterToken(tokens, TokenType.Plus, loc),
+                '-' => AddSingleCharacterToken(tokens, TokenType.Minus, loc),
+                '*' => AddSingleCharacterToken(tokens, TokenType.Star, loc),
+                '%' => AddSingleCharacterToken(tokens, TokenType.Percent, loc),
+                '&' => AddSingleCharacterToken(tokens, TokenType.Amp, loc),
+                '|' => AddSingleCharacterToken(tokens, TokenType.Pipe, loc),
+                '^' => AddSingleCharacterToken(tokens, TokenType.Caret, loc),
+                '>' => AddSingleCharacterToken(tokens, TokenType.Greater, loc),
+                '<' => AddSingleCharacterToken(tokens, TokenType.Less, loc),
+                '[' => AddSingleCharacterToken(tokens, TokenType.LBracket, loc),
+                ']' => AddSingleCharacterToken(tokens, TokenType.RBracket, loc),
+                '.' => AddSingleCharacterToken(tokens, TokenType.Dot, loc),
+                _ => false
+            };
+        }
 
-                tokens.Add(new Token(TokenType.Pipe, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
+        private bool TryTokenizeTwoCharacterOperator(List<Token> tokens, char c, (int line, int col) loc)
+        {
+            var tokenType = MatchTwoCharacterOperator(c);
+            return tokenType.HasValue && AddTwoCharacterToken(tokens, tokenType.Value, loc);
+        }
+
+        private TokenType? MatchTwoCharacterOperator(char current)
+        {
+            var next = PeekChar(1);
+            return (current, next) switch
+            {
+                ('-', '>') => TokenType.Arrow,
+                ('=', '=') => TokenType.EqualEqual,
+                ('!', '=') => TokenType.BangEqual,
+                ('>', '=') => TokenType.GreaterEqual,
+                ('<', '=') => TokenType.LessEqual,
+                ('<', '<') => TokenType.LShift,
+                ('>', '>') => TokenType.RShift,
+                ('&', '&') => TokenType.AndAnd,
+                ('|', '|') => TokenType.OrOr,
+                _ => null
+            };
+        }
+
+        private bool AddSingleCharacterToken(List<Token> tokens, TokenType tokenType, (int line, int col) loc)
+        {
+            AddToken(tokens, tokenType, loc);
+            Advance();
+            return true;
+        }
+
+        private bool AddTwoCharacterToken(List<Token> tokens, TokenType tokenType, (int line, int col) loc)
+        {
+            AddToken(tokens, tokenType, loc);
+            _pos += 2;
+            _column += 2;
+            return true;
+        }
+
+        private static void AddToken(List<Token> tokens, TokenType tokenType, (int line, int col) loc, string text = "")
+        {
+            tokens.Add(new Token(tokenType, text, loc.line, loc.col));
+        }
+
+        private void SkipLineComment()
+        {
+            _pos += 2;
+            _column += 2;
+            while (_pos < _source.Length && _source[_pos] != '\n')
+            {
+                _pos++;
+                _column++;
+            }
+        }
+
+        private void TokenizeStringLiteral(List<Token> tokens, (int line, int col) startLoc)
+        {
+            Advance();
+            var value = new StringBuilder();
+            while (_pos < _source.Length && _source[_pos] != '"')
+            {
+                AppendStringLiteralCharacter(value, startLoc);
             }
 
-            if (c == '^')
+            EnsureStringLiteralTerminated(startLoc);
+
+            Advance();
+            AddToken(tokens, TokenType.String, startLoc, value.ToString());
+        }
+
+        private void AppendStringLiteralCharacter(StringBuilder value, (int line, int col) startLoc)
+        {
+            if (_source[_pos] == '\n')
+                throw new LexerException("Unterminated string literal", startLoc.line, startLoc.col, _fileName);
+
+            if (_source[_pos] == '\\')
             {
-                tokens.Add(new Token(TokenType.Caret, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
+                AppendEscapedStringCharacter(value, startLoc);
+                return;
             }
 
-            if (c == '>') { tokens.Add(new Token(TokenType.Greater, "", loc.Item1, loc.Item2)); Advance(); continue; }
-            if (c == '<') { tokens.Add(new Token(TokenType.Less, "", loc.Item1, loc.Item2)); Advance(); continue; }
+            value.Append(_source[_pos]);
+            Advance();
+        }
 
-            if (c == '[')
+        private void AppendEscapedStringCharacter(StringBuilder value, (int line, int col) startLoc)
+        {
+            Advance();
+            EnsureStringLiteralTerminated(startLoc);
+            value.Append(ReadEscapeSequence(startLoc.line, startLoc.col));
+        }
+
+        private void EnsureStringLiteralTerminated((int line, int col) startLoc)
+        {
+            if (_pos >= _source.Length)
+                throw new LexerException("Unterminated string literal", startLoc.line, startLoc.col, _fileName);
+        }
+
+        private void TokenizeNumber(List<Token> tokens, char c, (int line, int col) loc)
+        {
+            var start = _pos;
+
+            if (c == '0' && (_pos + 1 < _source.Length) && (_source[_pos + 1] == 'x' || _source[_pos + 1] == 'X'))
             {
-                tokens.Add(new Token(TokenType.LBracket, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == ']')
-            {
-                tokens.Add(new Token(TokenType.RBracket, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == '.')
-            {
-                tokens.Add(new Token(TokenType.Dot, "", loc.Item1, loc.Item2));
-                Advance();
-                continue;
-            }
-
-            if (c == '"')
-            {
-                var startLoc = (_line, _column);
-                Advance();
-                var value = new StringBuilder();
-                while (_pos < _source.Length && _source[_pos] != '"')
-                {
-                    if (_source[_pos] == '\n')
-                        throw new LexerException("Unterminated string literal", startLoc.Item1, startLoc.Item2, _fileName);
-
-                    if (_source[_pos] == '\\')
-                    {
-                        Advance();
-                        if (_pos >= _source.Length)
-                            throw new LexerException("Unterminated string literal", startLoc.Item1, startLoc.Item2, _fileName);
-
-                        value.Append(ReadEscapeSequence(startLoc.Item1, startLoc.Item2));
-                        continue;
-                    }
-
-                    value.Append(_source[_pos]);
-                    Advance();
-                }
-
-                if (_pos >= _source.Length)
-                    throw new LexerException("Unterminated string literal", startLoc.Item1, startLoc.Item2, _fileName);
-
-                Advance();
-                tokens.Add(new Token(TokenType.String, value.ToString(), startLoc.Item1, startLoc.Item2));
-                continue;
-            }
-
-            if (char.IsDigit(c))
-            {
-                var start = _pos;
-
-                if (c == '0' && (_pos + 1 < _source.Length) && (_source[_pos + 1] == 'x' || _source[_pos + 1] == 'X'))
-                {
-                    _pos += 2;
-                    _column += 2;
-                    while (_pos < _source.Length && 
-                          (char.IsDigit(_source[_pos]) || 
-                          (_source[_pos] >= 'a' && _source[_pos] <= 'f') || 
-                          (_source[_pos] >= 'A' && _source[_pos] <= 'F')))
-                    {
-                        _pos++;
-                        _column++;
-                    }
-                }
-                else
-                {
-                    while (_pos < _source.Length && char.IsDigit(_source[_pos]))
-                    {
-                        _pos++;
-                        _column++;
-                    }
-                }
-
-                string text = _source.Substring(start, _pos - start);
-                tokens.Add(new Token(TokenType.Number, text, loc.Item1, loc.Item2));
-                continue;
-            }
-
-            if (char.IsLetter(c) || c == '_')
-            {
-                var start = _pos;
-                while (_pos < _source.Length && (char.IsLetterOrDigit(_source[_pos]) || _source[_pos] == '_'))
+                _pos += 2;
+                _column += 2;
+                while (_pos < _source.Length &&
+                      (char.IsDigit(_source[_pos]) ||
+                      (_source[_pos] >= 'a' && _source[_pos] <= 'f') ||
+                      (_source[_pos] >= 'A' && _source[_pos] <= 'F')))
                 {
                     _pos++;
                     _column++;
                 }
-
-                string text = _source.Substring(start, _pos - start);
-
-                if (text == "fn")
-                    tokens.Add(new Token(TokenType.Fn, "", loc.Item1, loc.Item2));
-                else if (text == "import")
-                    tokens.Add(new Token(TokenType.Import, "", loc.Item1, loc.Item2));
-                else if (text == "as")
-                    tokens.Add(new Token(TokenType.As, "", loc.Item1, loc.Item2));
-                else if (text == "if")
-                    tokens.Add(new Token(TokenType.If, "", loc.Item1, loc.Item2));
-                else if (text == "while")
-                    tokens.Add(new Token(TokenType.While, "", loc.Item1, loc.Item2));
-                else if (text == "for")
-                    tokens.Add(new Token(TokenType.For, "", loc.Item1, loc.Item2));
-                else if (text == "switch")
-                    tokens.Add(new Token(TokenType.Switch, "", loc.Item1, loc.Item2));
-                else if (text == "match")
-                    tokens.Add(new Token(TokenType.Match, "", loc.Item1, loc.Item2));
-                else if (text == "case")
-                    tokens.Add(new Token(TokenType.Case, "", loc.Item1, loc.Item2));
-                else if (text == "return")
-                    tokens.Add(new Token(TokenType.Return, "", loc.Item1, loc.Item2));
-                else if (text == "struct")
-                    tokens.Add(new Token(TokenType.Struct, "", loc.Item1, loc.Item2));
-                else if (text == "enum")
-                    tokens.Add(new Token(TokenType.Enum, "", loc.Item1, loc.Item2));
-                else if (text == "union")
-                    tokens.Add(new Token(TokenType.Union, "", loc.Item1, loc.Item2));
-                else if (text == "cast")
-                    tokens.Add(new Token(TokenType.Cast, "", loc.Item1, loc.Item2));
-                else if (text == "extern")
-                    tokens.Add(new Token(TokenType.Extern, "", loc.Item1, loc.Item2));
-                else if (text == "align")
-                    tokens.Add(new Token(TokenType.Align, "", loc.Item1, loc.Item2));
-                else if (text == "catch")
-                    tokens.Add(new Token(TokenType.Catch, "", loc.Item1, loc.Item2));
-                else if (text == "const")
-                    tokens.Add(new Token(TokenType.Const, "", loc.Item1, loc.Item2));
-                else if (text == "error")
-                    tokens.Add(new Token(TokenType.Error, "", loc.Item1, loc.Item2));
-                else if (text == "export")
-                    tokens.Add(new Token(TokenType.Export, "", loc.Item1, loc.Item2));
-                else if (text == "else")
-                    tokens.Add(new Token(TokenType.Else, "", loc.Item1, loc.Item2));
-                else if (text == "continue")
-                    tokens.Add(new Token(TokenType.Continue, "", loc.Item1, loc.Item2));
-                else if (text == "break")
-                    tokens.Add(new Token(TokenType.Break, "", loc.Item1, loc.Item2));
-                else if (text == "true")
-                    tokens.Add(new Token(TokenType.True, "", loc.Item1, loc.Item2));
-                else if (text == "false")
-                    tokens.Add(new Token(TokenType.False, "", loc.Item1, loc.Item2));
-                else if (text.Equals("builtin", StringComparison.OrdinalIgnoreCase))
-                    tokens.Add(new Token(TokenType.Builtin, "", loc.Item1, loc.Item2));
-                else
-                    tokens.Add(new Token(TokenType.Identifier, text, loc.Item1, loc.Item2));
-
-                continue;
+            }
+            else
+            {
+                while (_pos < _source.Length && char.IsDigit(_source[_pos]))
+                {
+                    _pos++;
+                    _column++;
+                }
             }
 
-            Advance();
+            var text = _source.Substring(start, _pos - start);
+            AddToken(tokens, TokenType.Number, loc, text);
         }
 
-        tokens.Add(new Token(TokenType.Eof, "", _line, _column));
-        return tokens;
-    }
+        private void TokenizeIdentifierOrKeyword(List<Token> tokens, (int line, int col) loc)
+        {
+            var start = _pos;
+            while (_pos < _source.Length && (char.IsLetterOrDigit(_source[_pos]) || _source[_pos] == '_'))
+            {
+                _pos++;
+                _column++;
+            }
+
+            var text = _source.Substring(start, _pos - start);
+            var keywordToken = GetKeywordTokenType(text);
+            if (keywordToken.HasValue)
+            {
+                AddToken(tokens, keywordToken.Value, loc);
+                return;
+            }
+
+            if (text.Equals("builtin", StringComparison.OrdinalIgnoreCase))
+            {
+                AddToken(tokens, TokenType.Builtin, loc);
+                return;
+            }
+
+            AddToken(tokens, TokenType.Identifier, loc, text);
+        }
+
+        private static TokenType? GetKeywordTokenType(string text)
+        {
+            return text switch
+            {
+                "fn" => TokenType.Fn,
+                "import" => TokenType.Import,
+                "as" => TokenType.As,
+                "if" => TokenType.If,
+                "while" => TokenType.While,
+                "for" => TokenType.For,
+                "switch" => TokenType.Switch,
+                "match" => TokenType.Match,
+                "case" => TokenType.Case,
+                "return" => TokenType.Return,
+                "struct" => TokenType.Struct,
+                "enum" => TokenType.Enum,
+                "union" => TokenType.Union,
+                "cast" => TokenType.Cast,
+                "extern" => TokenType.Extern,
+                "align" => TokenType.Align,
+                "catch" => TokenType.Catch,
+                "const" => TokenType.Const,
+                "error" => TokenType.Error,
+                "export" => TokenType.Export,
+                "else" => TokenType.Else,
+                "continue" => TokenType.Continue,
+                "break" => TokenType.Break,
+                "true" => TokenType.True,
+                "false" => TokenType.False,
+                _ => null
+            };
+        }
 
     private char ReadEscapeSequence(int line, int column)
     {
