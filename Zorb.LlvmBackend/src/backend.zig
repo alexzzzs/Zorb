@@ -435,6 +435,43 @@ pub const Backend = struct {
         instruction: ir.Instruction,
     ) !llvm.LLVMValueRef {
         return switch (instruction.op) {
+            .zero_constant,
+            .integer_constant,
+            .string_constant,
+            .size_of,
+            => try self.emitConstantInstruction(builder, instruction),
+            .alloca,
+            .load,
+            .store,
+            .extract_value,
+            .index_address,
+            .field_address,
+            .global_address,
+            .function_address,
+            => try self.emitMemoryInstruction(builder, values, instruction),
+            .binary,
+            .compare,
+            .cast,
+            => try self.emitArithmeticInstruction(builder, values, instruction),
+            .phi,
+            .aggregate,
+            => try self.emitAggregateInstruction(builder, values, instruction),
+            .inline_asm => try self.emitInlineAsmInstruction(builder, values, instruction),
+            .syscall => try self.emitSyscallInstruction(builder, values, instruction),
+            .process_exit => try self.emitProcessExitInstruction(builder, values, instruction),
+            .trap => try self.emitTrapInstruction(builder),
+            .call,
+            .indirect_call,
+            => try self.emitCallInstruction(builder, values, instruction),
+        };
+    }
+
+    fn emitConstantInstruction(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        instruction: ir.Instruction,
+    ) !llvm.LLVMValueRef {
+        return switch (instruction.op) {
             .zero_constant => llvm.LLVMConstNull(try self.typeById(instruction.type)),
             .integer_constant => blk: {
                 const integer = instruction.integer orelse return error.InvalidBackendIr;
@@ -453,19 +490,85 @@ pub const Backend = struct {
                 try self.strings.put(self.allocator, owned_key, global);
                 break :blk global;
             },
+            .size_of => llvm.LLVMConstInt(
+                try self.typeById(instruction.type),
+                llvm.LLVMABISizeOfType(
+                    self.target_data,
+                    try self.typeById(instruction.source_type orelse return error.InvalidBackendIr),
+                ),
+                0,
+            ),
+            else => unreachable,
+        };
+    }
+
+    fn emitMemoryInstruction(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        values: *std.AutoHashMapUnmanaged(u32, llvm.LLVMValueRef),
+        instruction: ir.Instruction,
+    ) !llvm.LLVMValueRef {
+        return switch (instruction.op) {
             .alloca => llvm.LLVMBuildAlloca(builder, try self.typeById(instruction.type), ""),
             .load => blk: {
-                const address = values.get(instruction.lhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
+                const address = try instructionValue(values, instruction.lhs);
                 break :blk llvm.LLVMBuildLoad2(builder, try self.typeById(instruction.type), address, "");
             },
             .store => blk: {
-                const address = values.get(instruction.lhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                const value = values.get(instruction.rhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
+                const address = try instructionValue(values, instruction.lhs);
+                const value = try instructionValue(values, instruction.rhs);
                 break :blk llvm.LLVMBuildStore(builder, value, address);
             },
+            .extract_value => blk: {
+                const aggregate = try instructionValue(values, instruction.lhs);
+                break :blk llvm.LLVMBuildExtractValue(
+                    builder,
+                    aggregate,
+                    instruction.field_index orelse return error.InvalidBackendIr,
+                    "",
+                );
+            },
+            .index_address => blk: {
+                const base = try instructionValue(values, instruction.lhs);
+                const index = try instructionValue(values, instruction.rhs);
+                const source_type_id = instruction.source_type orelse return error.InvalidBackendIr;
+                const source_type = try self.typeById(source_type_id);
+                const source_def = self.findTypeDef(source_type_id) orelse return error.InvalidBackendIr;
+                if (source_def.kind == .array) {
+                    const zero = llvm.LLVMConstInt(llvm.LLVMInt32TypeInContext(self.context), 0, 0);
+                    var indices = [_]llvm.LLVMValueRef{ zero, index };
+                    break :blk llvm.LLVMBuildGEP2(builder, source_type, base, &indices, indices.len, "");
+                }
+                var indices = [_]llvm.LLVMValueRef{index};
+                break :blk llvm.LLVMBuildGEP2(builder, source_type, base, &indices, indices.len, "");
+            },
+            .field_address => blk: {
+                const base = try instructionValue(values, instruction.lhs);
+                const source_type = try self.typeById(instruction.source_type orelse return error.InvalidBackendIr);
+                break :blk llvm.LLVMBuildStructGEP2(
+                    builder,
+                    source_type,
+                    base,
+                    instruction.field_index orelse return error.InvalidBackendIr,
+                    "",
+                );
+            },
+            .global_address => self.globals.get(instruction.global orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr,
+            .function_address => (self.functions.get(instruction.callee orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr).function,
+            else => unreachable,
+        };
+    }
+
+    fn emitArithmeticInstruction(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        values: *std.AutoHashMapUnmanaged(u32, llvm.LLVMValueRef),
+        instruction: ir.Instruction,
+    ) !llvm.LLVMValueRef {
+        return switch (instruction.op) {
             .binary => blk: {
-                const lhs = values.get(instruction.lhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                const rhs = values.get(instruction.rhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
+                const lhs = try instructionValue(values, instruction.lhs);
+                const rhs = try instructionValue(values, instruction.rhs);
                 const op = instruction.binary_op orelse return error.InvalidBackendIr;
                 break :blk switch (op) {
                     .add => llvm.LLVMBuildAdd(builder, lhs, rhs, ""),
@@ -484,8 +587,8 @@ pub const Backend = struct {
                 };
             },
             .compare => blk: {
-                const lhs = values.get(instruction.lhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                const rhs = values.get(instruction.rhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
+                const lhs = try instructionValue(values, instruction.lhs);
+                const rhs = try instructionValue(values, instruction.rhs);
                 const predicate: llvm.LLVMIntPredicate = @intCast(switch (instruction.compare_op orelse return error.InvalidBackendIr) {
                     .equal => llvm.LLVMIntEQ,
                     .not_equal => llvm.LLVMIntNE,
@@ -502,7 +605,7 @@ pub const Backend = struct {
                 break :blk llvm.LLVMBuildZExt(builder, condition, try self.typeById(instruction.type), "");
             },
             .cast => blk: {
-                const value = values.get(instruction.lhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
+                const value = try instructionValue(values, instruction.lhs);
                 const target_type = try self.typeById(instruction.type);
                 break :blk switch (instruction.cast_op orelse return error.InvalidBackendIr) {
                     .truncate => llvm.LLVMBuildTrunc(builder, value, target_type, ""),
@@ -512,6 +615,17 @@ pub const Backend = struct {
                     .integer_to_pointer => llvm.LLVMBuildIntToPtr(builder, value, target_type, ""),
                 };
             },
+            else => unreachable,
+        };
+    }
+
+    fn emitAggregateInstruction(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        values: *std.AutoHashMapUnmanaged(u32, llvm.LLVMValueRef),
+        instruction: ir.Instruction,
+    ) !llvm.LLVMValueRef {
+        return switch (instruction.op) {
             .phi => blk: {
                 if (instruction.incoming_values.len != instruction.incoming_blocks.len or
                     instruction.incoming_values.len == 0)
@@ -521,8 +635,7 @@ pub const Backend = struct {
                 break :blk llvm.LLVMBuildPhi(builder, try self.typeById(instruction.type), "");
             },
             .aggregate => blk: {
-                const aggregate_type = try self.typeById(instruction.type);
-                var aggregate = llvm.LLVMGetUndef(aggregate_type);
+                var aggregate = llvm.LLVMGetUndef(try self.typeById(instruction.type));
                 for (instruction.arguments, 0..) |value_id, index| {
                     const value = values.get(value_id) orelse return error.InvalidBackendIr;
                     aggregate = llvm.LLVMBuildInsertValue(
@@ -535,265 +648,193 @@ pub const Backend = struct {
                 }
                 break :blk aggregate;
             },
-            .extract_value => blk: {
-                const aggregate = values.get(instruction.lhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                break :blk llvm.LLVMBuildExtractValue(
-                    builder,
-                    aggregate,
-                    instruction.field_index orelse return error.InvalidBackendIr,
-                    "",
-                );
-            },
-            .index_address => blk: {
-                const base = values.get(instruction.lhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                const index = values.get(instruction.rhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                const source_type_id = instruction.source_type orelse return error.InvalidBackendIr;
-                const source_type = try self.typeById(source_type_id);
-                const source_def = self.findTypeDef(source_type_id) orelse return error.InvalidBackendIr;
-                if (source_def.kind == .array) {
-                    const zero = llvm.LLVMConstInt(llvm.LLVMInt32TypeInContext(self.context), 0, 0);
-                    var indices = [_]llvm.LLVMValueRef{ zero, index };
-                    break :blk llvm.LLVMBuildGEP2(builder, source_type, base, &indices, indices.len, "");
-                }
-                var indices = [_]llvm.LLVMValueRef{index};
-                break :blk llvm.LLVMBuildGEP2(builder, source_type, base, &indices, indices.len, "");
-            },
-            .field_address => blk: {
-                const base = values.get(instruction.lhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                const source_type = try self.typeById(instruction.source_type orelse return error.InvalidBackendIr);
-                break :blk llvm.LLVMBuildStructGEP2(
-                    builder,
-                    source_type,
-                    base,
-                    instruction.field_index orelse return error.InvalidBackendIr,
-                    "",
-                );
-            },
-            .global_address => self.globals.get(instruction.global orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr,
-            .function_address => (self.functions.get(instruction.callee orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr).function,
-            .inline_asm => blk: {
-                if (instruction.output_types.len != instruction.output_addresses.len)
-                    return error.InvalidBackendIr;
+            else => unreachable,
+        };
+    }
 
-                var input_types = try self.allocator.alloc(llvm.LLVMTypeRef, instruction.arguments.len);
-                defer self.allocator.free(input_types);
-                var arguments = try self.allocator.alloc(llvm.LLVMValueRef, instruction.arguments.len);
-                defer self.allocator.free(arguments);
-                for (instruction.arguments, 0..) |argument_id, index| {
-                    arguments[index] = values.get(argument_id) orelse return error.InvalidBackendIr;
-                    input_types[index] = llvm.LLVMTypeOf(arguments[index]);
-                }
+    fn emitInlineAsmInstruction(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        values: *std.AutoHashMapUnmanaged(u32, llvm.LLVMValueRef),
+        instruction: ir.Instruction,
+    ) !llvm.LLVMValueRef {
+        if (instruction.output_types.len != instruction.output_addresses.len)
+            return error.InvalidBackendIr;
 
-                var output_types = try self.allocator.alloc(llvm.LLVMTypeRef, instruction.output_types.len);
-                defer self.allocator.free(output_types);
-                for (instruction.output_types, 0..) |type_id, index|
-                    output_types[index] = try self.typeById(type_id);
+        var input_types = try self.allocator.alloc(llvm.LLVMTypeRef, instruction.arguments.len);
+        defer self.allocator.free(input_types);
+        var arguments = try self.allocator.alloc(llvm.LLVMValueRef, instruction.arguments.len);
+        defer self.allocator.free(arguments);
+        for (instruction.arguments, 0..) |argument_id, index| {
+            arguments[index] = values.get(argument_id) orelse return error.InvalidBackendIr;
+            input_types[index] = llvm.LLVMTypeOf(arguments[index]);
+        }
 
-                const return_type = switch (output_types.len) {
-                    0 => llvm.LLVMVoidTypeInContext(self.context),
-                    1 => output_types[0],
-                    else => llvm.LLVMStructTypeInContext(
-                        self.context,
-                        output_types.ptr,
-                        @intCast(output_types.len),
-                        0,
-                    ),
-                };
-                const function_type = llvm.LLVMFunctionType(
-                    return_type,
-                    if (input_types.len == 0) null else input_types.ptr,
-                    @intCast(input_types.len),
-                    0,
-                );
-                const template = instruction.asm_template orelse return error.InvalidBackendIr;
-                const constraints = instruction.constraints orelse return error.InvalidBackendIr;
-                const inline_asm = llvm.LLVMGetInlineAsm(
-                    function_type,
-                    template.ptr,
-                    template.len,
-                    constraints.ptr,
-                    constraints.len,
-                    1,
-                    0,
-                    llvm.LLVMInlineAsmDialectATT,
-                    0,
-                );
-                const result = llvm.LLVMBuildCall2(
-                    builder,
-                    function_type,
-                    inline_asm,
-                    if (arguments.len == 0) null else arguments.ptr,
-                    @intCast(arguments.len),
-                    "",
-                );
-                for (instruction.output_addresses, 0..) |address_id, index| {
-                    const address = values.get(address_id) orelse return error.InvalidBackendIr;
-                    const output = if (output_types.len == 1)
-                        result
-                    else
-                        llvm.LLVMBuildExtractValue(builder, result, @intCast(index), "");
-                    _ = llvm.LLVMBuildStore(builder, output, address);
-                }
-                break :blk result;
-            },
-            .syscall => blk: {
-                const i64_type = llvm.LLVMInt64TypeInContext(self.context);
-                if (std.mem.indexOf(u8, self.module_ir.target.triple, "linux") != null) {
-                    var arguments: [7]llvm.LLVMValueRef = undefined;
-                    for (&arguments) |*argument|
-                        argument.* = llvm.LLVMConstInt(i64_type, 0, 0);
-                    for (instruction.arguments, 0..) |argument_id, index| {
-                        if (index >= arguments.len) return error.InvalidBackendIr;
-                        arguments[index] = values.get(argument_id) orelse return error.InvalidBackendIr;
-                    }
+        var output_types = try self.allocator.alloc(llvm.LLVMTypeRef, instruction.output_types.len);
+        defer self.allocator.free(output_types);
+        for (instruction.output_types, 0..) |type_id, index|
+            output_types[index] = try self.typeById(type_id);
 
-                    var parameter_types = [_]llvm.LLVMTypeRef{i64_type} ** arguments.len;
-                    const function_type = llvm.LLVMFunctionType(
-                        i64_type,
-                        &parameter_types,
-                        parameter_types.len,
-                        0,
-                    );
-                    const is_aarch64 = std.mem.startsWith(u8, self.module_ir.target.triple, "aarch64");
-                    const template = if (is_aarch64) "svc #0" else "syscall";
-                    const constraints = if (is_aarch64)
-                        "={x0},{x8},0,{x1},{x2},{x3},{x4},{x5},~{memory}"
-                    else
-                        "={rax},{rax},{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory}";
-                    const inline_asm = llvm.LLVMGetInlineAsm(
-                        function_type,
-                        template.ptr,
-                        template.len,
-                        constraints.ptr,
-                        constraints.len,
-                        1,
-                        0,
-                        llvm.LLVMInlineAsmDialectATT,
-                        0,
-                    );
-                    break :blk llvm.LLVMBuildCall2(
-                        builder,
-                        function_type,
-                        inline_asm,
-                        &arguments,
-                        arguments.len,
-                        "",
-                    );
-                }
-                break :blk llvm.LLVMConstInt(i64_type, @bitCast(@as(i64, -38)), 1);
-            },
-            .size_of => llvm.LLVMConstInt(
-                try self.typeById(instruction.type),
-                llvm.LLVMABISizeOfType(
-                    self.target_data,
-                    try self.typeById(instruction.source_type orelse return error.InvalidBackendIr),
-                ),
+        const return_type = switch (output_types.len) {
+            0 => llvm.LLVMVoidTypeInContext(self.context),
+            1 => output_types[0],
+            else => llvm.LLVMStructTypeInContext(
+                self.context,
+                output_types.ptr,
+                @intCast(output_types.len),
                 0,
             ),
-            .process_exit => blk: {
-                const code = values.get(instruction.lhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                if (std.mem.indexOf(u8, self.module_ir.target.triple, "linux") != null) {
-                    const i64_type = llvm.LLVMInt64TypeInContext(self.context);
-                    const code_i64 = llvm.LLVMBuildZExt(builder, code, i64_type, "");
-                    const is_aarch64 = std.mem.startsWith(u8, self.module_ir.target.triple, "aarch64");
-                    const syscall_number: u64 = if (is_aarch64) 93 else 60;
-                    var arguments = [_]llvm.LLVMValueRef{
-                        llvm.LLVMConstInt(i64_type, syscall_number, 0),
-                        code_i64,
-                        llvm.LLVMConstInt(i64_type, 0, 0),
-                        llvm.LLVMConstInt(i64_type, 0, 0),
-                        llvm.LLVMConstInt(i64_type, 0, 0),
-                        llvm.LLVMConstInt(i64_type, 0, 0),
-                        llvm.LLVMConstInt(i64_type, 0, 0),
-                    };
-                    var parameter_types = [_]llvm.LLVMTypeRef{i64_type} ** arguments.len;
-                    const function_type = llvm.LLVMFunctionType(
-                        i64_type,
-                        &parameter_types,
-                        parameter_types.len,
-                        0,
-                    );
-                    const template = if (is_aarch64) "svc #0" else "syscall";
-                    const constraints = if (is_aarch64)
-                        "={x0},{x8},0,{x1},{x2},{x3},{x4},{x5},~{memory}"
-                    else
-                        "={rax},{rax},{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory}";
-                    const inline_asm = llvm.LLVMGetInlineAsm(
-                        function_type,
-                        template.ptr,
-                        template.len,
-                        constraints.ptr,
-                        constraints.len,
-                        1,
-                        0,
-                        llvm.LLVMInlineAsmDialectATT,
-                        0,
-                    );
-                    break :blk llvm.LLVMBuildCall2(
-                        builder,
-                        function_type,
-                        inline_asm,
-                        &arguments,
-                        arguments.len,
-                        "",
-                    );
-                }
+        };
+        const function_type = llvm.LLVMFunctionType(
+            return_type,
+            if (input_types.len == 0) null else input_types.ptr,
+            @intCast(input_types.len),
+            0,
+        );
+        const template = instruction.asm_template orelse return error.InvalidBackendIr;
+        const constraints = instruction.constraints orelse return error.InvalidBackendIr;
+        const inline_asm = llvm.LLVMGetInlineAsm(
+            function_type,
+            template.ptr,
+            template.len,
+            constraints.ptr,
+            constraints.len,
+            1,
+            0,
+            llvm.LLVMInlineAsmDialectATT,
+            0,
+        );
+        const result = llvm.LLVMBuildCall2(
+            builder,
+            function_type,
+            inline_asm,
+            if (arguments.len == 0) null else arguments.ptr,
+            @intCast(arguments.len),
+            "",
+        );
+        for (instruction.output_addresses, 0..) |address_id, index| {
+            const address = values.get(address_id) orelse return error.InvalidBackendIr;
+            const output = if (output_types.len == 1)
+                result
+            else
+                llvm.LLVMBuildExtractValue(builder, result, @intCast(index), "");
+            _ = llvm.LLVMBuildStore(builder, output, address);
+        }
+        return result;
+    }
 
-                if (std.mem.indexOf(u8, self.module_ir.target.triple, "windows") != null) {
-                    const exit_name = "ExitProcess";
-                    const i32_type = llvm.LLVMInt32TypeInContext(self.context);
-                    var parameter_types = [_]llvm.LLVMTypeRef{i32_type};
-                    const function_type = llvm.LLVMFunctionType(
-                        llvm.LLVMVoidTypeInContext(self.context),
-                        &parameter_types,
-                        parameter_types.len,
-                        0,
-                    );
-                    const exit_function = llvm.LLVMGetNamedFunction(self.module, exit_name) orelse
-                        llvm.LLVMAddFunction(self.module, exit_name, function_type);
-                    var arguments = [_]llvm.LLVMValueRef{code};
-                    break :blk llvm.LLVMBuildCall2(
-                        builder,
-                        function_type,
-                        exit_function,
-                        &arguments,
-                        arguments.len,
-                        "",
-                    );
-                }
+    fn emitSyscallInstruction(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        values: *std.AutoHashMapUnmanaged(u32, llvm.LLVMValueRef),
+        instruction: ir.Instruction,
+    ) !llvm.LLVMValueRef {
+        const i64_type = llvm.LLVMInt64TypeInContext(self.context);
+        if (std.mem.indexOf(u8, self.module_ir.target.triple, "linux") == null)
+            return llvm.LLVMConstInt(i64_type, @bitCast(@as(i64, -38)), 1);
 
-                const intrinsic_name = "llvm.trap";
-                const intrinsic_id = llvm.LLVMLookupIntrinsicID(intrinsic_name, intrinsic_name.len);
-                if (intrinsic_id == 0) return error.InvalidBackendIr;
-                const trap_function = llvm.LLVMGetIntrinsicDeclaration(self.module, intrinsic_id, null, 0);
-                const trap_type = llvm.LLVMFunctionType(
-                    llvm.LLVMVoidTypeInContext(self.context),
-                    null,
-                    0,
-                    0,
-                );
-                break :blk llvm.LLVMBuildCall2(builder, trap_type, trap_function, null, 0, "");
-            },
-            .trap => blk: {
-                const intrinsic_name = "llvm.trap";
-                const intrinsic_id = llvm.LLVMLookupIntrinsicID(intrinsic_name, intrinsic_name.len);
-                if (intrinsic_id == 0) return error.InvalidBackendIr;
-                const trap_function = llvm.LLVMGetIntrinsicDeclaration(self.module, intrinsic_id, null, 0);
-                const trap_type = llvm.LLVMFunctionType(
-                    llvm.LLVMVoidTypeInContext(self.context),
-                    null,
-                    0,
-                    0,
-                );
-                break :blk llvm.LLVMBuildCall2(builder, trap_type, trap_function, null, 0, "");
-            },
+        var arguments: [7]llvm.LLVMValueRef = undefined;
+        for (&arguments) |*argument|
+            argument.* = llvm.LLVMConstInt(i64_type, 0, 0);
+        for (instruction.arguments, 0..) |argument_id, index| {
+            if (index >= arguments.len) return error.InvalidBackendIr;
+            arguments[index] = values.get(argument_id) orelse return error.InvalidBackendIr;
+        }
+
+        var parameter_types = [_]llvm.LLVMTypeRef{i64_type} ** arguments.len;
+        const function_type = llvm.LLVMFunctionType(
+            i64_type,
+            &parameter_types,
+            parameter_types.len,
+            0,
+        );
+        return self.emitLinuxSyscallInlineAsm(builder, function_type, &arguments, arguments.len);
+    }
+
+    fn emitProcessExitInstruction(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        values: *std.AutoHashMapUnmanaged(u32, llvm.LLVMValueRef),
+        instruction: ir.Instruction,
+    ) !llvm.LLVMValueRef {
+        const code = try instructionValue(values, instruction.lhs);
+        if (std.mem.indexOf(u8, self.module_ir.target.triple, "linux") != null) {
+            const i64_type = llvm.LLVMInt64TypeInContext(self.context);
+            const code_i64 = llvm.LLVMBuildZExt(builder, code, i64_type, "");
+            const is_aarch64 = std.mem.startsWith(u8, self.module_ir.target.triple, "aarch64");
+            const syscall_number: u64 = if (is_aarch64) 93 else 60;
+            var arguments = [_]llvm.LLVMValueRef{
+                llvm.LLVMConstInt(i64_type, syscall_number, 0),
+                code_i64,
+                llvm.LLVMConstInt(i64_type, 0, 0),
+                llvm.LLVMConstInt(i64_type, 0, 0),
+                llvm.LLVMConstInt(i64_type, 0, 0),
+                llvm.LLVMConstInt(i64_type, 0, 0),
+                llvm.LLVMConstInt(i64_type, 0, 0),
+            };
+            var parameter_types = [_]llvm.LLVMTypeRef{i64_type} ** arguments.len;
+            const function_type = llvm.LLVMFunctionType(
+                i64_type,
+                &parameter_types,
+                parameter_types.len,
+                0,
+            );
+            return self.emitLinuxSyscallInlineAsm(builder, function_type, &arguments, arguments.len);
+        }
+
+        if (std.mem.indexOf(u8, self.module_ir.target.triple, "windows") != null) {
+            const exit_name = "ExitProcess";
+            const i32_type = llvm.LLVMInt32TypeInContext(self.context);
+            var parameter_types = [_]llvm.LLVMTypeRef{i32_type};
+            const function_type = llvm.LLVMFunctionType(
+                llvm.LLVMVoidTypeInContext(self.context),
+                &parameter_types,
+                parameter_types.len,
+                0,
+            );
+            const exit_function = llvm.LLVMGetNamedFunction(self.module, exit_name) orelse
+                llvm.LLVMAddFunction(self.module, exit_name, function_type);
+            var arguments = [_]llvm.LLVMValueRef{code};
+            return llvm.LLVMBuildCall2(
+                builder,
+                function_type,
+                exit_function,
+                &arguments,
+                arguments.len,
+                "",
+            );
+        }
+
+        return self.emitTrapInstruction(builder);
+    }
+
+    fn emitTrapInstruction(self: *Backend, builder: llvm.LLVMBuilderRef) !llvm.LLVMValueRef {
+        const intrinsic_name = "llvm.trap";
+        const intrinsic_id = llvm.LLVMLookupIntrinsicID(intrinsic_name, intrinsic_name.len);
+        if (intrinsic_id == 0) return error.InvalidBackendIr;
+        const trap_function = llvm.LLVMGetIntrinsicDeclaration(self.module, intrinsic_id, null, 0);
+        const trap_type = llvm.LLVMFunctionType(
+            llvm.LLVMVoidTypeInContext(self.context),
+            null,
+            0,
+            0,
+        );
+        return llvm.LLVMBuildCall2(builder, trap_type, trap_function, null, 0, "");
+    }
+
+    fn emitCallInstruction(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        values: *std.AutoHashMapUnmanaged(u32, llvm.LLVMValueRef),
+        instruction: ir.Instruction,
+    ) !llvm.LLVMValueRef {
+        return switch (instruction.op) {
             .call => blk: {
                 const callee = self.functions.get(instruction.callee orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
                 var arguments = try self.allocator.alloc(llvm.LLVMValueRef, instruction.arguments.len);
                 defer self.allocator.free(arguments);
-                for (instruction.arguments, 0..) |argument_id, index| {
+                for (instruction.arguments, 0..) |argument_id, index|
                     arguments[index] = values.get(argument_id) orelse return error.InvalidBackendIr;
-                }
                 break :blk llvm.LLVMBuildCall2(
                     builder,
                     callee.function_type,
@@ -804,7 +845,7 @@ pub const Backend = struct {
                 );
             },
             .indirect_call => blk: {
-                const callee = values.get(instruction.lhs orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
+                const callee = try instructionValue(values, instruction.lhs);
                 const function_type = try self.functionTypeById(
                     instruction.source_type orelse return error.InvalidBackendIr,
                 );
@@ -821,7 +862,49 @@ pub const Backend = struct {
                     "",
                 );
             },
+            else => unreachable,
         };
+    }
+
+    fn emitLinuxSyscallInlineAsm(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        function_type: llvm.LLVMTypeRef,
+        arguments: [*]llvm.LLVMValueRef,
+        argument_count: usize,
+    ) llvm.LLVMValueRef {
+        const is_aarch64 = std.mem.startsWith(u8, self.module_ir.target.triple, "aarch64");
+        const template = if (is_aarch64) "svc #0" else "syscall";
+        const constraints = if (is_aarch64)
+            "={x0},{x8},0,{x1},{x2},{x3},{x4},{x5},~{memory}"
+        else
+            "={rax},{rax},{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory}";
+        const inline_asm = llvm.LLVMGetInlineAsm(
+            function_type,
+            template.ptr,
+            template.len,
+            constraints.ptr,
+            constraints.len,
+            1,
+            0,
+            llvm.LLVMInlineAsmDialectATT,
+            0,
+        );
+        return llvm.LLVMBuildCall2(
+            builder,
+            function_type,
+            inline_asm,
+            arguments,
+            @intCast(argument_count),
+            "",
+        );
+    }
+
+    fn instructionValue(
+        values: *std.AutoHashMapUnmanaged(u32, llvm.LLVMValueRef),
+        id: ?u32,
+    ) !llvm.LLVMValueRef {
+        return values.get(id orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
     }
 
     fn functionTypeById(self: *Backend, type_id: u32) !llvm.LLVMTypeRef {

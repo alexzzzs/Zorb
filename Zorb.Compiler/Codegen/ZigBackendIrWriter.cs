@@ -224,41 +224,72 @@ public sealed class ZigBackendIrWriter
 
     private static List<FunctionDecl> InstantiateGenericFunctions(IReadOnlyList<Node> nodes)
     {
-        var definitions = nodes.OfType<FunctionDecl>()
-            .Where(function => function.TypeParameters.Count > 0)
-            .ToDictionary(
-                function => QualifiedNames.GetFullName(function.NamespacePath, function.Name),
-                StringComparer.Ordinal);
-        var functions = nodes.OfType<FunctionDecl>()
-            .Where(function => function.TypeParameters.Count == 0)
-            .ToList();
+        var definitions = CollectGenericFunctionDefinitions(nodes);
+        var functions = CollectConcreteFunctions(nodes);
         var pending = new Queue<CallExpr>(CollectCalls(nodes));
         var generated = new HashSet<string>(StringComparer.Ordinal);
         while (pending.TryDequeue(out var call))
         {
             if (call.TypeArguments.Count == 0)
                 continue;
-            var resolvedName = call.ResolvedTargetQualifiedName
-                ?? call.ResolvedQualifiedName
-                ?? QualifiedNames.GetFullName(call.NamespacePath, call.Name);
+
+            var resolvedName = ResolveCallTargetName(call);
             if (!definitions.TryGetValue(resolvedName, out var definition))
                 continue;
+
             var instanceName = GenericFunctionName(resolvedName, call.TypeArguments);
             if (!generated.Add(instanceName))
                 continue;
 
-            var substitutions = AstSpecialization.BuildTypeSubstitutions(
-                definition.TypeParameters,
-                call.TypeArguments);
-            var instance = AstSpecialization.InstantiateFunction(definition, substitutions);
-            var (_, shortName) = QualifiedNames.SplitQualifiedName(instanceName);
-            instance.Name = shortName;
-            instance.TypeParameters.Clear();
+            var instance = InstantiateGenericFunction(definition, call.TypeArguments, instanceName);
             functions.Add(instance);
-            foreach (var nestedCall in CollectCalls(new Node[] { instance }))
-                pending.Enqueue(nestedCall);
+            EnqueueNestedCalls(pending, instance);
         }
         return functions;
+    }
+
+    private static Dictionary<string, FunctionDecl> CollectGenericFunctionDefinitions(IReadOnlyList<Node> nodes)
+    {
+        return nodes.OfType<FunctionDecl>()
+            .Where(function => function.TypeParameters.Count > 0)
+            .ToDictionary(
+                function => QualifiedNames.GetFullName(function.NamespacePath, function.Name),
+                StringComparer.Ordinal);
+    }
+
+    private static List<FunctionDecl> CollectConcreteFunctions(IReadOnlyList<Node> nodes)
+    {
+        return nodes.OfType<FunctionDecl>()
+            .Where(function => function.TypeParameters.Count == 0)
+            .ToList();
+    }
+
+    private static string ResolveCallTargetName(CallExpr call)
+    {
+        return call.ResolvedTargetQualifiedName
+            ?? call.ResolvedQualifiedName
+            ?? QualifiedNames.GetFullName(call.NamespacePath, call.Name);
+    }
+
+    private static FunctionDecl InstantiateGenericFunction(
+        FunctionDecl definition,
+        IReadOnlyList<TypeNode> typeArguments,
+        string instanceName)
+    {
+        var substitutions = AstSpecialization.BuildTypeSubstitutions(
+            definition.TypeParameters,
+            typeArguments);
+        var instance = AstSpecialization.InstantiateFunction(definition, substitutions);
+        var (_, shortName) = QualifiedNames.SplitQualifiedName(instanceName);
+        instance.Name = shortName;
+        instance.TypeParameters.Clear();
+        return instance;
+    }
+
+    private static void EnqueueNestedCalls(Queue<CallExpr> pending, FunctionDecl instance)
+    {
+        foreach (var nestedCall in CollectCalls(new Node[] { instance }))
+            pending.Enqueue(nestedCall);
     }
 
     private static string GenericFunctionName(
@@ -287,30 +318,57 @@ public sealed class ZigBackendIrWriter
         var calls = new List<CallExpr>();
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
 
+        static bool IsSkippableValue(object value)
+        {
+            return value is string || value.GetType().IsPrimitive;
+        }
+
+        static bool CanTraverseProperties(object value)
+        {
+            return value is Node or AsmOperand or MatchCase or SwitchCase or StructLiteralField or Parameter;
+        }
+
+        static IEnumerable<PropertyInfo> GetTraversableProperties(object value)
+        {
+            return value.GetType()
+                .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                .Where(property => property.GetIndexParameters().Length == 0);
+        }
+
+        static void AddCallIfPresent(object value, List<CallExpr> calls)
+        {
+            if (value is CallExpr call)
+                calls.Add(call);
+        }
+
+        static bool TryVisitSequence(object value, Action<object?> visit)
+        {
+            if (value is not IEnumerable sequence)
+                return false;
+
+            foreach (var item in sequence)
+                visit(item);
+            return true;
+        }
+
+        static void VisitProperties(object value, Action<object?> visit)
+        {
+            foreach (var property in GetTraversableProperties(value))
+                visit(property.GetValue(value));
+        }
+
         void Visit(object? value)
         {
-            if (value == null || value is string || value.GetType().IsPrimitive)
+            if (value == null || IsSkippableValue(value))
                 return;
             if (!visited.Add(value))
                 return;
-            if (value is CallExpr call)
-                calls.Add(call);
-            if (value is IEnumerable sequence)
-            {
-                foreach (var item in sequence)
-                    Visit(item);
+            AddCallIfPresent(value, calls);
+            if (TryVisitSequence(value, Visit))
                 return;
-            }
-            if (value is not Node && value is not AsmOperand && value is not MatchCase &&
-                value is not SwitchCase && value is not StructLiteralField &&
-                value is not Parameter)
+            if (!CanTraverseProperties(value))
                 return;
-            foreach (var property in value.GetType().GetProperties(
-                         BindingFlags.Instance | BindingFlags.Public))
-            {
-                if (property.GetIndexParameters().Length == 0)
-                    Visit(property.GetValue(value));
-            }
+            VisitProperties(value, Visit);
         }
 
         foreach (var root in roots)
@@ -483,8 +541,23 @@ public sealed class ZigBackendIrWriter
 
         public List<BackendBlock> Lower()
         {
-            _currentBlock = CreateBlock("entry");
+            InitializeEntryBlock();
             PushScope();
+            LowerParameters();
+            LowerStatements(_function.Body);
+            EnsureFunctionTerminated();
+            ValidateLoweredBlocks();
+            PopScope();
+            return _blocks;
+        }
+
+        private void InitializeEntryBlock()
+        {
+            _currentBlock = CreateBlock("entry");
+        }
+
+        private void LowerParameters()
+        {
             foreach (var parameter in _function.Parameters)
             {
                 var parameterValue = _parameterIds[parameter.Name];
@@ -492,22 +565,29 @@ public sealed class ZigBackendIrWriter
                 _ = EmitInstruction("store", parameter.TypeName, lhs: address, rhs: parameterValue);
                 DeclareLocal(parameter.Name, parameter.TypeName, address);
             }
-            LowerStatements(_function.Body);
-            if (_currentBlock != null && _currentBlock.Terminator == null)
+        }
+
+        private void EnsureFunctionTerminated()
+        {
+            if (_currentBlock == null || _currentBlock.Terminator != null)
+                return;
+
+            if (_function.ReturnType.Name == "void")
             {
-                if (_function.ReturnType.Name == "void")
-                    _currentBlock.Terminator = new BackendTerminator { Op = "return_void" };
-                else
-                    throw Unsupported(_function, $"function '{_function.Name}' has an unterminated value-returning path");
+                _currentBlock.Terminator = new BackendTerminator { Op = "return_void" };
+                return;
             }
 
+            throw Unsupported(_function, $"function '{_function.Name}' has an unterminated value-returning path");
+        }
+
+        private void ValidateLoweredBlocks()
+        {
             foreach (var block in _blocks)
             {
                 if (block.Terminator == null)
                     throw Unsupported(_function, $"block '{block.Name}' is not terminated");
             }
-            PopScope();
-            return _blocks;
         }
 
         private void LowerStatements(IReadOnlyList<Statement> statements)
@@ -525,80 +605,20 @@ public sealed class ZigBackendIrWriter
             switch (statement)
             {
                 case ReturnNode returnNode:
-                    if (returnNode.Value == null)
-                    {
-                        Terminate(new BackendTerminator { Op = "return_void" });
-                    }
-                    else if (_function.ReturnType.IsErrorUnion)
-                    {
-                        var innerType = _function.ReturnType.ErrorInnerType
-                            ?? throw Unsupported(returnNode, "error union has no success type");
-                        uint successValue;
-                        uint errorValue;
-                        if (returnNode.Value is ErrorExpr error)
-                        {
-                            successValue = EmitZeroConstant(innerType);
-                            errorValue = LowerErrorValue(error);
-                        }
-                        else if (returnNode.Value is IdentifierExpr identifier &&
-                                 LookupLocal(identifier.Name) is { IsCatchError: true } catchError)
-                        {
-                            successValue = EmitZeroConstant(innerType);
-                            errorValue = EmitInstruction("load", catchError.Type, lhs: catchError.Address);
-                        }
-                        else
-                        {
-                            successValue = LowerExpression(returnNode.Value, innerType);
-                            errorValue = EmitIntegerConstant(0, new TypeNode { Name = "i32" });
-                        }
-                        var result = NextValueId();
-                        AddInstruction(new BackendInstruction
-                        {
-                            Id = result,
-                            Op = "aggregate",
-                            Type = _typeInterner.Intern(_function.ReturnType),
-                            Arguments = new List<uint> { successValue, errorValue }
-                        });
-                        Terminate(new BackendTerminator { Op = "return_value", Value = result });
-                    }
-                    else
-                    {
-                        var valueType = _typeChecker.GetCheckedExpressionType(returnNode.Value)
-                            ?? _function.ReturnType;
-                        var value = LowerExpression(returnNode.Value, _function.ReturnType);
-                        if (IsScalarInteger(valueType) && IsScalarInteger(_function.ReturnType))
-                            value = CoerceInteger(value, valueType, _function.ReturnType);
-                        Terminate(new BackendTerminator { Op = "return_value", Value = value });
-                    }
+                    LowerReturnStatement(returnNode);
                     return;
 
                 case ExpressionStatement expressionStatement:
-                    if (expressionStatement.Expression is CatchExpr catchExpression)
-                        _ = LowerCatch(catchExpression, discardResult: true);
-                    else
-                        _ = LowerExpression(expressionStatement.Expression);
+                    LowerExpressionStatement(expressionStatement);
                     return;
 
                 case VariableDeclarationNode variable:
-                {
-                    var address = EmitInstruction("alloca", variable.TypeName);
-                    DeclareLocal(variable.Name, variable.TypeName, address);
-                    if (variable.Value != null)
-                    {
-                        var value = LowerExpression(variable.Value, variable.TypeName);
-                        _ = EmitInstruction("store", variable.TypeName, lhs: address, rhs: value);
-                    }
+                    LowerVariableDeclaration(variable);
                     return;
-                }
 
                 case AssignStmt assignment:
-                {
-                    var targetType = GetCheckedType(assignment.Target);
-                    var address = LowerAddress(assignment.Target);
-                    var value = LowerExpression(assignment.Value, targetType);
-                    _ = EmitInstruction("store", targetType, lhs: address, rhs: value);
+                    LowerAssignmentStatement(assignment);
                     return;
-                }
 
                 case IfStmt ifStatement:
                     LowerIf(ifStatement);
@@ -625,23 +645,11 @@ public sealed class ZigBackendIrWriter
                     return;
 
                 case BreakStmt:
-                    if (_loopTargets.Count == 0)
-                        throw Unsupported(statement, "break outside a loop");
-                    Terminate(new BackendTerminator
-                    {
-                        Op = "branch",
-                        Target = _loopTargets.Peek().BreakBlock
-                    });
+                    LowerLoopControlStatement(statement, isBreak: true);
                     return;
 
                 case ContinueStmt:
-                    if (_loopTargets.Count == 0)
-                        throw Unsupported(statement, "continue outside a loop");
-                    Terminate(new BackendTerminator
-                    {
-                        Op = "branch",
-                        Target = _loopTargets.Peek().ContinueBlock
-                    });
+                    LowerLoopControlStatement(statement, isBreak: false);
                     return;
 
                 default:
@@ -649,13 +657,113 @@ public sealed class ZigBackendIrWriter
             }
         }
 
+        private void LowerReturnStatement(ReturnNode returnNode)
+        {
+            if (returnNode.Value == null)
+            {
+                Terminate(new BackendTerminator { Op = "return_void" });
+                return;
+            }
+
+            if (_function.ReturnType.IsErrorUnion)
+            {
+                LowerErrorUnionReturnStatement(returnNode);
+                return;
+            }
+
+            LowerValueReturnStatement(returnNode);
+        }
+
+        private void LowerErrorUnionReturnStatement(ReturnNode returnNode)
+        {
+            var innerType = _function.ReturnType.ErrorInnerType
+                ?? throw Unsupported(returnNode, "error union has no success type");
+
+            var (successValue, errorValue) = LowerErrorUnionReturnValues(returnNode, innerType);
+            var result = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = result,
+                Op = "aggregate",
+                Type = _typeInterner.Intern(_function.ReturnType),
+                Arguments = new List<uint> { successValue, errorValue }
+            });
+            Terminate(new BackendTerminator { Op = "return_value", Value = result });
+        }
+
+        private (uint SuccessValue, uint ErrorValue) LowerErrorUnionReturnValues(ReturnNode returnNode, TypeNode innerType)
+        {
+            if (returnNode.Value is ErrorExpr error)
+                return (EmitZeroConstant(innerType), LowerErrorValue(error));
+
+            if (returnNode.Value is IdentifierExpr identifier &&
+                LookupLocal(identifier.Name) is { IsCatchError: true } catchError)
+            {
+                var loadedError = EmitInstruction("load", catchError.Type, lhs: catchError.Address);
+                return (EmitZeroConstant(innerType), loadedError);
+            }
+
+            var successValue = LowerExpression(returnNode.Value!, innerType);
+            var errorValue = EmitIntegerConstant(0, new TypeNode { Name = "i32" });
+            return (successValue, errorValue);
+        }
+
+        private void LowerValueReturnStatement(ReturnNode returnNode)
+        {
+            var valueType = _typeChecker.GetCheckedExpressionType(returnNode.Value!)
+                ?? _function.ReturnType;
+            var value = LowerExpression(returnNode.Value!, _function.ReturnType);
+            if (IsScalarInteger(valueType) && IsScalarInteger(_function.ReturnType))
+                value = CoerceInteger(value, valueType, _function.ReturnType);
+            Terminate(new BackendTerminator { Op = "return_value", Value = value });
+        }
+
+        private void LowerExpressionStatement(ExpressionStatement expressionStatement)
+        {
+            if (expressionStatement.Expression is CatchExpr catchExpression)
+                _ = LowerCatch(catchExpression, discardResult: true);
+            else
+                _ = LowerExpression(expressionStatement.Expression);
+        }
+
+        private void LowerVariableDeclaration(VariableDeclarationNode variable)
+        {
+            var address = EmitInstruction("alloca", variable.TypeName);
+            DeclareLocal(variable.Name, variable.TypeName, address);
+            if (variable.Value == null)
+                return;
+
+            var value = LowerExpression(variable.Value, variable.TypeName);
+            _ = EmitInstruction("store", variable.TypeName, lhs: address, rhs: value);
+        }
+
+        private void LowerAssignmentStatement(AssignStmt assignment)
+        {
+            var targetType = GetCheckedType(assignment.Target);
+            var address = LowerAddress(assignment.Target);
+            var value = LowerExpression(assignment.Value, targetType);
+            _ = EmitInstruction("store", targetType, lhs: address, rhs: value);
+        }
+
+        private void LowerLoopControlStatement(Statement statement, bool isBreak)
+        {
+            if (_loopTargets.Count == 0)
+                throw Unsupported(statement, isBreak ? "break outside a loop" : "continue outside a loop");
+
+            Terminate(new BackendTerminator
+            {
+                Op = "branch",
+                Target = isBreak
+                    ? _loopTargets.Peek().BreakBlock
+                    : _loopTargets.Peek().ContinueBlock
+            });
+        }
+
         private void LowerIf(IfStmt statement)
         {
             if (TryEvaluateTargetCondition(statement.Condition, out var fixedCondition))
             {
-                PushScope();
-                LowerStatements(fixedCondition ? statement.Body : statement.ElseBody);
-                PopScope();
+                LowerFixedConditionIfBranch(statement, fixedCondition);
                 return;
             }
 
@@ -670,19 +778,8 @@ public sealed class ZigBackendIrWriter
                 FalseTarget = elseBlock.Id
             });
 
-            _currentBlock = thenBlock;
-            PushScope();
-            LowerStatements(statement.Body);
-            PopScope();
-            var thenFallsThrough = _currentBlock != null;
-            var thenEnd = _currentBlock;
-
-            _currentBlock = elseBlock;
-            PushScope();
-            LowerStatements(statement.ElseBody);
-            PopScope();
-            var elseFallsThrough = _currentBlock != null;
-            var elseEnd = _currentBlock;
+            var (thenFallsThrough, thenEnd) = LowerIfBranchBody(thenBlock, statement.Body);
+            var (elseFallsThrough, elseEnd) = LowerIfBranchBody(elseBlock, statement.ElseBody);
 
             if (!thenFallsThrough && !elseFallsThrough)
             {
@@ -690,6 +787,29 @@ public sealed class ZigBackendIrWriter
                 return;
             }
 
+            FinalizeIfMergeBlock(thenEnd, elseEnd);
+        }
+
+        private void LowerFixedConditionIfBranch(IfStmt statement, bool fixedCondition)
+        {
+            PushScope();
+            LowerStatements(fixedCondition ? statement.Body : statement.ElseBody);
+            PopScope();
+        }
+
+        private (bool FallsThrough, BackendBlock? EndBlock) LowerIfBranchBody(
+            BackendBlock startBlock,
+            IReadOnlyList<Statement> statements)
+        {
+            _currentBlock = startBlock;
+            PushScope();
+            LowerStatements(statements);
+            PopScope();
+            return (_currentBlock != null, _currentBlock);
+        }
+
+        private void FinalizeIfMergeBlock(BackendBlock? thenEnd, BackendBlock? elseEnd)
+        {
             var mergeBlock = CreateBlock("if.end");
             if (thenEnd != null)
             {
@@ -832,6 +952,21 @@ public sealed class ZigBackendIrWriter
             var exitBlock = CreateBlock("while.end");
             Terminate(new BackendTerminator { Op = "branch", Target = conditionBlock.Id });
 
+            LowerWhileCondition(statement, conditionBlock, bodyBlock, exitBlock);
+
+            _loopTargets.Push(new LoopTargets(exitBlock.Id, conditionBlock.Id));
+            LowerWhileBody(statement, bodyBlock, conditionBlock);
+            _loopTargets.Pop();
+
+            _currentBlock = exitBlock;
+        }
+
+        private void LowerWhileCondition(
+            WhileStmt statement,
+            BackendBlock conditionBlock,
+            BackendBlock bodyBlock,
+            BackendBlock exitBlock)
+        {
             _currentBlock = conditionBlock;
             var condition = LowerExpression(statement.Condition, new TypeNode { Name = "bool" });
             Terminate(new BackendTerminator
@@ -841,25 +976,25 @@ public sealed class ZigBackendIrWriter
                 TrueTarget = bodyBlock.Id,
                 FalseTarget = exitBlock.Id
             });
+        }
 
-            _loopTargets.Push(new LoopTargets(exitBlock.Id, conditionBlock.Id));
+        private void LowerWhileBody(
+            WhileStmt statement,
+            BackendBlock bodyBlock,
+            BackendBlock conditionBlock)
+        {
             _currentBlock = bodyBlock;
             PushScope();
             LowerStatements(statement.Body);
             PopScope();
-            _loopTargets.Pop();
             if (_currentBlock != null)
                 Terminate(new BackendTerminator { Op = "branch", Target = conditionBlock.Id });
-
-            _currentBlock = exitBlock;
         }
 
         private void LowerFor(ForStmt statement)
         {
             PushScope();
-            if (statement.Initializer != null)
-                LowerStatement(statement.Initializer);
-            if (_currentBlock == null)
+            if (!LowerForInitializer(statement))
             {
                 PopScope();
                 return;
@@ -872,9 +1007,7 @@ public sealed class ZigBackendIrWriter
             Terminate(new BackendTerminator { Op = "branch", Target = conditionBlock.Id });
 
             _currentBlock = conditionBlock;
-            var condition = statement.Condition != null
-                ? LowerExpression(statement.Condition, new TypeNode { Name = "bool" })
-                : EmitIntegerConstant(1, new TypeNode { Name = "bool" });
+            var condition = LowerForCondition(statement);
             Terminate(new BackendTerminator
             {
                 Op = "conditional_branch",
@@ -892,14 +1025,35 @@ public sealed class ZigBackendIrWriter
                 Terminate(new BackendTerminator { Op = "branch", Target = updateBlock.Id });
 
             _currentBlock = updateBlock;
-            if (statement.Update != null)
-                LowerStatement(statement.Update);
-            if (_currentBlock != null)
-                Terminate(new BackendTerminator { Op = "branch", Target = conditionBlock.Id });
+            LowerForUpdate(statement, conditionBlock);
             _loopTargets.Pop();
 
             _currentBlock = exitBlock;
             PopScope();
+        }
+
+        private bool LowerForInitializer(ForStmt statement)
+        {
+            if (statement.Initializer != null)
+                LowerStatement(statement.Initializer);
+
+            return _currentBlock != null;
+        }
+
+        private uint LowerForCondition(ForStmt statement)
+        {
+            return statement.Condition != null
+                ? LowerExpression(statement.Condition, new TypeNode { Name = "bool" })
+                : EmitIntegerConstant(1, new TypeNode { Name = "bool" });
+        }
+
+        private void LowerForUpdate(ForStmt statement, BackendBlock conditionBlock)
+        {
+            if (statement.Update != null)
+                LowerStatement(statement.Update);
+
+            if (_currentBlock != null)
+                Terminate(new BackendTerminator { Op = "branch", Target = conditionBlock.Id });
         }
 
         private void LowerSwitch(SwitchStmt statement)
@@ -911,55 +1065,83 @@ public sealed class ZigBackendIrWriter
 
             foreach (var switchCase in statement.Cases)
             {
-                var caseBody = CreateBlock("switch.case");
-                var nextCase = CreateBlock("switch.next");
-                var caseValue = LowerExpression(switchCase.Value, switchType);
-                var comparison = EmitComparison("equal", switchValue, caseValue);
-                Terminate(new BackendTerminator
-                {
-                    Op = "conditional_branch",
-                    Condition = comparison,
-                    TrueTarget = caseBody.Id,
-                    FalseTarget = nextCase.Id
-                });
-
-                _currentBlock = caseBody;
-                PushScope();
-                LowerStatements(switchCase.Body);
-                PopScope();
-                if (_currentBlock != null)
-                {
-                    Terminate(new BackendTerminator { Op = "branch", Target = exitBlock.Id });
+                if (LowerSwitchCase(switchCase, switchType, switchValue, exitBlock))
                     hasExitPredecessor = true;
-                }
-                _currentBlock = nextCase;
             }
 
+            if (LowerSwitchElseBody(statement, switchType, exitBlock))
+                hasExitPredecessor = true;
+
+            FinalizeSwitchExitBlock(exitBlock, hasExitPredecessor);
+        }
+
+        private bool LowerSwitchCase(
+            SwitchCase switchCase,
+            TypeNode switchType,
+            uint switchValue,
+            BackendBlock exitBlock)
+        {
+            var caseBody = CreateBlock("switch.case");
+            var nextCase = CreateBlock("switch.next");
+            var caseValue = LowerExpression(switchCase.Value, switchType);
+            var comparison = EmitComparison("equal", switchValue, caseValue);
+            Terminate(new BackendTerminator
+            {
+                Op = "conditional_branch",
+                Condition = comparison,
+                TrueTarget = caseBody.Id,
+                FalseTarget = nextCase.Id
+            });
+
+            _currentBlock = caseBody;
+            PushScope();
+            LowerStatements(switchCase.Body);
+            PopScope();
+            var hasExitPredecessor = TryTerminateSwitchCaseBody(exitBlock);
+            _currentBlock = nextCase;
+            return hasExitPredecessor;
+        }
+
+        private bool TryTerminateSwitchCaseBody(BackendBlock exitBlock)
+        {
+            if (_currentBlock == null)
+                return false;
+
+            Terminate(new BackendTerminator { Op = "branch", Target = exitBlock.Id });
+            return true;
+        }
+
+        private bool LowerSwitchElseBody(
+            SwitchStmt statement,
+            TypeNode switchType,
+            BackendBlock exitBlock)
+        {
             PushScope();
             LowerStatements(statement.ElseBody);
             PopScope();
-            if (_currentBlock != null)
+            if (_currentBlock == null)
+                return false;
+
+            if (statement.ElseBody.Count == 0 && _typeInterner.IsEnumType(switchType))
             {
-                if (statement.ElseBody.Count == 0 && _typeInterner.IsEnumType(switchType))
-                {
-                    Terminate(new BackendTerminator { Op = "unreachable" });
-                }
-                else
-                {
-                    Terminate(new BackendTerminator { Op = "branch", Target = exitBlock.Id });
-                    hasExitPredecessor = true;
-                }
+                Terminate(new BackendTerminator { Op = "unreachable" });
+                return false;
             }
 
+            Terminate(new BackendTerminator { Op = "branch", Target = exitBlock.Id });
+            return true;
+        }
+
+        private void FinalizeSwitchExitBlock(BackendBlock exitBlock, bool hasExitPredecessor)
+        {
             if (hasExitPredecessor)
             {
                 _currentBlock = exitBlock;
+                return;
             }
-            else
-            {
-                _blocks.Remove(exitBlock);
-                _currentBlock = null;
-            }
+
+            _blocks.Remove(exitBlock);
+            _currentBlock = null;
         }
 
         private void LowerMatch(MatchStmt statement)
@@ -997,6 +1179,15 @@ public sealed class ZigBackendIrWriter
         private void LowerUnionMatch(MatchStmt statement, TypeNode matchType, uint matchValue)
         {
             var tagType = new TypeNode { Name = "i32" };
+            var tag = LowerUnionMatchTag(matchValue, tagType);
+            var cases = statement.Cases
+                .Select(matchCase => BuildUnionMatchCase(matchCase, matchType, matchValue, tagType))
+                .ToList();
+            LowerOrderedCases(cases, tag, statement.ElseBody, statement.ElseBody.Count == 0);
+        }
+
+        private uint LowerUnionMatchTag(uint matchValue, TypeNode tagType)
+        {
             var tag = NextValueId();
             AddInstruction(new BackendInstruction
             {
@@ -1006,59 +1197,77 @@ public sealed class ZigBackendIrWriter
                 Lhs = matchValue,
                 FieldIndex = 0
             });
+            return tag;
+        }
 
-            var cases = new List<(uint CaseValue, List<Statement> Body, Action? Binding)>();
-            foreach (var matchCase in statement.Cases)
+        private (uint CaseValue, List<Statement> Body, Action? Binding) BuildUnionMatchCase(
+            MatchCase matchCase,
+            TypeNode matchType,
+            uint matchValue,
+            TypeNode tagType)
+        {
+            var (variantName, bindingName, bindingType) = ResolveUnionMatchPattern(matchCase);
+            var variantIndex = _typeInterner.GetUnionVariantIndex(matchType, variantName);
+            var binding = CreateUnionMatchBinding(
+                matchType,
+                matchValue,
+                variantName,
+                variantIndex,
+                bindingName,
+                bindingType);
+            return (
+                EmitIntegerConstant(variantIndex, tagType),
+                matchCase.Body,
+                binding);
+        }
+
+        private (string VariantName, string? BindingName, TypeNode? BindingType) ResolveUnionMatchPattern(
+            MatchCase matchCase)
+        {
+            if (matchCase.Pattern is UnionMatchPattern unionPattern &&
+                unionPattern.VariantName != null)
             {
-                string variantName;
-                string? bindingName = null;
-                TypeNode? bindingType = null;
-                if (matchCase.Pattern is UnionMatchPattern unionPattern &&
-                    unionPattern.VariantName != null)
-                {
-                    variantName = unionPattern.VariantName;
-                    bindingName = unionPattern.BindingName;
-                    bindingType = unionPattern.BindingType;
-                }
-                else if (matchCase.Pattern is QualifiedMatchPattern qualified &&
-                         QualifiedNames.TryGetQualifiedName(qualified.Value) is string name)
-                {
-                    variantName = name[(name.LastIndexOf('.') + 1)..];
-                }
-                else
-                {
-                    throw Unsupported(matchCase.Pattern, "invalid union match pattern");
-                }
-
-                var variantIndex = _typeInterner.GetUnionVariantIndex(matchType, variantName);
-                Action? binding = null;
-                if (bindingName != null)
-                {
-                    var capturedName = bindingName;
-                    var capturedType = bindingType
-                        ?? _typeInterner.GetUnionVariantType(matchType, variantName);
-                    binding = () =>
-                    {
-                        var payload = NextValueId();
-                        AddInstruction(new BackendInstruction
-                        {
-                            Id = payload,
-                            Op = "extract_value",
-                            Type = _typeInterner.Intern(capturedType),
-                            Lhs = matchValue,
-                            FieldIndex = variantIndex + 1
-                        });
-                        var address = EmitInstruction("alloca", capturedType);
-                        _ = EmitInstruction("store", capturedType, lhs: address, rhs: payload);
-                        DeclareLocal(capturedName, capturedType, address);
-                    };
-                }
-                cases.Add((
-                    EmitIntegerConstant(variantIndex, tagType),
-                    matchCase.Body,
-                    binding));
+                return (unionPattern.VariantName, unionPattern.BindingName, unionPattern.BindingType);
             }
-            LowerOrderedCases(cases, tag, statement.ElseBody, statement.ElseBody.Count == 0);
+
+            if (matchCase.Pattern is QualifiedMatchPattern qualified &&
+                QualifiedNames.TryGetQualifiedName(qualified.Value) is string name)
+            {
+                return (name[(name.LastIndexOf('.') + 1)..], null, null);
+            }
+
+            throw Unsupported(matchCase.Pattern, "invalid union match pattern");
+        }
+
+        private Action? CreateUnionMatchBinding(
+            TypeNode matchType,
+            uint matchValue,
+            string variantName,
+            uint variantIndex,
+            string? bindingName,
+            TypeNode? bindingType)
+        {
+            if (bindingName == null)
+                return null;
+
+            var capturedName = bindingName;
+            var capturedType = bindingType
+                ?? _typeInterner.GetUnionVariantType(matchType, variantName);
+            return () =>
+            {
+                var payload = NextValueId();
+                AddInstruction(new BackendInstruction
+                {
+                    Id = payload,
+                    Op = "extract_value",
+                    Type = _typeInterner.Intern(capturedType),
+                    Lhs = matchValue,
+                    FieldIndex = variantIndex + 1
+                });
+                var address = EmitInstruction("alloca", capturedType);
+                _ = EmitInstruction("store", capturedType, lhs: address, rhs: payload);
+                DeclareLocal(capturedName, capturedType, address);
+            };
         }
 
         private void LowerOrderedCases(
@@ -1071,51 +1280,82 @@ public sealed class ZigBackendIrWriter
             var hasExitPredecessor = false;
             foreach (var matchCase in cases)
             {
-                var caseBody = CreateBlock("match.case");
-                var nextCase = CreateBlock("match.next");
-                var comparison = EmitComparison("equal", comparedValue, matchCase.CaseValue);
-                Terminate(new BackendTerminator
-                {
-                    Op = "conditional_branch",
-                    Condition = comparison,
-                    TrueTarget = caseBody.Id,
-                    FalseTarget = nextCase.Id
-                });
-
-                _currentBlock = caseBody;
-                PushScope();
-                matchCase.Binding?.Invoke();
-                LowerStatements(matchCase.Body);
-                PopScope();
-                if (_currentBlock != null)
-                {
-                    Terminate(new BackendTerminator { Op = "branch", Target = exitBlock.Id });
+                if (LowerOrderedCase(matchCase, comparedValue, exitBlock))
                     hasExitPredecessor = true;
-                }
-                _currentBlock = nextCase;
             }
 
+            if (LowerOrderedCasesElseBody(elseBody, exhaustiveWithoutElse, exitBlock))
+                hasExitPredecessor = true;
+
+            FinalizeOrderedCasesExitBlock(exitBlock, hasExitPredecessor);
+        }
+
+        private bool LowerOrderedCase(
+            (uint CaseValue, List<Statement> Body, Action? Binding) matchCase,
+            uint comparedValue,
+            BackendBlock exitBlock)
+        {
+            var caseBody = CreateBlock("match.case");
+            var nextCase = CreateBlock("match.next");
+            var comparison = EmitComparison("equal", comparedValue, matchCase.CaseValue);
+            Terminate(new BackendTerminator
+            {
+                Op = "conditional_branch",
+                Condition = comparison,
+                TrueTarget = caseBody.Id,
+                FalseTarget = nextCase.Id
+            });
+
+            _currentBlock = caseBody;
+            PushScope();
+            matchCase.Binding?.Invoke();
+            LowerStatements(matchCase.Body);
+            PopScope();
+            var hasExitPredecessor = TryTerminateOrderedCaseBody(exitBlock);
+            _currentBlock = nextCase;
+            return hasExitPredecessor;
+        }
+
+        private bool TryTerminateOrderedCaseBody(BackendBlock exitBlock)
+        {
+            if (_currentBlock == null)
+                return false;
+
+            Terminate(new BackendTerminator { Op = "branch", Target = exitBlock.Id });
+            return true;
+        }
+
+        private bool LowerOrderedCasesElseBody(
+            IReadOnlyList<Statement> elseBody,
+            bool exhaustiveWithoutElse,
+            BackendBlock exitBlock)
+        {
             PushScope();
             LowerStatements(elseBody);
             PopScope();
-            if (_currentBlock != null)
+            if (_currentBlock == null)
+                return false;
+
+            if (exhaustiveWithoutElse)
             {
-                if (exhaustiveWithoutElse)
-                    Terminate(new BackendTerminator { Op = "unreachable" });
-                else
-                {
-                    Terminate(new BackendTerminator { Op = "branch", Target = exitBlock.Id });
-                    hasExitPredecessor = true;
-                }
+                Terminate(new BackendTerminator { Op = "unreachable" });
+                return false;
             }
 
+            Terminate(new BackendTerminator { Op = "branch", Target = exitBlock.Id });
+            return true;
+        }
+
+        private void FinalizeOrderedCasesExitBlock(BackendBlock exitBlock, bool hasExitPredecessor)
+        {
             if (hasExitPredecessor)
-                _currentBlock = exitBlock;
-            else
             {
-                _blocks.Remove(exitBlock);
-                _currentBlock = null;
+                _currentBlock = exitBlock;
+                return;
             }
+
+            _blocks.Remove(exitBlock);
+            _currentBlock = null;
         }
 
         private BackendBlock CreateBlock(string name)
@@ -1143,164 +1383,34 @@ public sealed class ZigBackendIrWriter
         private uint LowerExpression(Expr expression, TypeNode? expectedType = null)
         {
             var actualType = expectedType != null ? GetCheckedType(expression) : null;
-            if (expectedType?.IsSlice == true && actualType?.ArraySize != null)
+            if (actualType != null &&
+                TryLowerContextualArrayCoercion(expression, actualType, expectedType, out var contextualValue))
             {
-                return LowerArrayToSlice(expression, actualType, expectedType);
-            }
-
-            if (expectedType?.IsPointer == true &&
-                actualType?.ArraySize != null &&
-                !expectedType.IsSlice &&
-                Math.Max(expectedType.PointerLevel, 1) == 1)
-            {
-                var zero = EmitIntegerConstant(0, new TypeNode { Name = "i64" });
-                return EmitIndexAddress(
-                    LowerAddress(expression),
-                    zero,
-                    actualType,
-                    GetArrayElementType(actualType));
+                return contextualValue;
             }
 
             switch (expression)
             {
                 case IdentifierExpr identifier:
-                {
-                    var type = GetCheckedType(identifier);
-                    if (type.IsFunction &&
-                        _functionIds.TryGetValue(identifier.Name, out var functionId))
-                    {
-                        var functionValue = NextValueId();
-                        AddInstruction(new BackendInstruction
-                        {
-                            Id = functionValue,
-                            Op = "function_address",
-                            Type = _typeInterner.Intern(type),
-                            Callee = functionId
-                        });
-                        return functionValue;
-                    }
-                    return EmitInstruction("load", type, lhs: LowerAddress(identifier));
-                }
+                    return LowerIdentifierExpression(identifier);
 
                 case NumberExpr number:
-                {
-                    var type = expectedType ?? GetCheckedType(expression);
-                    return EmitIntegerConstant(number.Value, type);
-                }
+                    return EmitIntegerConstant(number.Value, expectedType ?? GetCheckedType(expression));
 
                 case StringExpr text:
-                {
-                    var id = NextValueId();
-                    AddInstruction(new BackendInstruction
-                    {
-                        Id = id,
-                        Op = "string_constant",
-                        Type = _typeInterner.Intern(new TypeNode { Name = "string" }),
-                        Text = text.Value
-                    });
-                    return id;
-                }
+                    return LowerStringExpression(text);
 
                 case ArrayLiteralExpr arrayLiteral:
-                {
-                    var arrayType = arrayLiteral.TypeName;
-                    var elementType = GetArrayElementType(arrayType);
-                    var elements = arrayLiteral.Elements
-                        .Select(element => LowerExpression(element, elementType))
-                        .ToList();
-                    var id = NextValueId();
-                    AddInstruction(new BackendInstruction
-                    {
-                        Id = id,
-                        Op = "aggregate",
-                        Type = _typeInterner.Intern(arrayType),
-                        Arguments = elements
-                    });
-                    return id;
-                }
+                    return LowerArrayLiteralExpression(arrayLiteral);
 
                 case StructLiteralExpr structLiteral:
-                {
-                    if (_typeInterner.IsUnionType(structLiteral.TypeName))
-                    {
-                        if (structLiteral.Fields.Count != 1)
-                            throw Unsupported(structLiteral, "union literal must initialize one variant");
-                        var field = structLiteral.Fields[0];
-                        var variantIndex = _typeInterner.GetUnionVariantIndex(
-                            structLiteral.TypeName,
-                            field.Name);
-                        var variants = _typeInterner.GetUnionVariants(structLiteral.TypeName);
-                        var unionValues = new List<uint>(variants.Count + 1)
-                        {
-                            EmitIntegerConstant(variantIndex, new TypeNode { Name = "i32" })
-                        };
-                        for (var index = 0; index < variants.Count; index++)
-                        {
-                            unionValues.Add(index == variantIndex
-                                ? LowerExpression(field.Value, variants[index].TypeName)
-                                : EmitZeroConstant(variants[index].TypeName));
-                        }
-                        var unionId = NextValueId();
-                        AddInstruction(new BackendInstruction
-                        {
-                            Id = unionId,
-                            Op = "aggregate",
-                            Type = _typeInterner.Intern(structLiteral.TypeName),
-                            Arguments = unionValues
-                        });
-                        return unionId;
-                    }
-
-                    var fields = _typeInterner.GetStructFields(structLiteral.TypeName);
-                    var valuesByName = structLiteral.Fields.ToDictionary(
-                        field => field.Name,
-                        StringComparer.Ordinal);
-                    var values = new List<uint>(fields.Count);
-                    foreach (var field in fields)
-                    {
-                        if (!valuesByName.TryGetValue(field.Name, out var initializer))
-                            throw Unsupported(structLiteral, $"missing struct field '{field.Name}'");
-                        values.Add(LowerExpression(initializer.Value, field.TypeName));
-                    }
-                    var id = NextValueId();
-                    AddInstruction(new BackendInstruction
-                    {
-                        Id = id,
-                        Op = "aggregate",
-                        Type = _typeInterner.Intern(structLiteral.TypeName),
-                        Arguments = values
-                    });
-                    return id;
-                }
+                    return LowerStructLiteralExpression(structLiteral);
 
                 case IndexExpr index:
-                {
-                    var elementType = GetCheckedType(index);
-                    var address = LowerAddress(index);
-                    return EmitInstruction("load", elementType, lhs: address);
-                }
+                    return EmitInstruction("load", GetCheckedType(index), lhs: LowerAddress(index));
 
                 case FieldExpr field:
-                {
-                    if (_typeInterner.TryGetEnumMember(field, out var enumType, out var enumValue))
-                        return EmitIntegerConstant(enumValue, enumType);
-                    var fieldType = GetCheckedType(field);
-                    if (fieldType.IsFunction &&
-                        field.ResolvedQualifiedName is string resolvedFunction &&
-                        _functionIds.TryGetValue(resolvedFunction, out var resolvedFunctionId))
-                    {
-                        var functionValue = NextValueId();
-                        AddInstruction(new BackendInstruction
-                        {
-                            Id = functionValue,
-                            Op = "function_address",
-                            Type = _typeInterner.Intern(fieldType),
-                            Callee = resolvedFunctionId
-                        });
-                        return functionValue;
-                    }
-                    return EmitInstruction("load", fieldType, lhs: LowerAddress(field));
-                }
+                    return LowerFieldExpression(field);
 
                 case BuiltinExpr builtin when builtin.Name is
                     "true" or
@@ -1323,259 +1433,549 @@ public sealed class ZigBackendIrWriter
                     return LowerCatch(catchExpression);
 
                 case SizeofExpr sizeofExpression:
-                {
-                    var id = NextValueId();
-                    AddInstruction(new BackendInstruction
-                    {
-                        Id = id,
-                        Op = "size_of",
-                        Type = _typeInterner.Intern(new TypeNode { Name = "i64" }),
-                        SourceType = _typeInterner.Intern(sizeofExpression.TargetType)
-                    });
-                    return id;
-                }
+                    return LowerSizeofExpression(sizeofExpression);
 
-                case UnaryExpr unary when unary.Operator == "-":
-                {
-                    var type = GetCheckedType(expression);
-                    var operand = LowerExpression(unary.Operand, type);
-                    var zero = EmitIntegerConstant(0, type);
-                    var id = NextValueId();
-                    AddInstruction(new BackendInstruction
-                    {
-                        Id = id,
-                        Op = "binary",
-                        Type = _typeInterner.Intern(type),
-                        BinaryOp = "sub",
-                        Lhs = zero,
-                        Rhs = operand
-                    });
-                    return id;
-                }
-
-                case UnaryExpr unary when unary.Operator == "!":
-                {
-                    var operand = LowerExpression(unary.Operand, new TypeNode { Name = "bool" });
-                    var zero = EmitIntegerConstant(0, new TypeNode { Name = "bool" });
-                    var id = NextValueId();
-                    AddInstruction(new BackendInstruction
-                    {
-                        Id = id,
-                        Op = "compare",
-                        Type = _typeInterner.Intern(new TypeNode { Name = "bool" }),
-                        CompareOp = "equal",
-                        Lhs = operand,
-                        Rhs = zero
-                    });
-                    return id;
-                }
-
-                case UnaryExpr unary when unary.Operator == "&":
-                {
-                    var operandType = GetCheckedType(unary.Operand);
-                    if (operandType.ArraySize != null)
-                    {
-                        var baseAddress = LowerAddress(unary.Operand);
-                        var zero = EmitIntegerConstant(0, new TypeNode { Name = "i64" });
-                        return EmitIndexAddress(
-                            baseAddress,
-                            zero,
-                            operandType,
-                            GetArrayElementType(operandType));
-                    }
-                    return LowerAddress(unary.Operand);
-                }
+                case UnaryExpr unary:
+                    return LowerUnaryExpression(expression, unary);
 
                 case CastExpr cast:
-                {
-                    var sourceType = GetCheckedType(cast.Expr);
-                    var targetType = cast.TargetType;
-                    var source = LowerExpression(cast.Expr, sourceType);
-                    var sourceIsPointer = IsPointerLike(sourceType);
-                    var targetIsPointer = IsPointerLike(targetType);
-                    if (sourceIsPointer && targetIsPointer)
-                        return source;
-                    if (sourceIsPointer || targetIsPointer)
-                    {
-                        var pointerCastId = NextValueId();
-                        AddInstruction(new BackendInstruction
-                        {
-                            Id = pointerCastId,
-                            Op = "cast",
-                            Type = _typeInterner.Intern(targetType),
-                            CastOp = sourceIsPointer ? "pointer_to_integer" : "integer_to_pointer",
-                            Lhs = source
-                        });
-                        return pointerCastId;
-                    }
-                    var sourceWidth = GetScalarBitWidth(sourceType);
-                    var targetWidth = GetScalarBitWidth(targetType);
-                    if (sourceWidth == targetWidth)
-                        return source;
-
-                    var id = NextValueId();
-                    AddInstruction(new BackendInstruction
-                    {
-                        Id = id,
-                        Op = "cast",
-                        Type = _typeInterner.Intern(targetType),
-                        CastOp = targetWidth < sourceWidth
-                            ? "truncate"
-                            : IsSignedScalar(sourceType) ? "sign_extend" : "zero_extend",
-                        Lhs = source
-                    });
-                    return id;
-                }
+                    return LowerCastExpression(cast);
 
                 case BinaryExpr binary:
-                {
-                    if (binary.Operator is "&&" or "||")
-                        return LowerLogical(binary);
-
-                    var leftType = GetCheckedType(binary.Left);
-                    var rightType = GetCheckedType(binary.Right);
-                    if (binary.Operator is "+" or "-" &&
-                        (leftType.IsPointer || rightType.IsPointer))
-                    {
-                        var pointerExpression = leftType.IsPointer ? binary.Left : binary.Right;
-                        var pointerType = leftType.IsPointer ? leftType : rightType;
-                        var indexExpression = leftType.IsPointer ? binary.Right : binary.Left;
-                        var pointer = LowerExpression(pointerExpression, pointerType);
-                        var indexType = GetCheckedType(indexExpression);
-                        var index = LowerExpression(indexExpression, indexType);
-                        index = CoerceInteger(index, indexType, new TypeNode { Name = "i64" });
-                        if (binary.Operator == "-")
-                        {
-                            var zero = EmitIntegerConstant(0, new TypeNode { Name = "i64" });
-                            index = EmitBinary("sub", zero, index, new TypeNode { Name = "i64" });
-                        }
-                        var elementType = GetPointerElementType(pointerType);
-                        return EmitIndexAddress(pointer, index, elementType, elementType);
-                    }
-
-                    var resultType = GetCheckedType(expression);
-                    var leftOperandType = GetCheckedType(binary.Left);
-                    var rightOperandType = GetCheckedType(binary.Right);
-                    var operandType = IsComparison(binary.Operator)
-                        ? GetComparisonOperandType(leftOperandType, rightOperandType)
-                        : resultType;
-                    uint lhs;
-                    uint rhs;
-                    if (IsScalarInteger(leftOperandType) &&
-                        IsScalarInteger(rightOperandType) &&
-                        IsScalarInteger(operandType))
-                    {
-                        lhs = LowerIntegerOperand(binary.Left, leftOperandType, operandType);
-                        rhs = LowerIntegerOperand(binary.Right, rightOperandType, operandType);
-                    }
-                    else
-                    {
-                        lhs = LowerExpression(binary.Left, leftOperandType);
-                        rhs = LowerExpression(binary.Right, rightOperandType);
-                    }
-                    var id = NextValueId();
-                    AddInstruction(new BackendInstruction
-                    {
-                        Id = id,
-                        Op = IsComparison(binary.Operator) ? "compare" : "binary",
-                        Type = _typeInterner.Intern(resultType),
-                        BinaryOp = MapBinaryOp(binary.Operator, operandType),
-                        CompareOp = MapCompareOp(binary.Operator, operandType),
-                        Lhs = lhs,
-                        Rhs = rhs
-                    });
-                    return id;
-                }
+                    return LowerBinaryExpression(expression, binary);
 
                 case CallExpr call:
-                {
-                    var initiallyResolvedName = call.ResolvedTargetQualifiedName
-                        ?? call.ResolvedQualifiedName
-                        ?? QualifiedNames.GetFullName(call.NamespacePath, call.Name);
-                    if (call.TypeArguments.Count > 0)
-                        initiallyResolvedName = GenericFunctionName(
-                            initiallyResolvedName,
-                            call.TypeArguments);
-                    Expr? indirectTarget = call.TargetExpr;
-                    if (indirectTarget == null &&
-                        LookupLocal(call.Name) is { Type.IsFunction: true })
-                    {
-                        indirectTarget = new IdentifierExpr { Name = call.Name };
-                    }
-                    if (indirectTarget != null &&
-                        !_functionIds.ContainsKey(initiallyResolvedName))
-                    {
-                        var indirectFunctionType = call.ResolvedFunctionType
-                            ?? GetCheckedType(indirectTarget)
-                            ?? throw Unsupported(call, "indirect call has no checked function type");
-                        var callee = LowerExpression(indirectTarget, indirectFunctionType);
-                        var indirectArguments = LowerCallArguments(call, indirectFunctionType);
-                        var indirectId = NextValueId();
-                        AddInstruction(new BackendInstruction
-                        {
-                            Id = indirectId,
-                            Op = "indirect_call",
-                            Type = _typeInterner.Intern(
-                                indirectFunctionType.ReturnType ?? new TypeNode { Name = "void" }),
-                            SourceType = _typeInterner.Intern(indirectFunctionType),
-                            Lhs = callee,
-                            Arguments = indirectArguments
-                        });
-                        return indirectId;
-                    }
-
-                    var resolvedName = call.ResolvedTargetQualifiedName
-                        ?? call.ResolvedQualifiedName
-                        ?? QualifiedNames.GetFullName(call.NamespacePath, call.Name);
-                    if (call.TypeArguments.Count > 0)
-                        resolvedName = GenericFunctionName(resolvedName, call.TypeArguments);
-                    if (resolvedName == "syscall")
-                    {
-                        var syscallType = new TypeNode { Name = "i64" };
-                        var syscallArguments = call.Args
-                            .Select(argument =>
-                            {
-                                var argumentType = GetCheckedType(argument);
-                                var value = LowerExpression(argument, argumentType);
-                                return CoerceInteger(value, argumentType, syscallType);
-                            })
-                            .ToList();
-                        if (syscallArguments.Count is < 1 or > 7)
-                            throw Unsupported(expression, "syscall requires between one and seven arguments");
-
-                        var syscallId = NextValueId();
-                        AddInstruction(new BackendInstruction
-                        {
-                            Id = syscallId,
-                            Op = "syscall",
-                            Type = _typeInterner.Intern(new TypeNode { Name = "i64" }),
-                            Arguments = syscallArguments
-                        });
-                        return syscallId;
-                    }
-                    if (!_functionIds.TryGetValue(resolvedName, out var calleeId))
-                        throw Unsupported(expression, $"call target '{resolvedName}' is not in the backend module");
-
-                    var functionType = call.ResolvedFunctionType
-                        ?? ResolveFunctionType(call)
-                        ?? throw Unsupported(expression, $"call target '{resolvedName}' has no checked function type");
-                    var arguments = LowerCallArguments(call, functionType);
-
-                    var id = NextValueId();
-                    AddInstruction(new BackendInstruction
-                    {
-                        Id = id,
-                        Op = "call",
-                        Type = _typeInterner.Intern(functionType.ReturnType ?? new TypeNode { Name = "void" }),
-                        Callee = calleeId,
-                        Arguments = arguments
-                    });
-                    return id;
-                }
+                    return LowerCallExpression(expression, call);
 
                 default:
                     throw Unsupported(expression, expression.GetType().Name);
             }
+        }
+
+        private bool TryLowerContextualArrayCoercion(
+            Expr expression,
+            TypeNode actualType,
+            TypeNode? expectedType,
+            out uint value)
+        {
+            value = 0;
+            if (actualType.ArraySize == null || expectedType == null)
+                return false;
+
+            if (expectedType.IsSlice)
+            {
+                value = LowerSliceContextualArrayCoercion(expression, actualType, expectedType);
+                return true;
+            }
+
+            if (!CanLowerPointerContextualArrayCoercion(expectedType))
+                return false;
+
+            value = LowerPointerContextualArrayCoercion(expression, actualType);
+            return true;
+        }
+
+        private uint LowerSliceContextualArrayCoercion(
+            Expr expression,
+            TypeNode actualType,
+            TypeNode expectedType)
+        {
+            return LowerArrayToSlice(expression, actualType, expectedType);
+        }
+
+        private bool CanLowerPointerContextualArrayCoercion(TypeNode expectedType)
+        {
+            return expectedType.IsPointer &&
+                !expectedType.IsSlice &&
+                Math.Max(expectedType.PointerLevel, 1) == 1;
+        }
+
+        private uint LowerPointerContextualArrayCoercion(Expr expression, TypeNode actualType)
+        {
+            var zero = EmitIntegerConstant(0, new TypeNode { Name = "i64" });
+            return EmitIndexAddress(
+                LowerAddress(expression),
+                zero,
+                actualType,
+                GetArrayElementType(actualType));
+        }
+
+        private uint LowerIdentifierExpression(IdentifierExpr identifier)
+        {
+            var type = GetCheckedType(identifier);
+            if (type.IsFunction &&
+                _functionIds.TryGetValue(identifier.Name, out var functionId))
+            {
+                return EmitFunctionAddress(functionId, type);
+            }
+
+            return EmitInstruction("load", type, lhs: LowerAddress(identifier));
+        }
+
+        private uint LowerStringExpression(StringExpr text)
+        {
+            var id = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = id,
+                Op = "string_constant",
+                Type = _typeInterner.Intern(new TypeNode { Name = "string" }),
+                Text = text.Value
+            });
+            return id;
+        }
+
+        private uint LowerArrayLiteralExpression(ArrayLiteralExpr arrayLiteral)
+        {
+            var elementType = GetArrayElementType(arrayLiteral.TypeName);
+            var elements = arrayLiteral.Elements
+                .Select(element => LowerExpression(element, elementType))
+                .ToList();
+            var id = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = id,
+                Op = "aggregate",
+                Type = _typeInterner.Intern(arrayLiteral.TypeName),
+                Arguments = elements
+            });
+            return id;
+        }
+
+        private uint LowerStructLiteralExpression(StructLiteralExpr structLiteral)
+        {
+            if (_typeInterner.IsUnionType(structLiteral.TypeName))
+                return LowerUnionLiteralExpression(structLiteral);
+
+            var fields = _typeInterner.GetStructFields(structLiteral.TypeName);
+            var valuesByName = BuildStructLiteralFieldMap(structLiteral);
+            var values = LowerStructLiteralFieldValues(structLiteral, fields, valuesByName);
+            return EmitAggregateLiteral(structLiteral.TypeName, values);
+        }
+
+        private Dictionary<string, StructLiteralField> BuildStructLiteralFieldMap(StructLiteralExpr structLiteral)
+        {
+            return structLiteral.Fields.ToDictionary(
+                field => field.Name,
+                StringComparer.Ordinal);
+        }
+
+        private List<uint> LowerStructLiteralFieldValues(
+            StructLiteralExpr structLiteral,
+            IReadOnlyList<StructField> fields,
+            IReadOnlyDictionary<string, StructLiteralField> valuesByName)
+        {
+            var values = new List<uint>(fields.Count);
+            foreach (var field in fields)
+            {
+                if (!valuesByName.TryGetValue(field.Name, out var initializer))
+                    throw Unsupported(structLiteral, $"missing struct field '{field.Name}'");
+
+                values.Add(LowerExpression(initializer.Value, field.TypeName));
+            }
+
+            return values;
+        }
+
+        private uint EmitAggregateLiteral(TypeNode type, List<uint> values)
+        {
+            var id = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = id,
+                Op = "aggregate",
+                Type = _typeInterner.Intern(type),
+                Arguments = values
+            });
+            return id;
+        }
+
+        private uint LowerUnionLiteralExpression(StructLiteralExpr structLiteral)
+        {
+            if (structLiteral.Fields.Count != 1)
+                throw Unsupported(structLiteral, "union literal must initialize one variant");
+
+            var field = structLiteral.Fields[0];
+            var variantIndex = _typeInterner.GetUnionVariantIndex(
+                structLiteral.TypeName,
+                field.Name);
+            var variants = _typeInterner.GetUnionVariants(structLiteral.TypeName);
+            var unionValues = new List<uint>(variants.Count + 1)
+            {
+                EmitIntegerConstant(variantIndex, new TypeNode { Name = "i32" })
+            };
+            for (var index = 0; index < variants.Count; index++)
+            {
+                unionValues.Add(index == variantIndex
+                    ? LowerExpression(field.Value, variants[index].TypeName)
+                    : EmitZeroConstant(variants[index].TypeName));
+            }
+
+            return EmitAggregateLiteral(structLiteral.TypeName, unionValues);
+        }
+
+        private uint LowerFieldExpression(FieldExpr field)
+        {
+            if (_typeInterner.TryGetEnumMember(field, out var enumType, out var enumValue))
+                return EmitIntegerConstant(enumValue, enumType);
+
+            var fieldType = GetCheckedType(field);
+            if (fieldType.IsFunction &&
+                field.ResolvedQualifiedName is string resolvedFunction &&
+                _functionIds.TryGetValue(resolvedFunction, out var resolvedFunctionId))
+            {
+                return EmitFunctionAddress(resolvedFunctionId, fieldType);
+            }
+
+            return EmitInstruction("load", fieldType, lhs: LowerAddress(field));
+        }
+
+        private uint LowerSizeofExpression(SizeofExpr sizeofExpression)
+        {
+            var id = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = id,
+                Op = "size_of",
+                Type = _typeInterner.Intern(new TypeNode { Name = "i64" }),
+                SourceType = _typeInterner.Intern(sizeofExpression.TargetType)
+            });
+            return id;
+        }
+
+        private uint LowerUnaryExpression(Expr expression, UnaryExpr unary)
+        {
+            return unary.Operator switch
+            {
+                "-" => LowerUnaryNegation(expression, unary),
+                "!" => LowerUnaryNot(unary),
+                "&" => LowerAddressOf(unary),
+                _ => throw Unsupported(unary, $"unary operator '{unary.Operator}'")
+            };
+        }
+
+        private uint LowerUnaryNegation(Expr expression, UnaryExpr unary)
+        {
+            var type = GetCheckedType(expression);
+            var operand = LowerExpression(unary.Operand, type);
+            var zero = EmitIntegerConstant(0, type);
+            var id = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = id,
+                Op = "binary",
+                Type = _typeInterner.Intern(type),
+                BinaryOp = "sub",
+                Lhs = zero,
+                Rhs = operand
+            });
+            return id;
+        }
+
+        private uint LowerUnaryNot(UnaryExpr unary)
+        {
+            var operand = LowerExpression(unary.Operand, new TypeNode { Name = "bool" });
+            var zero = EmitIntegerConstant(0, new TypeNode { Name = "bool" });
+            var id = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = id,
+                Op = "compare",
+                Type = _typeInterner.Intern(new TypeNode { Name = "bool" }),
+                CompareOp = "equal",
+                Lhs = operand,
+                Rhs = zero
+            });
+            return id;
+        }
+
+        private uint LowerAddressOf(UnaryExpr unary)
+        {
+            var operandType = GetCheckedType(unary.Operand);
+            if (operandType.ArraySize != null)
+            {
+                var baseAddress = LowerAddress(unary.Operand);
+                var zero = EmitIntegerConstant(0, new TypeNode { Name = "i64" });
+                return EmitIndexAddress(
+                    baseAddress,
+                    zero,
+                    operandType,
+                    GetArrayElementType(operandType));
+            }
+
+            return LowerAddress(unary.Operand);
+        }
+
+        private uint LowerCastExpression(CastExpr cast)
+        {
+            var sourceType = GetCheckedType(cast.Expr);
+            var targetType = cast.TargetType;
+            var source = LowerExpression(cast.Expr, sourceType);
+            var sourceIsPointer = IsPointerLike(sourceType);
+            var targetIsPointer = IsPointerLike(targetType);
+            if (sourceIsPointer && targetIsPointer)
+                return source;
+
+            if (sourceIsPointer || targetIsPointer)
+                return LowerPointerOrIntegerCast(source, sourceType, targetType);
+
+            var sourceWidth = GetScalarBitWidth(sourceType);
+            var targetWidth = GetScalarBitWidth(targetType);
+            if (sourceWidth == targetWidth)
+                return source;
+
+            return LowerIntegerWidthCast(source, sourceType, targetType, sourceWidth, targetWidth);
+        }
+
+        private uint LowerPointerOrIntegerCast(uint source, TypeNode sourceType, TypeNode targetType)
+        {
+            return EmitCastInstruction(
+                source,
+                targetType,
+                IsPointerLike(sourceType) ? "pointer_to_integer" : "integer_to_pointer");
+        }
+
+        private uint LowerIntegerWidthCast(
+            uint source,
+            TypeNode sourceType,
+            TypeNode targetType,
+            int sourceWidth,
+            int targetWidth)
+        {
+            return EmitCastInstruction(
+                source,
+                targetType,
+                targetWidth < sourceWidth
+                    ? "truncate"
+                    : IsSignedScalar(sourceType) ? "sign_extend" : "zero_extend");
+        }
+
+        private uint EmitCastInstruction(uint source, TypeNode targetType, string castOp)
+        {
+            var id = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = id,
+                Op = "cast",
+                Type = _typeInterner.Intern(targetType),
+                CastOp = castOp,
+                Lhs = source
+            });
+            return id;
+        }
+
+        private uint LowerBinaryExpression(Expr expression, BinaryExpr binary)
+        {
+            if (binary.Operator is "&&" or "||")
+                return LowerLogical(binary);
+
+            var leftType = GetCheckedType(binary.Left);
+            var rightType = GetCheckedType(binary.Right);
+            if (IsPointerArithmetic(binary, leftType, rightType))
+                return LowerPointerArithmetic(binary, leftType, rightType);
+
+            var resultType = GetCheckedType(expression);
+            var operandType = GetBinaryOperandType(binary, leftType, rightType, resultType);
+            var (lhs, rhs) = LowerBinaryOperands(binary, leftType, rightType, operandType);
+            return EmitBinaryOperation(binary, resultType, operandType, lhs, rhs);
+        }
+
+        private bool IsPointerArithmetic(BinaryExpr binary, TypeNode leftType, TypeNode rightType)
+        {
+            return binary.Operator is "+" or "-" &&
+                (leftType.IsPointer || rightType.IsPointer);
+        }
+
+        private TypeNode GetBinaryOperandType(
+            BinaryExpr binary,
+            TypeNode leftType,
+            TypeNode rightType,
+            TypeNode resultType)
+        {
+            return IsComparison(binary.Operator)
+                ? GetComparisonOperandType(leftType, rightType)
+                : resultType;
+        }
+
+        private (uint Lhs, uint Rhs) LowerBinaryOperands(
+            BinaryExpr binary,
+            TypeNode leftType,
+            TypeNode rightType,
+            TypeNode operandType)
+        {
+            if (IsScalarInteger(leftType) &&
+                IsScalarInteger(rightType) &&
+                IsScalarInteger(operandType))
+            {
+                return (
+                    LowerIntegerOperand(binary.Left, leftType, operandType),
+                    LowerIntegerOperand(binary.Right, rightType, operandType));
+            }
+
+            return (
+                LowerExpression(binary.Left, leftType),
+                LowerExpression(binary.Right, rightType));
+        }
+
+        private uint EmitBinaryOperation(
+            BinaryExpr binary,
+            TypeNode resultType,
+            TypeNode operandType,
+            uint lhs,
+            uint rhs)
+        {
+            var id = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = id,
+                Op = IsComparison(binary.Operator) ? "compare" : "binary",
+                Type = _typeInterner.Intern(resultType),
+                BinaryOp = MapBinaryOp(binary.Operator, operandType),
+                CompareOp = MapCompareOp(binary.Operator, operandType),
+                Lhs = lhs,
+                Rhs = rhs
+            });
+            return id;
+        }
+
+        private uint LowerPointerArithmetic(BinaryExpr binary, TypeNode leftType, TypeNode rightType)
+        {
+            var pointerExpression = leftType.IsPointer ? binary.Left : binary.Right;
+            var pointerType = leftType.IsPointer ? leftType : rightType;
+            var indexExpression = leftType.IsPointer ? binary.Right : binary.Left;
+            var pointer = LowerExpression(pointerExpression, pointerType);
+            var indexType = GetCheckedType(indexExpression);
+            var index = LowerExpression(indexExpression, indexType);
+            index = CoerceInteger(index, indexType, new TypeNode { Name = "i64" });
+            if (binary.Operator == "-")
+            {
+                var zero = EmitIntegerConstant(0, new TypeNode { Name = "i64" });
+                index = EmitBinary("sub", zero, index, new TypeNode { Name = "i64" });
+            }
+
+            var elementType = GetPointerElementType(pointerType);
+            return EmitIndexAddress(pointer, index, elementType, elementType);
+        }
+
+        private uint LowerCallExpression(Expr expression, CallExpr call)
+        {
+            var resolvedName = ResolveCallLoweringName(call);
+            if (TryLowerIndirectCall(call, resolvedName, out var indirectResult))
+                return indirectResult;
+
+            if (resolvedName == "syscall")
+                return LowerSyscallCall(expression, call);
+
+            return LowerDirectCall(expression, call, resolvedName);
+        }
+
+        private string ResolveCallLoweringName(CallExpr call)
+        {
+            var resolvedName = call.ResolvedTargetQualifiedName
+                ?? call.ResolvedQualifiedName
+                ?? QualifiedNames.GetFullName(call.NamespacePath, call.Name);
+            if (call.TypeArguments.Count > 0)
+                resolvedName = GenericFunctionName(resolvedName, call.TypeArguments);
+            return resolvedName;
+        }
+
+        private Expr? TryResolveIndirectCallTarget(CallExpr call)
+        {
+            if (call.TargetExpr != null)
+                return call.TargetExpr;
+
+            return LookupLocal(call.Name) is { Type.IsFunction: true }
+                ? new IdentifierExpr { Name = call.Name }
+                : null;
+        }
+
+        private bool TryLowerIndirectCall(CallExpr call, string resolvedName, out uint result)
+        {
+            var indirectTarget = TryResolveIndirectCallTarget(call);
+            if (indirectTarget == null || _functionIds.ContainsKey(resolvedName))
+            {
+                result = 0;
+                return false;
+            }
+
+            var indirectFunctionType = call.ResolvedFunctionType
+                ?? GetCheckedType(indirectTarget)
+                ?? throw Unsupported(call, "indirect call has no checked function type");
+            var callee = LowerExpression(indirectTarget, indirectFunctionType);
+            var indirectArguments = LowerCallArguments(call, indirectFunctionType);
+            var indirectId = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = indirectId,
+                Op = "indirect_call",
+                Type = _typeInterner.Intern(
+                    indirectFunctionType.ReturnType ?? new TypeNode { Name = "void" }),
+                SourceType = _typeInterner.Intern(indirectFunctionType),
+                Lhs = callee,
+                Arguments = indirectArguments
+            });
+            result = indirectId;
+            return true;
+        }
+
+        private uint LowerDirectCall(Expr expression, CallExpr call, string resolvedName)
+        {
+            if (!_functionIds.TryGetValue(resolvedName, out var calleeId))
+                throw Unsupported(expression, $"call target '{resolvedName}' is not in the backend module");
+
+            var functionType = call.ResolvedFunctionType
+                ?? ResolveFunctionType(call)
+                ?? throw Unsupported(expression, $"call target '{resolvedName}' has no checked function type");
+            var arguments = LowerCallArguments(call, functionType);
+
+            var id = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = id,
+                Op = "call",
+                Type = _typeInterner.Intern(functionType.ReturnType ?? new TypeNode { Name = "void" }),
+                Callee = calleeId,
+                Arguments = arguments
+            });
+            return id;
+        }
+
+        private uint LowerSyscallCall(Expr expression, CallExpr call)
+        {
+            var syscallType = new TypeNode { Name = "i64" };
+            var syscallArguments = call.Args
+                .Select(argument =>
+                {
+                    var argumentType = GetCheckedType(argument);
+                    var value = LowerExpression(argument, argumentType);
+                    return CoerceInteger(value, argumentType, syscallType);
+                })
+                .ToList();
+            if (syscallArguments.Count is < 1 or > 7)
+                throw Unsupported(expression, "syscall requires between one and seven arguments");
+
+            var syscallId = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = syscallId,
+                Op = "syscall",
+                Type = _typeInterner.Intern(new TypeNode { Name = "i64" }),
+                Arguments = syscallArguments
+            });
+            return syscallId;
+        }
+
+        private uint EmitFunctionAddress(uint functionId, TypeNode type)
+        {
+            var functionValue = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = functionValue,
+                Op = "function_address",
+                Type = _typeInterner.Intern(type),
+                Callee = functionId
+            });
+            return functionValue;
         }
 
         private List<uint> LowerCallArguments(CallExpr call, TypeNode functionType)
@@ -1583,35 +1983,34 @@ public sealed class ZigBackendIrWriter
             var arguments = new List<uint>(call.Args.Count);
             for (var index = 0; index < call.Args.Count; index++)
             {
-                var parameterType = index < functionType.ParamTypes.Count
-                    ? functionType.ParamTypes[index]
-                    : null;
-                var argument = call.Args[index];
-                var argumentType = GetCheckedType(argument);
-                if (parameterType?.IsPointer == true &&
-                    argumentType.ArraySize != null &&
-                    !parameterType.IsSlice &&
-                    Math.Max(parameterType.PointerLevel, 1) == 1)
-                {
-                    var zero = EmitIntegerConstant(0, new TypeNode { Name = "i64" });
-                    arguments.Add(EmitIndexAddress(
-                        LowerAddress(argument),
-                        zero,
-                        argumentType,
-                        GetArrayElementType(argumentType)));
-                    continue;
-                }
-
-                var value = LowerExpression(argument, parameterType);
-                if (parameterType != null &&
-                    IsScalarInteger(argumentType) &&
-                    IsScalarInteger(parameterType))
-                {
-                    value = CoerceInteger(value, argumentType, parameterType);
-                }
-                arguments.Add(value);
+                var parameterType = GetCallParameterType(functionType, index);
+                arguments.Add(LowerCallArgument(call.Args[index], parameterType));
             }
             return arguments;
+        }
+
+        private TypeNode? GetCallParameterType(TypeNode functionType, int index)
+        {
+            return index < functionType.ParamTypes.Count
+                ? functionType.ParamTypes[index]
+                : null;
+        }
+
+        private uint LowerCallArgument(Expr argument, TypeNode? parameterType)
+        {
+            var argumentType = GetCheckedType(argument);
+            if (TryLowerContextualArrayCoercion(argument, argumentType, parameterType, out var contextualValue))
+                return contextualValue;
+
+            var value = LowerExpression(argument, parameterType);
+            if (parameterType != null &&
+                IsScalarInteger(argumentType) &&
+                IsScalarInteger(parameterType))
+            {
+                value = CoerceInteger(value, argumentType, parameterType);
+            }
+
+            return value;
         }
 
         private uint LowerLogical(BinaryExpr binary)
@@ -1624,6 +2023,17 @@ public sealed class ZigBackendIrWriter
                 new TypeNode { Name = "bool" });
             var rhsBlock = CreateBlock("logical.rhs");
             var mergeBlock = CreateBlock("logical.end");
+            LowerLogicalShortCircuitBranch(binary, lhs, rhsBlock, mergeBlock);
+            var (rhs, rhsEnd) = LowerLogicalRightHandSide(binary, rhsBlock, mergeBlock);
+            return EmitLogicalPhi(shortCircuitValue, lhsBlock, rhs, rhsEnd, mergeBlock);
+        }
+
+        private void LowerLogicalShortCircuitBranch(
+            BinaryExpr binary,
+            uint lhs,
+            BackendBlock rhsBlock,
+            BackendBlock mergeBlock)
+        {
             Terminate(new BackendTerminator
             {
                 Op = "conditional_branch",
@@ -1631,13 +2041,28 @@ public sealed class ZigBackendIrWriter
                 TrueTarget = binary.Operator == "&&" ? rhsBlock.Id : mergeBlock.Id,
                 FalseTarget = binary.Operator == "&&" ? mergeBlock.Id : rhsBlock.Id
             });
+        }
 
+        private (uint Value, BackendBlock EndBlock) LowerLogicalRightHandSide(
+            BinaryExpr binary,
+            BackendBlock rhsBlock,
+            BackendBlock mergeBlock)
+        {
             _currentBlock = rhsBlock;
             var rhs = LowerExpression(binary.Right, new TypeNode { Name = "bool" });
             var rhsEnd = _currentBlock
                 ?? throw new ZorbCompilerException("Logical expression right-hand side terminated unexpectedly.");
             Terminate(new BackendTerminator { Op = "branch", Target = mergeBlock.Id });
+            return (rhs, rhsEnd);
+        }
 
+        private uint EmitLogicalPhi(
+            uint shortCircuitValue,
+            BackendBlock lhsBlock,
+            uint rhs,
+            BackendBlock rhsEnd,
+            BackendBlock mergeBlock)
+        {
             _currentBlock = mergeBlock;
             var id = NextValueId();
             AddInstruction(new BackendInstruction
@@ -1721,100 +2146,123 @@ public sealed class ZigBackendIrWriter
             switch (expression)
             {
                 case IdentifierExpr identifier:
-                    if (LookupLocal(identifier.Name) is LocalBinding local)
-                        return local.Address;
-                    if (_globalIds.TryGetValue(identifier.Name, out var globalId))
-                    {
-                        var id = NextValueId();
-                        AddInstruction(new BackendInstruction
-                        {
-                            Id = id,
-                            Op = "global_address",
-                            Type = _typeInterner.Intern(_globals[identifier.Name].TypeName),
-                            Global = globalId
-                        });
-                        return id;
-                    }
-                    throw Unsupported(expression, $"identifier '{identifier.Name}' is not addressable");
+                    return LowerIdentifierAddress(identifier);
 
                 case IndexExpr index:
-                {
-                    var targetType = GetCheckedType(index.Target);
-                    var elementType = GetCheckedType(index);
-                    var indexValue = LowerExpression(index.Index, new TypeNode { Name = "i64" });
-                    if (targetType.ArraySize != null)
-                    {
-                        return EmitIndexAddress(
-                            LowerAddress(index.Target),
-                            indexValue,
-                            targetType,
-                            elementType);
-                    }
-                    if (targetType.IsPointer && !targetType.IsErrorUnion)
-                    {
-                        return EmitIndexAddress(
-                            LowerExpression(index.Target, targetType),
-                            indexValue,
-                            GetPointerElementType(targetType),
-                            elementType);
-                    }
-                    if (targetType.IsSlice)
-                        return LowerSliceIndexAddress(index, targetType, elementType, indexValue);
-                    throw Unsupported(index, $"index address for type '{FormatType(targetType)}'");
-                }
+                    return LowerIndexAddress(index);
 
                 case FieldExpr field:
-                {
-                    if (field.ResolvedQualifiedName is string resolvedGlobal &&
-                        _globalIds.TryGetValue(resolvedGlobal, out var resolvedGlobalId) &&
-                        _globals.TryGetValue(resolvedGlobal, out var resolvedGlobalDeclaration))
-                    {
-                        var globalAddress = NextValueId();
-                        AddInstruction(new BackendInstruction
-                        {
-                            Id = globalAddress,
-                            Op = "global_address",
-                            Type = _typeInterner.Intern(resolvedGlobalDeclaration.TypeName),
-                            Global = resolvedGlobalId
-                        });
-                        return globalAddress;
-                    }
-                    var targetType = GetCheckedType(field.Target);
-                    TypeNode containerType;
-                    uint baseAddress;
-                    if (targetType.IsPointer && !targetType.IsErrorUnion)
-                    {
-                        containerType = GetPointerElementType(targetType);
-                        baseAddress = LowerExpression(field.Target, targetType);
-                    }
-                    else
-                    {
-                        containerType = targetType;
-                        baseAddress = LowerAddress(field.Target);
-                    }
-
-                    var id = NextValueId();
-                    AddInstruction(new BackendInstruction
-                    {
-                        Id = id,
-                        Op = "field_address",
-                        Type = _typeInterner.Intern(GetCheckedType(field)),
-                        SourceType = _typeInterner.Intern(containerType),
-                        FieldIndex = _typeInterner.GetStructFieldIndex(containerType, field.Field),
-                        Lhs = baseAddress
-                    });
-                    return id;
-                }
+                    return LowerFieldAddress(field);
 
                 default:
-                {
-                    var type = GetCheckedType(expression);
-                    var value = LowerExpression(expression, type);
-                    var address = EmitInstruction("alloca", type);
-                    _ = EmitInstruction("store", type, lhs: address, rhs: value);
-                    return address;
-                }
+                    return LowerTemporaryAddress(expression);
             }
+        }
+
+        private uint LowerIdentifierAddress(IdentifierExpr identifier)
+        {
+            if (LookupLocal(identifier.Name) is LocalBinding local)
+                return local.Address;
+
+            if (_globalIds.TryGetValue(identifier.Name, out var globalId))
+                return EmitGlobalAddress(globalId, _globals[identifier.Name].TypeName);
+
+            throw Unsupported(identifier, $"identifier '{identifier.Name}' is not addressable");
+        }
+
+        private uint LowerIndexAddress(IndexExpr index)
+        {
+            var targetType = GetCheckedType(index.Target);
+            var elementType = GetCheckedType(index);
+            var indexValue = LowerExpression(index.Index, new TypeNode { Name = "i64" });
+            if (targetType.ArraySize != null)
+            {
+                return EmitIndexAddress(
+                    LowerAddress(index.Target),
+                    indexValue,
+                    targetType,
+                    elementType);
+            }
+            if (targetType.IsPointer && !targetType.IsErrorUnion)
+            {
+                return EmitIndexAddress(
+                    LowerExpression(index.Target, targetType),
+                    indexValue,
+                    GetPointerElementType(targetType),
+                    elementType);
+            }
+            if (targetType.IsSlice)
+                return LowerSliceIndexAddress(index, targetType, elementType, indexValue);
+
+            throw Unsupported(index, $"index address for type '{FormatType(targetType)}'");
+        }
+
+        private uint LowerFieldAddress(FieldExpr field)
+        {
+            if (TryLowerResolvedGlobalFieldAddress(field, out var globalAddress))
+                return globalAddress;
+
+            var (containerType, baseAddress) = ResolveFieldAddressBase(field);
+            var id = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = id,
+                Op = "field_address",
+                Type = _typeInterner.Intern(GetCheckedType(field)),
+                SourceType = _typeInterner.Intern(containerType),
+                FieldIndex = _typeInterner.GetStructFieldIndex(containerType, field.Field),
+                Lhs = baseAddress
+            });
+            return id;
+        }
+
+        private bool TryLowerResolvedGlobalFieldAddress(FieldExpr field, out uint address)
+        {
+            if (field.ResolvedQualifiedName is string resolvedGlobal &&
+                _globalIds.TryGetValue(resolvedGlobal, out var resolvedGlobalId) &&
+                _globals.TryGetValue(resolvedGlobal, out var resolvedGlobalDeclaration))
+            {
+                address = EmitGlobalAddress(resolvedGlobalId, resolvedGlobalDeclaration.TypeName);
+                return true;
+            }
+
+            address = 0;
+            return false;
+        }
+
+        private (TypeNode ContainerType, uint BaseAddress) ResolveFieldAddressBase(FieldExpr field)
+        {
+            var targetType = GetCheckedType(field.Target);
+            if (targetType.IsPointer && !targetType.IsErrorUnion)
+            {
+                return (
+                    GetPointerElementType(targetType),
+                    LowerExpression(field.Target, targetType));
+            }
+
+            return (targetType, LowerAddress(field.Target));
+        }
+
+        private uint LowerTemporaryAddress(Expr expression)
+        {
+            var type = GetCheckedType(expression);
+            var value = LowerExpression(expression, type);
+            var address = EmitInstruction("alloca", type);
+            _ = EmitInstruction("store", type, lhs: address, rhs: value);
+            return address;
+        }
+
+        private uint EmitGlobalAddress(uint globalId, TypeNode type)
+        {
+            var id = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = id,
+                Op = "global_address",
+                Type = _typeInterner.Intern(type),
+                Global = globalId
+            });
+            return id;
         }
 
         private void AddInstruction(BackendInstruction instruction)
@@ -1893,33 +2341,47 @@ public sealed class ZigBackendIrWriter
             if (!errorUnionType.IsErrorUnion)
                 throw Unsupported(expression, "catch operand is not an error union");
 
-            var result = LowerExpression(expression.Left, errorUnionType);
             var successType = errorUnionType.ErrorInnerType
                 ?? throw Unsupported(expression, "error union has no success type");
-            var successValue = NextValueId();
-            AddInstruction(new BackendInstruction
-            {
-                Id = successValue,
-                Op = "extract_value",
-                Type = _typeInterner.Intern(successType),
-                Lhs = result,
-                FieldIndex = 0
-            });
             var errorType = new TypeNode { Name = "i32" };
-            var errorValue = NextValueId();
-            AddInstruction(new BackendInstruction
-            {
-                Id = errorValue,
-                Op = "extract_value",
-                Type = _typeInterner.Intern(errorType),
-                Lhs = result,
-                FieldIndex = 1
-            });
-            var zero = EmitIntegerConstant(0, errorType);
-            var hasError = EmitComparison("not_equal", errorValue, zero);
+            var (successValue, errorValue) = LowerCatchOperands(expression, errorUnionType, successType, errorType);
             var catchBlock = CreateBlock("catch.error");
             var successBlock = CreateBlock("catch.success");
             var mergeBlock = CreateBlock("catch.end");
+            LowerCatchDispatch(errorValue, errorType, catchBlock, successBlock, mergeBlock);
+            var (fallbackValue, fallbackBlock) = LowerCatchBody(
+                expression,
+                discardResult,
+                successType,
+                errorType,
+                errorValue,
+                catchBlock,
+                mergeBlock);
+            _currentBlock = mergeBlock;
+            return EmitCatchResultPhi(successType, successValue, successBlock, fallbackValue, fallbackBlock);
+        }
+
+        private (uint SuccessValue, uint ErrorValue) LowerCatchOperands(
+            CatchExpr expression,
+            TypeNode errorUnionType,
+            TypeNode successType,
+            TypeNode errorType)
+        {
+            var result = LowerExpression(expression.Left, errorUnionType);
+            var successValue = EmitExtractValue(result, successType, 0);
+            var errorValue = EmitExtractValue(result, errorType, 1);
+            return (successValue, errorValue);
+        }
+
+        private void LowerCatchDispatch(
+            uint errorValue,
+            TypeNode errorType,
+            BackendBlock catchBlock,
+            BackendBlock successBlock,
+            BackendBlock mergeBlock)
+        {
+            var zero = EmitIntegerConstant(0, errorType);
+            var hasError = EmitComparison("not_equal", errorValue, zero);
             Terminate(new BackendTerminator
             {
                 Op = "conditional_branch",
@@ -1930,54 +2392,98 @@ public sealed class ZigBackendIrWriter
 
             _currentBlock = successBlock;
             Terminate(new BackendTerminator { Op = "branch", Target = mergeBlock.Id });
+        }
 
+        private (uint? FallbackValue, uint? FallbackBlock) LowerCatchBody(
+            CatchExpr expression,
+            bool discardResult,
+            TypeNode successType,
+            TypeNode errorType,
+            uint errorValue,
+            BackendBlock catchBlock,
+            BackendBlock mergeBlock)
+        {
             _currentBlock = catchBlock;
             PushScope();
-            var errorAddress = EmitInstruction("alloca", errorType);
-            _ = EmitInstruction("store", errorType, lhs: errorAddress, rhs: errorValue);
-            DeclareLocal(expression.ErrorVar, errorType, errorAddress, isCatchError: true);
-            var fallbackExpression = !discardResult && expression.CatchBody.LastOrDefault() is ExpressionStatement fallback
-                ? fallback.Expression
-                : null;
-            var statements = fallbackExpression == null
-                ? expression.CatchBody
-                : expression.CatchBody.Take(expression.CatchBody.Count - 1).ToList();
+            RegisterCatchErrorLocal(expression.ErrorVar, errorType, errorValue);
+            var fallbackExpression = GetCatchFallbackExpression(expression, discardResult);
+            var statements = GetCatchStatements(expression, fallbackExpression);
             LowerStatements(statements);
-            uint? fallbackValue = null;
-            uint? fallbackBlock = null;
-            if (_currentBlock != null && fallbackExpression != null)
-            {
-                var fallbackType = GetCheckedType(fallbackExpression);
-                fallbackValue = IsScalarInteger(fallbackType) && IsScalarInteger(successType)
-                    ? LowerIntegerOperand(fallbackExpression, fallbackType, successType)
-                    : LowerExpression(fallbackExpression, successType);
-                fallbackBlock = _currentBlock.Id;
-                Terminate(new BackendTerminator { Op = "branch", Target = mergeBlock.Id });
-            }
-            else if (_currentBlock != null && discardResult)
-            {
-                Terminate(new BackendTerminator { Op = "branch", Target = mergeBlock.Id });
-            }
+            var result = LowerCatchFallbackResult(
+                discardResult,
+                fallbackExpression,
+                successType,
+                mergeBlock);
             PopScope();
             if (_currentBlock != null)
                 throw Unsupported(expression, "catch body can fall through without producing a value");
+            return result;
+        }
 
-            _currentBlock = mergeBlock;
-            if (fallbackValue.HasValue && fallbackBlock.HasValue)
+        private void RegisterCatchErrorLocal(string errorVar, TypeNode errorType, uint errorValue)
+        {
+            var errorAddress = EmitInstruction("alloca", errorType);
+            _ = EmitInstruction("store", errorType, lhs: errorAddress, rhs: errorValue);
+            DeclareLocal(errorVar, errorType, errorAddress, isCatchError: true);
+        }
+
+        private Expr? GetCatchFallbackExpression(CatchExpr expression, bool discardResult)
+        {
+            return !discardResult && expression.CatchBody.LastOrDefault() is ExpressionStatement fallback
+                ? fallback.Expression
+                : null;
+        }
+
+        private IReadOnlyList<Statement> GetCatchStatements(CatchExpr expression, Expr? fallbackExpression)
+        {
+            return fallbackExpression == null
+                ? expression.CatchBody
+                : expression.CatchBody.Take(expression.CatchBody.Count - 1).ToList();
+        }
+
+        private (uint? FallbackValue, uint? FallbackBlock) LowerCatchFallbackResult(
+            bool discardResult,
+            Expr? fallbackExpression,
+            TypeNode successType,
+            BackendBlock mergeBlock)
+        {
+            if (_currentBlock != null && fallbackExpression != null)
             {
-                var mergedValue = NextValueId();
-                AddInstruction(new BackendInstruction
-                {
-                    Id = mergedValue,
-                    Op = "phi",
-                    Type = _typeInterner.Intern(successType),
-                    IncomingValues = [successValue, fallbackValue.Value],
-                    IncomingBlocks = [successBlock.Id, fallbackBlock.Value]
-                });
-                return mergedValue;
+                var fallbackType = GetCheckedType(fallbackExpression);
+                var fallbackValue = IsScalarInteger(fallbackType) && IsScalarInteger(successType)
+                    ? LowerIntegerOperand(fallbackExpression, fallbackType, successType)
+                    : LowerExpression(fallbackExpression, successType);
+                var fallbackBlock = _currentBlock.Id;
+                Terminate(new BackendTerminator { Op = "branch", Target = mergeBlock.Id });
+                return (fallbackValue, fallbackBlock);
             }
 
-            return successValue;
+            if (_currentBlock != null && discardResult)
+                Terminate(new BackendTerminator { Op = "branch", Target = mergeBlock.Id });
+
+            return (null, null);
+        }
+
+        private uint EmitCatchResultPhi(
+            TypeNode successType,
+            uint successValue,
+            BackendBlock successBlock,
+            uint? fallbackValue,
+            uint? fallbackBlock)
+        {
+            if (!fallbackValue.HasValue || !fallbackBlock.HasValue)
+                return successValue;
+
+            var mergedValue = NextValueId();
+            AddInstruction(new BackendInstruction
+            {
+                Id = mergedValue,
+                Op = "phi",
+                Type = _typeInterner.Intern(successType),
+                IncomingValues = [successValue, fallbackValue.Value],
+                IncomingBlocks = [successBlock.Id, fallbackBlock.Value]
+            });
+            return mergedValue;
         }
 
         private uint CoerceInteger(uint value, TypeNode sourceType, TypeNode targetType)
