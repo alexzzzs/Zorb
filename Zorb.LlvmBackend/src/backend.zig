@@ -471,7 +471,6 @@ pub const Backend = struct {
         builder: llvm.LLVMBuilderRef,
         instruction: ir.Instruction,
     ) !llvm.LLVMValueRef {
-        _ = builder;
         return switch (instruction.op) {
             .zero_constant => llvm.LLVMConstNull(try self.typeById(instruction.type)),
             .integer_constant => blk: {
@@ -628,7 +627,6 @@ pub const Backend = struct {
     ) !llvm.LLVMValueRef {
         return switch (instruction.op) {
             .phi => blk: {
-                _ = values;
                 if (instruction.incoming_values.len != instruction.incoming_blocks.len or
                     instruction.incoming_values.len == 0)
                 {
