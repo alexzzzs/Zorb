@@ -474,13 +474,6 @@ public partial class Parser
         do
         {
             var parameterToken = Expect(TokenType.Identifier, "Expected type parameter name.");
-            // Report duplicates but omit them from the recovered parameter list.
-            if (parameters.Any(parameter => string.Equals(parameter.Name, parameterToken.Value, StringComparison.Ordinal)))
-            {
-                ErrorReporter.Error($"Duplicate type parameter '{parameterToken.Value}'.", parameterToken.Line, parameterToken.Column, _fileName);
-                continue;
-            }
-
             TypeNode? constraint = null;
             if (Match(TokenType.Colon))
                 constraint = ParseType();
@@ -498,6 +491,13 @@ public partial class Parser
                     parameterToken.Line,
                     parameterToken.Column,
                     _fileName);
+            }
+
+            // Report duplicates but still consume their annotations for recovery.
+            if (parameters.Any(parameter => string.Equals(parameter.Name, parameterToken.Value, StringComparison.Ordinal)))
+            {
+                ErrorReporter.Error($"Duplicate type parameter '{parameterToken.Value}'.", parameterToken.Line, parameterToken.Column, _fileName);
+                continue;
             }
 
             parameters.Add(new GenericTypeParameter

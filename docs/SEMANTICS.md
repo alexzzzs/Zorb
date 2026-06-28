@@ -198,9 +198,9 @@ Notes:
 - Generic struct instantiations are written with angle brackets, for example `Box<i64>`.
 - Generic structs are monomorphized during native lowering. Each concrete instantiation emits a distinct concrete lowered type.
 - Functions may also introduce type parameters, for example `fn identity<T>(value: T) -> T`.
-- Generic function calls may provide explicit type arguments, for example `identity<i64>(42)`.
-- Generic functions are monomorphized during native lowering.
-- Type parameters are scoped to the generic declaration.
+- Calls to generic functions may provide explicit type arguments, for example `identity<i64>(42)`.
+- Each concrete generic function instantiation is monomorphized during native lowering.
+- Within a generic declaration, type parameters are scoped to that declaration.
 - Generic declarations may have multiple distinct type parameters.
 - Generic type parameters may declare an optional exact-type constraint using `: Type`.
 - Generic type parameters may declare trailing default type arguments using `= Type`.

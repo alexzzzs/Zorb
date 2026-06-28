@@ -49,7 +49,7 @@ It does not currently mean:
 
 ## Generics
 
-Structs and non-extern functions may declare one or more type parameters.
+Structs, enums, unions, and non-extern functions may declare one or more type parameters.
 Type parameters may optionally declare an exact-type constraint with `: Type`
 and a trailing default type with `= Type`:
 
@@ -66,6 +66,9 @@ fn make() -> Box {
     return Box{ value: mirror<i64>(0, 42) }
 }
 ```
+
+In `mirror`, `T` comes from the first argument, while `U` must exactly match `T`
+and defaults to `T` when omitted.
 
 Generic calls may provide explicit type arguments such as `identity<i64>(42)`, or omit them when the parameter types make the concrete instantiation obvious, such as `identity(42)`. Generic types such as `Box<i64>`, `Mode<i64>`, and `Result<i64, bool>` may provide explicit type arguments, and declarations with trailing defaults may omit those trailing positions. Nested forms such as `Box<Box<i64>>`, imported generic declarations, pointers, slices, arrays, error unions, and generic struct layout attributes are supported.
 
