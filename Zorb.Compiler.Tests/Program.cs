@@ -693,15 +693,15 @@ static void RunGenericFunctionDefaultImportAliasTests()
 import "lib.zorb" as factory
 
 fn main() -> i64 {
-    return factory.make().value
+    return factory.make()
 }
 """);
 
         File.WriteAllText(libPath, """
 import "types.zorb" as util
 
-export fn make<T = util.Box<i64>>() -> util.Box<i64> {
-    return util.Box<i64>{ value: 7 }
+export fn make<T = util.Box<i64>>() -> i64 {
+    return Builtin.sizeof(T)
 }
 """);
 

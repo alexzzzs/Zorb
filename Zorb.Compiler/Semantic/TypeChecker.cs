@@ -2703,7 +2703,7 @@ public class TypeChecker
         };
     }
 
-    private static EnumNode BuildUnionTagEnum(UnionNode unionNode)
+    private EnumNode BuildUnionTagEnum(UnionNode unionNode)
     {
         return new EnumNode
         {
@@ -2712,14 +2712,7 @@ public class TypeChecker
                 .Concat(new[] { unionNode.Name })
                 .ToList(),
             TypeParameters = new List<string>(unionNode.TypeParameters),
-            TypeParameterSpecs = unionNode.TypeParameterSpecs
-                .Select(parameter => new GenericTypeParameter
-                {
-                    Name = parameter.Name,
-                    Constraint = parameter.Constraint?.Clone(),
-                    DefaultType = parameter.DefaultType?.Clone()
-                })
-                .ToList(),
+            TypeParameterSpecs = CloneAndNormalizeTypeParameterSpecs(unionNode.TypeParameterSpecs),
             UnderlyingType = new TypeNode { Name = "i32" },
             Members = unionNode.Variants
                 .Select((variant, index) => new EnumMember
@@ -2729,6 +2722,31 @@ public class TypeChecker
                 })
                 .ToList()
         };
+    }
+
+    private List<GenericTypeParameter> CloneAndNormalizeTypeParameterSpecs(
+        IReadOnlyList<GenericTypeParameter> parameters)
+    {
+        var clonedParameters = new List<GenericTypeParameter>(parameters.Count);
+        foreach (var parameter in parameters)
+        {
+            var clonedParameter = new GenericTypeParameter
+            {
+                Name = parameter.Name,
+                Constraint = parameter.Constraint?.Clone(),
+                DefaultType = parameter.DefaultType?.Clone()
+            };
+
+            if (clonedParameter.Constraint != null)
+                NormalizeTypeReferenceInPlace(clonedParameter.Constraint);
+
+            if (clonedParameter.DefaultType != null)
+                NormalizeTypeReferenceInPlace(clonedParameter.DefaultType);
+
+            clonedParameters.Add(clonedParameter);
+        }
+
+        return clonedParameters;
     }
 
     private void ValidateEnumDeclaration(EnumNode enumNode)
@@ -3686,7 +3704,8 @@ public class TypeChecker
         if (parameters.Count == 0)
             return;
 
-        ResolveTypeParameterReferences(parameters, context);
+        if (!ResolveTypeParameterReferences(parameters, context))
+            return;
 
         var sawDefault = false;
         foreach (var parameter in parameters)
@@ -3755,12 +3774,22 @@ public class TypeChecker
         return true;
     }
 
-    private void ResolveTypeParameterReferences(
+    private bool ResolveTypeParameterReferences(
         IReadOnlyList<GenericTypeParameter> parameters,
         Node context)
     {
         if (parameters.Count == 0)
-            return;
+            return true;
+
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var parameter in parameters)
+        {
+            if (seenNames.Add(parameter.Name))
+                continue;
+
+            _errors.Error(context, $"Duplicate type parameter '{parameter.Name}'.");
+            return false;
+        }
 
         _typeParameterScopes.Push(new HashSet<string>(StringComparer.Ordinal));
         try
@@ -3775,6 +3804,8 @@ public class TypeChecker
 
                 _typeParameterScopes.Peek().Add(parameter.Name);
             }
+
+            return true;
         }
         finally
         {
