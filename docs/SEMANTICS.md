@@ -198,19 +198,22 @@ Notes:
 - Generic struct instantiations are written with angle brackets, for example `Box<i64>`.
 - Generic structs are monomorphized during native lowering. Each concrete instantiation emits a distinct concrete lowered type.
 - Functions may also introduce type parameters, for example `fn identity<T>(value: T) -> T`.
-- Generic function calls may provide explicit type arguments, for example `identity<i64>(42)`.
-- Generic functions are monomorphized during native lowering.
-- Type parameters are scoped to the generic declaration.
+- Calls to generic functions may provide explicit type arguments, for example `identity<i64>(42)`.
+- Each concrete generic function instantiation is monomorphized during native lowering.
+- Within a generic declaration, type parameters are scoped to that declaration.
 - Generic declarations may have multiple distinct type parameters.
-- Generic struct uses must provide exactly the declared number of type arguments.
+- Generic type parameters may declare an optional exact-type constraint using `: Type`.
+- Generic type parameters may declare trailing default type arguments using `= Type`.
 - Generic function calls may omit type arguments when they can be inferred directly from the argument types.
+- Generic uses must provide every non-defaulted type argument, but may omit trailing type arguments that have defaults.
 - Type arguments may be nested and may use pointers, slices, fixed arrays, function types, and error unions.
 - Different concrete argument lists are distinct nominal types and distinct
   monomorphized lowered declarations.
 - Imported exported generic structs, enums, unions, and functions can be instantiated through their import alias.
 - Generic structs preserve normal struct layout attributes for each concrete instantiation.
 - Generic tagged unions also monomorphize their generated tag enums per concrete instantiation, so `Result<i64, bool>.Tag.Ok` and `Result<u64, bool>.Tag.Ok` are distinct nominal enum values.
-- Generic `extern fn` declarations, constraints, and default type arguments are not supported.
+- Generic constraints are exact-type checks after substituting any earlier resolved type arguments; they do not introduce trait-style capability checking inside the generic body.
+- Generic `extern fn` declarations are not supported.
 
 ### Pointer Types
 

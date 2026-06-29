@@ -38,6 +38,8 @@ RunNamedTest("llvm_backend_regressions", () => RunLlvmBackendRegressionTests(fix
 RunNamedTest("unknown_type_cascade", RunUnknownTypeCascadeTests);
 RunNamedTest("invalid_postfix_cascade", RunInvalidPostfixCascadeTests);
 RunNamedTest("builtin_parser_reserved_declarations", RunBuiltinParserReservedDeclarationTests);
+RunNamedTest("generic_default_arity_recovery", RunGenericDefaultArityRecoveryTests);
+RunNamedTest("generic_function_default_import_alias", RunGenericFunctionDefaultImportAliasTests);
 RunNamedTest("resolved_call_metadata", RunResolvedCallMetadataTests);
 
 var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
@@ -643,6 +645,77 @@ static void RunBuiltinParserReservedDeclarationTests()
         checker.Errors.Errors,
         "Top-level declaration 'Builtin.sizeof' conflicts with a built-in symbol.",
         "error");
+}
+
+static void RunGenericDefaultArityRecoveryTests()
+{
+    var pair = new StructNode
+    {
+        Name = "Pair",
+        TypeParameters = ["T", "U"],
+        TypeParameterSpecs =
+        [
+            new GenericTypeParameter
+            {
+                Name = "T",
+                DefaultType = new TypeNode { Name = "i64" }
+            },
+            new GenericTypeParameter
+            {
+                Name = "U"
+            }
+        ]
+    };
+    var value = new VariableDeclarationNode
+    {
+        Name = "value",
+        TypeName = new TypeNode { Name = "Pair" }
+    };
+
+    var checker = new TypeChecker();
+    checker.Check([pair, value]);
+
+    AssertContains(
+        checker.Errors.Errors,
+        "Struct 'Pair' expects 2 type argument(s), got 0.",
+        "generic arity");
+}
+
+static void RunGenericFunctionDefaultImportAliasTests()
+{
+    WithTempDirectory("zorb-generic-default-import-alias", tempDir =>
+    {
+        var mainPath = Path.Combine(tempDir, "main.zorb");
+        var libPath = Path.Combine(tempDir, "lib.zorb");
+        var typesPath = Path.Combine(tempDir, "types.zorb");
+
+        File.WriteAllText(mainPath, """
+import "lib.zorb" as factory
+
+fn main() -> i64 {
+    return factory.make()
+}
+""");
+
+        File.WriteAllText(libPath, """
+import "types.zorb" as util
+
+export fn make<T = util.Box<i64>>() -> i64 {
+    return Builtin.sizeof(T)
+}
+""");
+
+        File.WriteAllText(typesPath, """
+export struct Box<T> {
+    value: T,
+}
+""");
+
+        var compilation = CompileFixture(mainPath, tempDir);
+        AssertPhase(compilation.Phase, FixturePhase.Success, compilation.FailureMessage);
+        AssertNoErrors(compilation.ParseErrors);
+        AssertNoErrors(compilation.Checker.Errors.Errors);
+    });
 }
 
 static void RunResolvedCallMetadataTests()

@@ -173,7 +173,8 @@ public partial class Parser
         var (path, name) = ParseDottedDeclName(
             "Expected struct name after 'struct'.",
             "Expected identifier after '.' in struct name.");
-        var typeParameters = ParseTypeParameterList();
+        var typeParameterSpecs = ParseTypeParameterList();
+        var typeParameters = typeParameterSpecs.Select(parameter => parameter.Name).ToList();
 
         Expect(TokenType.LBrace, "Expected '{' to start struct body.");
 
@@ -204,7 +205,16 @@ public partial class Parser
 
         Expect(TokenType.RBrace, "Expected '}' to close struct body.");
 
-        var node = new StructNode { NamespacePath = path, Name = name, TypeParameters = typeParameters, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr, Fields = fields };
+        var node = new StructNode
+        {
+            NamespacePath = path,
+            Name = name,
+            TypeParameters = typeParameters,
+            TypeParameterSpecs = typeParameterSpecs,
+            Attributes = attributes.Attributes,
+            AlignExpr = attributes.AlignExpr,
+            Fields = fields
+        };
         StampNode(node, startToken);
         return node;
     }
@@ -216,7 +226,8 @@ public partial class Parser
         var (path, name) = ParseDottedDeclName(
             "Expected enum name after 'enum'.",
             "Expected identifier after '.' in enum name.");
-        var typeParameters = ParseTypeParameterList();
+        var typeParameterSpecs = ParseTypeParameterList();
+        var typeParameters = typeParameterSpecs.Select(parameter => parameter.Name).ToList();
 
         Expect(TokenType.Colon, "Expected ':' after enum name.");
         var underlyingType = ParseType();
@@ -262,6 +273,7 @@ public partial class Parser
             NamespacePath = path,
             Name = name,
             TypeParameters = typeParameters,
+            TypeParameterSpecs = typeParameterSpecs,
             UnderlyingType = underlyingType,
             Members = members
         };
@@ -276,7 +288,8 @@ public partial class Parser
         var (path, name) = ParseDottedDeclName(
             "Expected union name after 'union'.",
             "Expected identifier after '.' in union name.");
-        var typeParameters = ParseTypeParameterList();
+        var typeParameterSpecs = ParseTypeParameterList();
+        var typeParameters = typeParameterSpecs.Select(parameter => parameter.Name).ToList();
 
         Expect(TokenType.LBrace, "Expected '{' to start union body.");
 
@@ -318,6 +331,7 @@ public partial class Parser
             NamespacePath = path,
             Name = name,
             TypeParameters = typeParameters,
+            TypeParameterSpecs = typeParameterSpecs,
             Variants = variants
         };
         StampNode(node, startToken);
@@ -450,22 +464,48 @@ public partial class Parser
         };
     }
 
-    private List<string> ParseTypeParameterList()
+    private List<GenericTypeParameter> ParseTypeParameterList()
     {
-        var parameters = new List<string>();
+        var parameters = new List<GenericTypeParameter>();
         if (!Match(TokenType.Less))
             return parameters;
 
+        var sawDefault = false;
         do
         {
             var parameterToken = Expect(TokenType.Identifier, "Expected type parameter name.");
-            // Report duplicates but omit them from the recovered parameter list.
-            if (parameters.Contains(parameterToken.Value, StringComparer.Ordinal))
+            TypeNode? constraint = null;
+            if (Match(TokenType.Colon))
+                constraint = ParseType();
+
+            TypeNode? defaultType = null;
+            if (Match(TokenType.Equals))
+            {
+                defaultType = ParseType();
+                sawDefault = true;
+            }
+            else if (sawDefault)
+            {
+                ErrorReporter.Error(
+                    $"Type parameter '{parameterToken.Value}' must declare a default because an earlier type parameter already has one.",
+                    parameterToken.Line,
+                    parameterToken.Column,
+                    _fileName);
+            }
+
+            // Report duplicates but still consume their annotations for recovery.
+            if (parameters.Any(parameter => string.Equals(parameter.Name, parameterToken.Value, StringComparison.Ordinal)))
             {
                 ErrorReporter.Error($"Duplicate type parameter '{parameterToken.Value}'.", parameterToken.Line, parameterToken.Column, _fileName);
                 continue;
             }
-            parameters.Add(parameterToken.Value);
+
+            parameters.Add(new GenericTypeParameter
+            {
+                Name = parameterToken.Value,
+                Constraint = constraint,
+                DefaultType = defaultType
+            });
         } while (Match(TokenType.Comma));
 
         Expect(TokenType.Greater, "Expected '>' to close type parameter list.");
@@ -520,7 +560,8 @@ public partial class Parser
 
         var name = path.Last();
         path.RemoveAt(path.Count - 1);
-        var typeParameters = ParseTypeParameterList();
+        var typeParameterSpecs = ParseTypeParameterList();
+        var typeParameters = typeParameterSpecs.Select(parameter => parameter.Name).ToList();
 
         Expect(TokenType.LParen, "Expected '(' after function name.");
 
@@ -553,7 +594,18 @@ public partial class Parser
             };
         }
 
-        FunctionDecl function = new() { NamespacePath = path, Name = name, TypeParameters = typeParameters, Parameters = parameters, ReturnType = returnType, IsExtern = isExtern, Attributes = attributes.Attributes, AlignExpr = attributes.AlignExpr };
+        FunctionDecl function = new()
+        {
+            NamespacePath = path,
+            Name = name,
+            TypeParameters = typeParameters,
+            TypeParameterSpecs = typeParameterSpecs,
+            Parameters = parameters,
+            ReturnType = returnType,
+            IsExtern = isExtern,
+            Attributes = attributes.Attributes,
+            AlignExpr = attributes.AlignExpr
+        };
         StampNode(function, startToken);
 
         if (isExtern)

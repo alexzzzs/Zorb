@@ -695,13 +695,21 @@ public class TypeChecker
         NormalizeTypeReferenceInPlace(functionDecl.ReturnType);
         foreach (var param in functionDecl.Parameters)
             NormalizeTypeReferenceInPlace(param.TypeName);
+        ResolveTypeParameterReferences(functionDecl.TypeParameterSpecs, functionDecl);
 
         var fullName = QualifiedNames.GetFullName(functionDecl.NamespacePath, functionDecl.Name);
         ReportDuplicateTopLevelDeclaration(functionDecl, fullName, declaredInThisFile);
         ReportBuiltinDeclarationConflict(functionDecl, fullName);
         MakeVisible(fullName);
         if (!_symbolTable.IsDefined(fullName))
-            _symbolTable.DefineFunction(fullName, functionDecl.ReturnType, functionDecl.Parameters, functionDecl.TypeParameters);
+        {
+            _symbolTable.DefineFunction(
+                fullName,
+                functionDecl.ReturnType,
+                functionDecl.Parameters,
+                functionDecl.TypeParameters,
+                functionDecl.TypeParameterSpecs);
+        }
     }
 
     private void RegisterStructDeclaration(StructNode structNode, Dictionary<string, Node> declaredInThisFile)
@@ -829,6 +837,7 @@ public class TypeChecker
     private void ValidateStructDeclaration(StructNode structNode)
     {
         ResolveStructAttributes(structNode);
+        ValidateTypeParameterDeclarations(structNode.TypeParameterSpecs, structNode, $"Struct '{QualifiedNames.GetFullName(structNode.NamespacePath, structNode.Name)}'");
         PushTypeParameterScope(structNode.TypeParameters);
         try
         {
@@ -846,6 +855,7 @@ public class TypeChecker
 
     private void ValidateEnumNode(EnumNode enumNode)
     {
+        ValidateTypeParameterDeclarations(enumNode.TypeParameterSpecs, enumNode, $"Enum '{QualifiedNames.GetFullName(enumNode.NamespacePath, enumNode.Name)}'");
         PushTypeParameterScope(enumNode.TypeParameters);
         try
         {
@@ -859,6 +869,7 @@ public class TypeChecker
 
     private void ValidateUnionNode(UnionNode unionNode)
     {
+        ValidateTypeParameterDeclarations(unionNode.TypeParameterSpecs, unionNode, $"Union '{QualifiedNames.GetFullName(unionNode.NamespacePath, unionNode.Name)}'");
         PushTypeParameterScope(unionNode.TypeParameters);
         try
         {
@@ -875,6 +886,7 @@ public class TypeChecker
         ResolveAlignmentAttribute(functionDecl.Attributes, functionDecl.AlignExpr, functionDecl, "Function Alignment");
         if (functionDecl.IsExtern && functionDecl.TypeParameters.Count > 0)
             _errors.Error(functionDecl, $"Extern function '{QualifiedNames.GetFullName(functionDecl.NamespacePath, functionDecl.Name)}' cannot declare type parameters.");
+        ValidateTypeParameterDeclarations(functionDecl.TypeParameterSpecs, functionDecl, $"Function '{QualifiedNames.GetFullName(functionDecl.NamespacePath, functionDecl.Name)}'");
 
         PushTypeParameterScope(functionDecl.TypeParameters);
         try
@@ -1365,15 +1377,20 @@ public class TypeChecker
                 call.TypeArguments = inferredArguments;
         }
 
-        if (symbolInfo.TypeParameters.Count > 0 && call.TypeArguments.Count != symbolInfo.TypeParameters.Count)
+        if (symbolInfo.TypeParameters.Count > 0)
         {
-            if (reportErrors)
-                _errors.Error(call, $"Function '{displayName}' expects {symbolInfo.TypeParameters.Count} type argument(s), got {call.TypeArguments.Count}.");
-            return null;
-        }
+            if (!TryResolveGenericTypeArguments(
+                    symbolInfo.TypeParameterSpecs,
+                    call.TypeArguments,
+                    call,
+                    $"Function '{displayName}'",
+                    out var resolvedTypeArguments))
+            {
+                return null;
+            }
 
-        foreach (var typeArgument in call.TypeArguments)
-            ValidateTypeReference(typeArgument, call);
+            call.TypeArguments = resolvedTypeArguments;
+        }
 
         var substitutions = BuildTypeSubstitutions(symbolInfo.TypeParameters, call.TypeArguments);
         var parameters = symbolInfo.GetCallableParameters()
@@ -1424,19 +1441,13 @@ public class TypeChecker
             }
         }
 
-        var missing = symbolInfo.TypeParameters
-            .Where(name => !inferredByName.ContainsKey(name))
-            .ToList();
-        if (missing.Count > 0)
-        {
-            error = $"Could not infer type argument(s) {string.Join(", ", missing.Select(name => $"'{name}'"))} for generic function '{symbolInfo.Name}'.";
-            return false;
-        }
-
-        inferredArguments = symbolInfo.TypeParameters
-            .Select(name => inferredByName[name].Clone())
-            .ToList();
-        return true;
+        return TryResolveGenericTypeArgumentsFromInference(
+            symbolInfo.TypeParameterSpecs,
+            inferredByName,
+            call,
+            $"generic function '{symbolInfo.Name}'",
+            out inferredArguments,
+            out error);
     }
 
     private bool TryInferTypeArgumentsFromTypes(
@@ -2692,7 +2703,7 @@ public class TypeChecker
         };
     }
 
-    private static EnumNode BuildUnionTagEnum(UnionNode unionNode)
+    private EnumNode BuildUnionTagEnum(UnionNode unionNode)
     {
         return new EnumNode
         {
@@ -2701,6 +2712,7 @@ public class TypeChecker
                 .Concat(new[] { unionNode.Name })
                 .ToList(),
             TypeParameters = new List<string>(unionNode.TypeParameters),
+            TypeParameterSpecs = CloneAndNormalizeTypeParameterSpecs(unionNode.TypeParameterSpecs),
             UnderlyingType = new TypeNode { Name = "i32" },
             Members = unionNode.Variants
                 .Select((variant, index) => new EnumMember
@@ -2710,6 +2722,31 @@ public class TypeChecker
                 })
                 .ToList()
         };
+    }
+
+    private List<GenericTypeParameter> CloneAndNormalizeTypeParameterSpecs(
+        IReadOnlyList<GenericTypeParameter> parameters)
+    {
+        var clonedParameters = new List<GenericTypeParameter>(parameters.Count);
+        foreach (var parameter in parameters)
+        {
+            var clonedParameter = new GenericTypeParameter
+            {
+                Name = parameter.Name,
+                Constraint = parameter.Constraint?.Clone(),
+                DefaultType = parameter.DefaultType?.Clone()
+            };
+
+            if (clonedParameter.Constraint != null)
+                NormalizeTypeReferenceInPlace(clonedParameter.Constraint);
+
+            if (clonedParameter.DefaultType != null)
+                NormalizeTypeReferenceInPlace(clonedParameter.DefaultType);
+
+            clonedParameters.Add(clonedParameter);
+        }
+
+        return clonedParameters;
     }
 
     private void ValidateEnumDeclaration(EnumNode enumNode)
@@ -3609,7 +3646,10 @@ public class TypeChecker
         if (_symbolTable.LookupEnumNode(fullName) is not EnumNode enumNode)
             return false;
 
-        ValidateGenericArity(context, "Enum", fullName, enumNode.TypeParameters.Count, type.TypeArguments.Count);
+        if (!TryResolveGenericTypeArguments(enumNode.TypeParameterSpecs, type.TypeArguments, context, $"Enum '{fullName}'", out var resolvedTypeArguments))
+            return true;
+
+        type.TypeArguments = resolvedTypeArguments;
         ValidateTypeVisibility(type, context, "Enum", fullName);
         return true;
     }
@@ -3619,7 +3659,10 @@ public class TypeChecker
         if (_symbolTable.LookupUnionNode(fullName) is not UnionNode unionNode)
             return false;
 
-        ValidateGenericArity(context, "Union", fullName, unionNode.TypeParameters.Count, type.TypeArguments.Count);
+        if (!TryResolveGenericTypeArguments(unionNode.TypeParameterSpecs, type.TypeArguments, context, $"Union '{fullName}'", out var resolvedTypeArguments))
+            return true;
+
+        type.TypeArguments = resolvedTypeArguments;
         ValidateTypeVisibility(type, context, "Union", fullName);
         return true;
     }
@@ -3645,24 +3688,222 @@ public class TypeChecker
             return;
         }
 
-        if (!ValidateGenericArity(context, "Struct", fullName, structNode.TypeParameters.Count, type.TypeArguments.Count))
+        if (!TryResolveGenericTypeArguments(structNode.TypeParameterSpecs, type.TypeArguments, context, $"Struct '{fullName}'", out var resolvedTypeArguments))
             return;
 
+        type.TypeArguments = resolvedTypeArguments;
         ValidateConcreteGenericStructLayout(type, context, structNode);
         ValidateTypeVisibility(type, context, "Struct", fullName);
     }
 
-    private bool ValidateGenericArity(Node context, string kind, string fullName, int expectedCount, int actualCount)
+    private void ValidateTypeParameterDeclarations(
+        IReadOnlyList<GenericTypeParameter> parameters,
+        Node context,
+        string ownerDescription)
     {
-        if (expectedCount == actualCount)
+        if (parameters.Count == 0)
+            return;
+
+        if (!ResolveTypeParameterReferences(parameters, context))
+            return;
+
+        var sawDefault = false;
+        foreach (var parameter in parameters)
+        {
+            if (parameter.DefaultType != null)
+            {
+                sawDefault = true;
+                continue;
+            }
+
+            if (sawDefault)
+            {
+                _errors.Error(
+                    context,
+                    $"Type parameter '{parameter.Name}' in {ownerDescription} must declare a default because an earlier type parameter already has one.");
+                return;
+            }
+        }
+    }
+
+    private bool TryResolveGenericTypeArguments(
+        IReadOnlyList<GenericTypeParameter> parameters,
+        IReadOnlyList<TypeNode> providedArguments,
+        Node context,
+        string ownerDescription,
+        out List<TypeNode> resolvedArguments)
+    {
+        resolvedArguments = new List<TypeNode>();
+
+        foreach (var argument in providedArguments)
+            ValidateTypeReference(argument, context);
+
+        var requiredCount = GetMinimumGenericArgumentCount(parameters);
+        if (providedArguments.Count < requiredCount || providedArguments.Count > parameters.Count)
+        {
+            _errors.Error(context, FormatGenericArityMessage(ownerDescription, requiredCount, parameters.Count, providedArguments.Count));
+            return false;
+        }
+
+        var substitutions = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        for (var index = 0; index < parameters.Count; index++)
+        {
+            var parameter = parameters[index];
+            TypeNode argument;
+            if (index < providedArguments.Count)
+            {
+                argument = providedArguments[index].Clone();
+            }
+            else if (parameter.DefaultType != null)
+            {
+                argument = SubstituteTypeParameters(parameter.DefaultType, substitutions);
+            }
+            else
+            {
+                _errors.Error(context, FormatGenericArityMessage(ownerDescription, requiredCount, parameters.Count, providedArguments.Count));
+                return false;
+            }
+
+            if (!CheckGenericConstraint(parameter, argument, substitutions, context, ownerDescription))
+                return false;
+
+            substitutions[parameter.Name] = argument.Clone();
+            resolvedArguments.Add(argument);
+        }
+
+        return true;
+    }
+
+    private bool ResolveTypeParameterReferences(
+        IReadOnlyList<GenericTypeParameter> parameters,
+        Node context)
+    {
+        if (parameters.Count == 0)
             return true;
 
-        _errors.Error(
-            context,
-            expectedCount == 0
-                ? $"{kind} '{fullName}' is not generic and does not accept type arguments."
-                : $"{kind} '{fullName}' expects {expectedCount} type argument(s), got {actualCount}.");
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var parameter in parameters)
+        {
+            if (seenNames.Add(parameter.Name))
+                continue;
+
+            _errors.Error(context, $"Duplicate type parameter '{parameter.Name}'.");
+            return false;
+        }
+
+        _typeParameterScopes.Push(new HashSet<string>(StringComparer.Ordinal));
+        try
+        {
+            foreach (var parameter in parameters)
+            {
+                if (parameter.Constraint != null)
+                    ValidateTypeReference(parameter.Constraint, context);
+
+                if (parameter.DefaultType != null)
+                    ValidateTypeReference(parameter.DefaultType, context);
+
+                _typeParameterScopes.Peek().Add(parameter.Name);
+            }
+
+            return true;
+        }
+        finally
+        {
+            _typeParameterScopes.Pop();
+        }
+    }
+
+    private bool TryResolveGenericTypeArgumentsFromInference(
+        IReadOnlyList<GenericTypeParameter> parameters,
+        IReadOnlyDictionary<string, TypeNode> inferredByName,
+        Node context,
+        string ownerDescription,
+        out List<TypeNode>? resolvedArguments,
+        out string? error)
+    {
+        resolvedArguments = null;
+        error = null;
+
+        var missing = parameters
+            .Where(parameter => parameter.DefaultType == null && !inferredByName.ContainsKey(parameter.Name))
+            .Select(parameter => parameter.Name)
+            .ToList();
+        if (missing.Count > 0)
+        {
+            error = $"Could not infer type argument(s) {string.Join(", ", missing.Select(name => $"'{name}'"))} for {ownerDescription}.";
+            return false;
+        }
+
+        var substitutions = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        var resolved = new List<TypeNode>(parameters.Count);
+        foreach (var parameter in parameters)
+        {
+            var argument = inferredByName.TryGetValue(parameter.Name, out var inferred)
+                ? inferred.Clone()
+                : SubstituteTypeParameters(parameter.DefaultType!, substitutions);
+
+            if (!TryCheckGenericConstraint(parameter, argument, substitutions, ownerDescription, out error))
+                return false;
+
+            substitutions[parameter.Name] = argument.Clone();
+            resolved.Add(argument);
+        }
+
+        resolvedArguments = resolved;
+        return true;
+    }
+
+    private bool CheckGenericConstraint(
+        GenericTypeParameter parameter,
+        TypeNode argument,
+        IReadOnlyDictionary<string, TypeNode> substitutions,
+        Node context,
+        string ownerDescription)
+    {
+        if (TryCheckGenericConstraint(parameter, argument, substitutions, ownerDescription, out var error))
+            return true;
+
+        _errors.Error(context, error!);
         return false;
+    }
+
+    private bool TryCheckGenericConstraint(
+        GenericTypeParameter parameter,
+        TypeNode argument,
+        IReadOnlyDictionary<string, TypeNode> substitutions,
+        string ownerDescription,
+        out string? error)
+    {
+        error = null;
+        if (parameter.Constraint == null)
+            return true;
+
+        var resolvedConstraint = SubstituteTypeParameters(parameter.Constraint, substitutions);
+        if (TypeHelpers.SameType(argument, resolvedConstraint))
+            return true;
+
+        error = $"Type argument '{parameter.Name}' for {ownerDescription} must satisfy constraint '{FormatType(resolvedConstraint)}', got '{FormatType(argument)}'.";
+        return false;
+    }
+
+    private static string FormatGenericArityMessage(string ownerDescription, int requiredCount, int totalCount, int actualCount)
+    {
+        if (totalCount == 0)
+            return $"{ownerDescription} is not generic and does not accept type arguments.";
+
+        if (requiredCount == totalCount)
+            return $"{ownerDescription} expects {totalCount} type argument(s), got {actualCount}.";
+
+        return $"{ownerDescription} expects between {requiredCount} and {totalCount} type argument(s), got {actualCount}.";
+    }
+
+    private static int GetMinimumGenericArgumentCount(IReadOnlyList<GenericTypeParameter> parameters)
+    {
+        var requiredCount = parameters.Count;
+        while (requiredCount > 0 && parameters[requiredCount - 1].DefaultType != null)
+            requiredCount--;
+
+        return requiredCount;
     }
 
     private void ValidateConcreteGenericStructLayout(TypeNode type, Node context, StructNode structNode)
@@ -4484,9 +4725,10 @@ public class TypeChecker
         return false;
     }
 
-    private static bool TryResolveStaticTypeReferenceExpr(TypeReferenceExpr typeReference, out TypeNode type)
+    private bool TryResolveStaticTypeReferenceExpr(TypeReferenceExpr typeReference, out TypeNode type)
     {
         type = typeReference.TypeName.Clone();
+        ValidateTypeReference(type, typeReference);
         return true;
     }
 

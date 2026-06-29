@@ -23,6 +23,7 @@ public class SymbolInfo
     public TypeNode Type { get; set; } = null!;
     public List<Parameter>? Parameters { get; set; }
     public List<string> TypeParameters { get; set; } = new();
+    public List<GenericTypeParameter> TypeParameterSpecs { get; set; } = new();
     public StructNode? StructDefinition { get; set; }
     public EnumNode? EnumDefinition { get; set; }
     public UnionNode? UnionDefinition { get; set; }
@@ -82,13 +83,21 @@ public class SymbolTable
         CurrentScope[name] = info;
     }
 
-    public void DefineFunction(string name, TypeNode returnType, List<Parameter> parameters, List<string>? typeParameters = null)
+    public void DefineFunction(
+        string name,
+        TypeNode returnType,
+        List<Parameter> parameters,
+        List<string>? typeParameters = null,
+        List<GenericTypeParameter>? typeParameterSpecs = null)
     {
         var info = new SymbolInfo
         {
             Name = name,
             Kind = SymbolKind.Function,
             TypeParameters = typeParameters != null ? new List<string>(typeParameters) : new List<string>(),
+            TypeParameterSpecs = typeParameterSpecs != null
+                ? typeParameterSpecs.Select(CloneTypeParameter).ToList()
+                : new List<GenericTypeParameter>(),
             Type = new TypeNode
             {
                 Name = name,
@@ -108,6 +117,9 @@ public class SymbolTable
             Name = name,
             Kind = SymbolKind.Struct,
             TypeParameters = new List<string>(structDefinition.TypeParameters),
+            TypeParameterSpecs = structDefinition.TypeParameterSpecs
+                .Select(CloneTypeParameter)
+                .ToList(),
             Type = new TypeNode { Name = structDefinition.Name, NamespacePath = new List<string>(structDefinition.NamespacePath) },
             StructDefinition = structDefinition
         };
@@ -121,6 +133,9 @@ public class SymbolTable
             Name = name,
             Kind = SymbolKind.Enum,
             TypeParameters = new List<string>(enumDefinition.TypeParameters),
+            TypeParameterSpecs = enumDefinition.TypeParameterSpecs
+                .Select(CloneTypeParameter)
+                .ToList(),
             Type = new TypeNode { Name = enumDefinition.Name, NamespacePath = new List<string>(enumDefinition.NamespacePath) },
             EnumDefinition = enumDefinition
         };
@@ -134,6 +149,9 @@ public class SymbolTable
             Name = name,
             Kind = SymbolKind.Union,
             TypeParameters = new List<string>(unionDefinition.TypeParameters),
+            TypeParameterSpecs = unionDefinition.TypeParameterSpecs
+                .Select(CloneTypeParameter)
+                .ToList(),
             Type = new TypeNode { Name = unionDefinition.Name, NamespacePath = new List<string>(unionDefinition.NamespacePath) },
             UnionDefinition = unionDefinition
         };
@@ -238,5 +256,15 @@ public class SymbolTable
             if (scope.ContainsKey(name)) return true;
         }
         return false;
+    }
+
+    private static GenericTypeParameter CloneTypeParameter(GenericTypeParameter parameter)
+    {
+        return new GenericTypeParameter
+        {
+            Name = parameter.Name,
+            Constraint = parameter.Constraint?.Clone(),
+            DefaultType = parameter.DefaultType?.Clone()
+        };
     }
 }
