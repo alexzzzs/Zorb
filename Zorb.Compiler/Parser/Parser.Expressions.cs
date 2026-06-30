@@ -93,6 +93,10 @@ public partial class Parser
                 var typeArguments = ParseTypeArgumentList();
                 expr = ParseCallExpr(expr, calleeLocation, typeArguments);
             }
+            else if (Current.Type == TokenType.Less && IsGenericFunctionValueStart(expr))
+            {
+                ApplyGenericFunctionValueTypeArguments(expr, ParseTypeArgumentList());
+            }
             else
             {
                 break;
@@ -155,6 +159,36 @@ public partial class Parser
         if (!TrySkipTypeArgumentList(ref offset))
             return false;
         return Peek(offset).Type == TokenType.LParen;
+    }
+
+    private bool IsGenericFunctionValueStart(Expr expr)
+    {
+        if (expr is not IdentifierExpr and not FieldExpr)
+            return false;
+
+        var offset = 0;
+        if (!TrySkipTypeArgumentList(ref offset))
+            return false;
+
+        return Peek(offset).Type is TokenType.Comma
+            or TokenType.RParen
+            or TokenType.RBracket
+            or TokenType.RBrace
+            or TokenType.Eof;
+    }
+
+    private static void ApplyGenericFunctionValueTypeArguments(Expr expr, List<TypeNode> typeArguments)
+    {
+        switch (expr)
+        {
+            case IdentifierExpr identifier:
+                identifier.TypeArguments = typeArguments;
+                break;
+
+            case FieldExpr field:
+                field.TypeArguments = typeArguments;
+                break;
+        }
     }
 
     private bool IsStructLiteralStart()

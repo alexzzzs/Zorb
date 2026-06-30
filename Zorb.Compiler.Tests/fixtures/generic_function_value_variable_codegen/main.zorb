@@ -8,5 +8,6 @@ fn use(cb: fn(i64) -> i64) -> i64 {
 
 fn main() -> i64 {
     cb: fn(i64) -> i64 = identity
-    return use(cb)
+    cb_explicit: fn(i64) -> i64 = (identity<i64>)
+    return use(cb) + use(cb_explicit)
 }

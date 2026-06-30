@@ -377,7 +377,7 @@ Meaning:
 - Functions may declare distinct type parameters after the function name.
 - Generic calls may provide explicit type arguments before the argument list, for example `identity<i64>(42)`.
 - When the parameter types determine the instantiation directly, generic calls may omit them, for example `identity(42)`.
-- Generic call arity must exactly match the declaration.
+- Generic call value-argument arity must exactly match the declaration parameter list. Explicit generic type arguments must satisfy the declaration's type-parameter arity after accounting for any trailing defaulted type parameters.
 - Generic function values may appear anywhere an expected concrete function type is available, such as variable initializers, call arguments, returns, and aggregate fields. The compiler infers the concrete instantiation from that expected function type.
 
 ### Attributes

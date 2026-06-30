@@ -274,7 +274,7 @@ public partial class TypeChecker
             typeArguments = inferredArguments;
         }
 
-        if (!TryResolveSpecializedFunctionValueType(symbolInfo, typeArguments, out specializedSource))
+        if (!TryResolveSpecializedFunctionValueType(symbolInfo, typeArguments, sourceExpr, reportErrors: false, out specializedSource))
             return false;
 
         _checkedExpressionTypes[sourceExpr] = specializedSource.Clone();
@@ -328,9 +328,11 @@ public partial class TypeChecker
                 break;
         }
     }
-    private static bool TryResolveSpecializedFunctionValueType(
+    private bool TryResolveSpecializedFunctionValueType(
         SymbolInfo symbolInfo,
         IReadOnlyList<TypeNode> typeArguments,
+        Node context,
+        bool reportErrors,
         out TypeNode specializedType)
     {
         if (symbolInfo.TypeParameters.Count == 0)
@@ -339,13 +341,19 @@ public partial class TypeChecker
             return true;
         }
 
-        if (symbolInfo.TypeParameters.Count != typeArguments.Count)
+        if (!TryResolveGenericTypeArguments(
+                symbolInfo.TypeParameterSpecs,
+                typeArguments,
+                context,
+                $"Function '{symbolInfo.Name}'",
+                out var resolvedTypeArguments,
+                reportErrors))
         {
             specializedType = null!;
             return false;
         }
 
-        var substitutions = BuildTypeSubstitutions(symbolInfo.TypeParameters, typeArguments);
+        var substitutions = BuildTypeSubstitutions(symbolInfo.TypeParameters, resolvedTypeArguments);
         specializedType = new TypeNode
         {
             Name = symbolInfo.Name,
@@ -687,7 +695,8 @@ public partial class TypeChecker
         IReadOnlyList<TypeNode> providedArguments,
         Node context,
         string ownerDescription,
-        out List<TypeNode> resolvedArguments)
+        out List<TypeNode> resolvedArguments,
+        bool reportErrors = true)
     {
         resolvedArguments = new List<TypeNode>();
 
@@ -697,7 +706,8 @@ public partial class TypeChecker
         var requiredCount = GetMinimumGenericArgumentCount(parameters);
         if (providedArguments.Count < requiredCount || providedArguments.Count > parameters.Count)
         {
-            _errors.Error(context, FormatGenericArityMessage(ownerDescription, requiredCount, parameters.Count, providedArguments.Count));
+            if (reportErrors)
+                _errors.Error(context, FormatGenericArityMessage(ownerDescription, requiredCount, parameters.Count, providedArguments.Count));
             return false;
         }
 
@@ -716,12 +726,20 @@ public partial class TypeChecker
             }
             else
             {
-                _errors.Error(context, FormatGenericArityMessage(ownerDescription, requiredCount, parameters.Count, providedArguments.Count));
+                if (reportErrors)
+                    _errors.Error(context, FormatGenericArityMessage(ownerDescription, requiredCount, parameters.Count, providedArguments.Count));
                 return false;
             }
 
-            if (!CheckGenericConstraint(parameter, argument, substitutions, context, ownerDescription))
+            if (reportErrors)
+            {
+                if (!CheckGenericConstraint(parameter, argument, substitutions, context, ownerDescription))
+                    return false;
+            }
+            else if (!TryCheckGenericConstraint(parameter, argument, substitutions, ownerDescription, out _))
+            {
                 return false;
+            }
 
             substitutions[parameter.Name] = argument.Clone();
             resolvedArguments.Add(argument);
