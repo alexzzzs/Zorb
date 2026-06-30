@@ -171,6 +171,7 @@ public partial class Parser
             return false;
 
         return Peek(offset).Type is TokenType.Comma
+            or TokenType.Semicolon
             or TokenType.RParen
             or TokenType.RBracket
             or TokenType.RBrace

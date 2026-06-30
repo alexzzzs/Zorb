@@ -314,7 +314,7 @@ public partial class TypeChecker
         typeArguments = Array.Empty<TypeNode>();
         return false;
     }
-    private static void ApplyFunctionValueTypeArguments(Expr sourceExpr, IReadOnlyList<TypeNode> typeArguments)
+    private static void ApplyFunctionValueTypeArguments(Node sourceExpr, IReadOnlyList<TypeNode> typeArguments)
     {
         var clonedArguments = typeArguments.Select(argument => argument.Clone()).ToList();
         switch (sourceExpr)
@@ -353,6 +353,7 @@ public partial class TypeChecker
             return false;
         }
 
+        ApplyFunctionValueTypeArguments(context, resolvedTypeArguments);
         var substitutions = BuildTypeSubstitutions(symbolInfo.TypeParameters, resolvedTypeArguments);
         specializedType = new TypeNode
         {
@@ -700,8 +701,11 @@ public partial class TypeChecker
     {
         resolvedArguments = new List<TypeNode>();
 
-        foreach (var argument in providedArguments)
-            ValidateTypeReference(argument, context);
+        if (reportErrors)
+        {
+            foreach (var argument in providedArguments)
+                ValidateTypeReference(argument, context);
+        }
 
         var requiredCount = GetMinimumGenericArgumentCount(parameters);
         if (providedArguments.Count < requiredCount || providedArguments.Count > parameters.Count)
