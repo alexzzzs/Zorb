@@ -901,6 +901,9 @@ public partial class TypeChecker
         if (source == null)
             return true;
 
+        if (TrySpecializeGenericFunctionValueForTarget(target, sourceExpr, source, out var specializedSource))
+            source = specializedSource;
+
         if (source.IsErrorUnion && !target.IsErrorUnion)
             return false;
 

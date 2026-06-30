@@ -213,7 +213,7 @@ Notes:
 - Generic structs preserve normal struct layout attributes for each concrete instantiation.
 - Generic tagged unions also monomorphize their generated tag enums per concrete instantiation, so `Result<i64, bool>.Tag.Ok` and `Result<u64, bool>.Tag.Ok` are distinct nominal enum values.
 - Generic constraints are exact-type checks after substituting any earlier resolved type arguments; they do not introduce trait-style capability checking inside the generic body.
-- Generic `extern fn` declarations are not supported.
+- Generic `extern fn` declarations are supported and monomorphize per concrete use, the same as non-extern generic functions.
 
 ### Pointer Types
 
@@ -355,7 +355,7 @@ Meaning:
 - Recognized struct-field attributes are `offset(N)`.
 - `layout(explicit)` requires every field to declare `offset(N)`.
 - `layout(explicit)` currently means byte-precise packed layout; the compiler validates the final field offsets during semantic checking and lowering.
-- Byte-precise layout currently rejects field types that do not have a stable compile-time native layout in the compiler model, such as function types, slices, and error unions.
+- Byte-precise layout supports function values, slices, and error unions using the compiler's native layout model for those lowered representations.
 
 ### Function Declarations
 
@@ -374,12 +374,11 @@ Meaning:
 - Omitted return type means `void`.
 - `extern fn` declares a function without a body.
 - Names may be qualified with dotted paths.
-- Non-extern functions may declare distinct type parameters after the function name.
+- Functions may declare distinct type parameters after the function name.
 - Generic calls may provide explicit type arguments before the argument list, for example `identity<i64>(42)`.
 - When the parameter types determine the instantiation directly, generic calls may omit them, for example `identity(42)`.
 - Generic call arity must exactly match the declaration.
-- Uninstantiated generic function values are not supported.
-- `extern fn` declarations cannot be generic.
+- Generic function values may appear anywhere an expected concrete function type is available, such as variable initializers, call arguments, returns, and aggregate fields. The compiler infers the concrete instantiation from that expected function type.
 
 ### Attributes
 

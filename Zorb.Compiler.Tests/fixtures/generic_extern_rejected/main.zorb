@@ -1,1 +1,5 @@
 extern fn convert<T>(value: T) -> T
+
+fn mirror(value: i64) -> i64 {
+    return convert(value)
+}

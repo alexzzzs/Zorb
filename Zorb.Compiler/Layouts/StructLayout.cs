@@ -215,20 +215,30 @@ public static class StructLayout
 
         if (type.IsFunction)
         {
-            error = "function types are not supported in byte-precise struct layouts";
-            return false;
+            size = 8;
+            alignment = 8;
+            return true;
         }
 
         if (type.IsErrorUnion)
         {
-            error = "error unions are not supported in byte-precise struct layouts";
-            return false;
+            var innerType = type.ErrorInnerType ?? type;
+            if (!TryGetTypeLayout(innerType, resolveStruct, activeStructs, out var valueSize, out var valueAlignment, out error))
+                return false;
+
+            const int errorTagSize = 4;
+            const int errorTagAlignment = 4;
+            var errorTagOffset = AlignUp(valueSize, errorTagAlignment);
+            size = AlignUp(errorTagOffset + errorTagSize, Math.Max(valueAlignment, errorTagAlignment));
+            alignment = Math.Max(valueAlignment, errorTagAlignment);
+            return true;
         }
 
         if (type.IsSlice)
         {
-            error = "slice types are not supported in byte-precise struct layouts";
-            return false;
+            size = 16;
+            alignment = 8;
+            return true;
         }
 
         if (type.Name == "void")

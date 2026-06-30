@@ -1,0 +1,14 @@
+[layout(explicit)]
+struct Carrier {
+    [offset(0)] callback: fn(i64) -> i64,
+    [offset(8)] bytes: []u8,
+    [offset(24)] result: !i64,
+}
+
+fn add_one(value: i64) -> i64 {
+    return value + 1
+}
+
+fn size() -> i64 {
+    return Builtin.sizeof(Carrier)
+}

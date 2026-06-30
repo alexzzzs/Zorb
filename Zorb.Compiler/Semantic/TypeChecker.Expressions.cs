@@ -878,7 +878,16 @@ public partial class TypeChecker
     {
         var resolvedName = ResolveQualifiedName(identifier.Name);
         var info = _symbolTable.Lookup(resolvedName);
-        return info?.Type;
+        if (info == null)
+            return null;
+
+        identifier.Name = resolvedName;
+        return TryResolveSpecializedFunctionValueType(
+            info,
+            identifier.TypeArguments,
+            out var specializedType)
+            ? specializedType
+            : info.Type;
     }
     private static TypeNode? ComputeTypeReferenceExpressionType()
     {
@@ -976,7 +985,20 @@ public partial class TypeChecker
         }
 
         if (TryResolveFieldSymbolType(fieldExpression, reportErrors, out var resolvedFieldType))
-            return resolvedFieldType;
+        {
+            if (fieldExpression.TypeArguments.Count == 0 ||
+                ResolveQualifiedFieldSymbol(fieldExpression) is not ResolvedFieldSymbolInfo resolvedField)
+            {
+                return resolvedFieldType;
+            }
+
+            return TryResolveSpecializedFunctionValueType(
+                resolvedField.SymbolInfo,
+                fieldExpression.TypeArguments,
+                out var specializedType)
+                ? specializedType
+                : resolvedFieldType;
+        }
 
         var targetType = GetExpressionType(fieldExpression.Target, reportErrors);
         if (targetType == null)

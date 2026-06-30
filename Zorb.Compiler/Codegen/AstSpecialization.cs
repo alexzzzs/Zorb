@@ -199,7 +199,13 @@ internal static class AstSpecialization
             case StringExpr text:
                 return CopyNode(text, new StringExpr { Value = text.Value });
             case IdentifierExpr identifier:
-                return CopyNode(identifier, new IdentifierExpr { Name = identifier.Name });
+                return CopyNode(identifier, new IdentifierExpr
+                {
+                    Name = identifier.Name,
+                    TypeArguments = identifier.TypeArguments
+                        .Select(argument => SubstituteTypeParameters(argument, substitutions))
+                        .ToList()
+                });
             case TypeReferenceExpr typeReference:
                 return CopyNode(typeReference, new TypeReferenceExpr
                 {
@@ -237,7 +243,10 @@ internal static class AstSpecialization
                 {
                     Target = CloneExpr(field.Target, substitutions),
                     Field = field.Field,
-                    ResolvedQualifiedName = field.ResolvedQualifiedName
+                    ResolvedQualifiedName = field.ResolvedQualifiedName,
+                    TypeArguments = field.TypeArguments
+                        .Select(argument => SubstituteTypeParameters(argument, substitutions))
+                        .ToList()
                 });
             case IndexExpr index:
                 return CopyNode(index, new IndexExpr

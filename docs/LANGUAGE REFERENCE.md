@@ -423,8 +423,8 @@ Rules:
 - Type arguments are validated like any other type reference.
 - A non-generic function rejects type arguments.
 - Function-pointer calls do not accept type arguments.
-- `extern fn` declarations cannot declare type parameters.
-- Uninstantiated generic functions are not currently first-class function values.
+- `extern fn` declarations may declare type parameters and monomorphize per concrete use.
+- Generic function values may appear in contexts with an expected concrete function type, and the compiler infers the concrete instantiation from that expected type.
 
 ### Extern Functions
 
@@ -509,7 +509,7 @@ offset(N)
 
 `layout(explicit)` requires every field to declare `[offset(N)]`. It uses byte-precise packed layout, and the compiler validates the final field offsets during semantic checking and lowering.
 
-Explicit byte-precise layout rejects field types whose stable native layout is not modeled by the compiler, including function types, slices, error unions, and `void`.
+Explicit byte-precise layout supports function types, slices, and error unions using the compiler's native lowered layout model. `void` remains invalid as a field type.
 
 ### Constant Attribute Arguments
 
