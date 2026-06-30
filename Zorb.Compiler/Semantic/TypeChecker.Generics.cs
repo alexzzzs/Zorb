@@ -155,6 +155,13 @@ public partial class TypeChecker
             return qualifiedSymbol;
         }
 
+        if (call.NamespacePath.Any())
+        {
+            if (reportErrors)
+                _errors.Error(call, $"Call to undeclared function '{fullName}'");
+            return null;
+        }
+
         if (_symbolTable.TryLookup(call.Name, out var bareSymbol))
         {
             if (!CheckVisibility(call.Name))
@@ -729,8 +736,12 @@ public partial class TypeChecker
         if (type.TypeArguments.Count == 0)
             return;
 
-        if (!StructLayout.HasPackedAttribute(structNode) && StructLayout.GetAlignment(structNode.Attributes) is not > 0)
+        if (!StructLayout.HasPackedAttribute(structNode) &&
+            StructLayout.GetAlignment(structNode.Attributes) is not > 0 &&
+            !StructLayout.HasExplicitLayout(structNode))
+        {
             return;
+        }
 
         var concreteStruct = InstantiateStruct(structNode, type);
         if (!StructLayout.TryCompute(concreteStruct, ResolveConcreteStructForLayout, out _, out var layoutError) && layoutError != null)

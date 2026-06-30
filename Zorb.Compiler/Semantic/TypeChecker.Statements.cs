@@ -83,12 +83,18 @@ public partial class TypeChecker
     }
     private FlowOutcome CheckReturnStatement(ReturnNode returnNode)
     {
-        if (returnNode.Value == null)
+        if (_currentFunction == null)
             return FlowOutcome.Returns;
 
+        if (returnNode.Value == null)
+        {
+            if (FunctionRequiresReturn(_currentFunction))
+                _errors.Error(returnNode, $"Function '{_currentFunction.Name}' must return a value of type '{FormatType(_currentFunction.ReturnType)}'.");
+            return FlowOutcome.Returns;
+        }
+
         CheckExpression(returnNode.Value);
-        if (_currentFunction != null)
-            CheckReturnValue(returnNode, _currentFunction.ReturnType);
+        CheckReturnValue(returnNode, _currentFunction.ReturnType);
 
         return FlowOutcome.Returns;
     }

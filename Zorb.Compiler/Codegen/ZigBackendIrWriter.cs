@@ -55,10 +55,10 @@ public sealed partial class ZigBackendIrWriter
     {
         var typeInterner = new TypeInterner(nodes);
         var functions = InstantiateGenericFunctions(nodes);
-        AddEntryShim(functions, addFreestandingEntryShim, addHostedEntryShim);
+        AddEntryShim(functions, target, addFreestandingEntryShim, addHostedEntryShim);
         var globals = nodes.OfType<VariableDeclarationNode>().ToList();
         var globalIds = globals
-            .Select((global, index) => (global.Name, Id: checked((uint)index + 1)))
+            .Select((global, index) => (Name: global.Name, Id: checked((uint)index + 1)))
             .ToDictionary(item => item.Name, item => item.Id, StringComparer.Ordinal);
         var functionIds = functions
             .Select((function, index) => (

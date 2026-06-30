@@ -124,7 +124,10 @@ public sealed partial class ZigBackendIrWriter
                 return (EmitZeroConstant(innerType), loadedError);
             }
 
-            var successValue = LowerExpression(returnNode.Value!, innerType);
+            var successType = GetCheckedType(returnNode.Value!);
+            var successValue = IsScalarInteger(successType) && IsScalarInteger(innerType)
+                ? LowerIntegerOperand(returnNode.Value!, successType, innerType)
+                : LowerExpression(returnNode.Value!, innerType);
             var errorValue = EmitIntegerConstant(0, new TypeNode { Name = "i32" });
             return (successValue, errorValue);
         }
@@ -132,9 +135,9 @@ public sealed partial class ZigBackendIrWriter
         {
             var valueType = _typeChecker.GetCheckedExpressionType(returnNode.Value!)
                 ?? _function.ReturnType;
-            var value = LowerExpression(returnNode.Value!, _function.ReturnType);
-            if (IsScalarInteger(valueType) && IsScalarInteger(_function.ReturnType))
-                value = CoerceInteger(value, valueType, _function.ReturnType);
+            var value = IsScalarInteger(valueType) && IsScalarInteger(_function.ReturnType)
+                ? LowerIntegerOperand(returnNode.Value!, valueType, _function.ReturnType)
+                : LowerExpression(returnNode.Value!, _function.ReturnType);
             Terminate(new BackendTerminator { Op = "return_value", Value = value });
         }
         private void LowerExpressionStatement(ExpressionStatement expressionStatement)
@@ -151,14 +154,20 @@ public sealed partial class ZigBackendIrWriter
             if (variable.Value == null)
                 return;
 
-            var value = LowerExpression(variable.Value, variable.TypeName);
+            var valueType = GetCheckedType(variable.Value);
+            var value = IsScalarInteger(valueType) && IsScalarInteger(variable.TypeName)
+                ? LowerIntegerOperand(variable.Value, valueType, variable.TypeName)
+                : LowerExpression(variable.Value, variable.TypeName);
             _ = EmitInstruction("store", variable.TypeName, lhs: address, rhs: value);
         }
         private void LowerAssignmentStatement(AssignStmt assignment)
         {
             var targetType = GetCheckedType(assignment.Target);
             var address = LowerAddress(assignment.Target);
-            var value = LowerExpression(assignment.Value, targetType);
+            var valueType = GetCheckedType(assignment.Value);
+            var value = IsScalarInteger(valueType) && IsScalarInteger(targetType)
+                ? LowerIntegerOperand(assignment.Value, valueType, targetType)
+                : LowerExpression(assignment.Value, targetType);
             _ = EmitInstruction("store", targetType, lhs: address, rhs: value);
         }
         private void LowerLoopControlStatement(Statement statement, bool isBreak)

@@ -1003,9 +1003,21 @@ public partial class TypeChecker
             return false;
         }
 
-        assignable = target.Name == source.Name &&
+        assignable = target.IsPointer == source.IsPointer &&
+            target.PointerLevel == source.PointerLevel &&
+            target.IsErrorUnion == source.IsErrorUnion &&
+            target.IsFunction == source.IsFunction &&
+            target.ArraySize == source.ArraySize &&
+            target.Name == source.Name &&
             target.NamespacePath.SequenceEqual(source.NamespacePath) &&
             TypeArgumentListsMatch(target.TypeArguments, source.TypeArguments);
+
+        if (assignable && target.IsErrorUnion)
+            assignable = TypeHelpers.SameType(target.ErrorInnerType, source.ErrorInnerType);
+
+        if (assignable && target.IsFunction)
+            assignable = TypeHelpers.SameType(target.ReturnType, source.ReturnType) &&
+                TypeArgumentListsMatch(target.ParamTypes, source.ParamTypes);
         return true;
     }
     private static bool CanAddVolatileQualifier(TypeNode target, TypeNode source)

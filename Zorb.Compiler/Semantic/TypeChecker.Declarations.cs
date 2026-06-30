@@ -356,7 +356,18 @@ public partial class TypeChecker
             return true;
         }
 
-        var source = File.ReadAllText(fullPath);
+        string source;
+        try
+        {
+            source = File.ReadAllText(fullPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException or NotSupportedException)
+        {
+            _errors.Error($"Failed to read import '{fullPath}': {ex.Message}", 0, 0, fullPath);
+            importedNodes = Array.Empty<Node>();
+            return false;
+        }
+
         List<Token> tokens;
         try
         {

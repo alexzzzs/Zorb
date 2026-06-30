@@ -15,6 +15,7 @@ public sealed partial class ZigBackendIrWriter
 {
     private static void AddEntryShim(
         List<FunctionDecl> functions,
+        ZigBackendTarget target,
         bool addFreestandingEntryShim,
         bool addHostedEntryShim)
     {
@@ -25,6 +26,7 @@ public sealed partial class ZigBackendIrWriter
 
         if (addFreestandingEntryShim && start == null && main != null)
         {
+            var exitSyscallNumber = GetFreestandingExitSyscallNumber(target);
             var mainType = FunctionType(main);
             var callMain = new CallExpr
             {
@@ -35,7 +37,7 @@ public sealed partial class ZigBackendIrWriter
             Expr exitCode = main.ReturnType.Name == "void"
                 ? new NumberExpr { Value = 0 }
                 : callMain;
-            var exitNumber = new NumberExpr { Value = 60 };
+            var exitNumber = new NumberExpr { Value = exitSyscallNumber };
             functions.Add(new FunctionDecl
             {
                 Name = "_start",
@@ -134,7 +136,7 @@ public sealed partial class ZigBackendIrWriter
     {
         var definitions = CollectGenericFunctionDefinitions(nodes);
         var functions = CollectConcreteFunctions(nodes);
-        var pending = new Queue<CallExpr>(CollectCalls(nodes));
+        var pending = new Queue<CallExpr>(CollectCalls(functions));
         var generated = new HashSet<string>(StringComparer.Ordinal);
         while (pending.TryDequeue(out var call))
         {
@@ -187,6 +189,7 @@ public sealed partial class ZigBackendIrWriter
         var (_, shortName) = QualifiedNames.SplitQualifiedName(instanceName);
         instance.Name = shortName;
         instance.TypeParameters.Clear();
+        instance.TypeParameterSpecs.Clear();
         return instance;
     }
     private static void EnqueueNestedCalls(Queue<CallExpr> pending, FunctionDecl instance)
@@ -202,16 +205,41 @@ public sealed partial class ZigBackendIrWriter
     }
     private static string FormatTypeKey(TypeNode type)
     {
-        var key = FormatType(type)
-            .Replace(".", "_", StringComparison.Ordinal)
-            .Replace("*", "ptr", StringComparison.Ordinal);
+        if (type.IsFunction)
+        {
+            var parameters = string.Join("_", type.ParamTypes.Select(FormatTypeKey));
+            var returnType = FormatTypeKey(type.ReturnType ?? new TypeNode { Name = "void" });
+            return $"fn_{parameters}_ret_{returnType}";
+        }
+
+        if (type.IsErrorUnion)
+        {
+            var innerType = FormatTypeKey(type.ErrorInnerType ?? new TypeNode { Name = type.Name });
+            return $"err_{innerType}";
+        }
+
+        var key = QualifiedNames.GetFullName(type.NamespacePath, type.Name)
+            .Replace(".", "_", StringComparison.Ordinal);
         if (type.TypeArguments.Count > 0)
             key += "_" + string.Join("_", type.TypeArguments.Select(FormatTypeKey));
         if (type.IsSlice)
             key = "slice_" + key;
         if (type.ArraySize is int length)
             key = $"array{length}_{key}";
-        return key;
+        if (type.IsPointer)
+            key = $"{new string('p', Math.Max(type.PointerLevel, 1))}_{key}";
+        return type.IsVolatile ? $"volatile_{key}" : key;
+    }
+
+    private static long GetFreestandingExitSyscallNumber(ZigBackendTarget target)
+    {
+        return target.Triple switch
+        {
+            "x86_64-pc-linux-gnu" => 60,
+            "aarch64-unknown-linux-gnu" => 93,
+            _ => throw new ZorbCompilerException(
+                $"Freestanding entry shim does not support target triple '{target.Triple}'.")
+        };
     }
     private static IEnumerable<CallExpr> CollectCalls(IEnumerable<Node> roots)
     {

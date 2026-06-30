@@ -177,6 +177,9 @@ public partial class TypeChecker
 
         CheckExpression(indexExpression.Target);
         CheckExpression(indexExpression.Index);
+        var indexType = GetExpressionType(indexExpression.Index, reportErrors: false);
+        if (indexType != null && !IsIntegerScalarType(indexType))
+            _errors.Error(indexExpression.Index, $"Index expression must have an integer type, got '{FormatType(indexType)}'.");
         var indexTargetType = GetExpressionType(indexExpression.Target, reportErrors: false);
         if (indexTargetType != null && indexTargetType.ArraySize == null && !indexTargetType.IsPointer && !indexTargetType.IsSlice)
             _errors.Error(indexExpression.Target, $"Cannot index expression of type '{FormatType(indexTargetType)}'.");
@@ -289,12 +292,20 @@ public partial class TypeChecker
     {
         CheckExpression(unaryExpression.Operand);
         var unaryOperandType = GetExpressionType(unaryExpression.Operand, reportErrors: false);
-        if (unaryExpression.Operator == "!" && unaryOperandType != null && !IsBoolType(unaryOperandType))
+        if (unaryOperandType == null)
+            return;
+
+        if (unaryExpression.Operator == "!" && !IsBoolType(unaryOperandType))
             _errors.Error(unaryExpression, $"Operator '!' requires a bool operand, got '{FormatType(unaryOperandType)}'.");
+        else if (unaryExpression.Operator == "-" && !IsNumericType(unaryOperandType))
+            _errors.Error(unaryExpression, $"Operator '-' requires a numeric operand, got '{FormatType(unaryOperandType)}'.");
+        else if (unaryExpression.Operator == "&" && !IsAssignableExpression(unaryExpression.Operand))
+            _errors.Error(unaryExpression, "Operator '&' requires an assignable operand.");
     }
     private void CheckCastExpression(CastExpr castExpression)
     {
         CheckExpression(castExpression.Expr);
+        ValidateTypeReference(castExpression.TargetType, castExpression);
         var sourceType = GetExpressionType(castExpression.Expr);
         if (sourceType != null && sourceType.IsErrorUnion && !castExpression.TargetType.IsPointer && !castExpression.TargetType.IsErrorUnion)
             _errors.Error(castExpression, "Cannot cast Error Union to non-pointer type. Use .value field to unwrap.");
@@ -921,41 +932,33 @@ public partial class TypeChecker
     }
     private static TypeNode CreateIndexedElementType(TypeNode targetType)
     {
-        return new TypeNode
-        {
-            Name = targetType.Name,
-            NamespacePath = new List<string>(targetType.NamespacePath),
-            IsVolatile = targetType.IsVolatile
-        };
+        var elementType = targetType.Clone();
+        elementType.ArraySize = null;
+        elementType.ArraySizeExpr = null;
+        return elementType;
     }
     private static TypeNode CreateSliceElementType(TypeNode targetType)
     {
         var elementType = targetType.Clone();
         elementType.IsSlice = false;
         elementType.ArraySize = null;
+        elementType.ArraySizeExpr = null;
         return elementType;
     }
     private static TypeNode CreatePointedElementType(TypeNode targetType)
     {
+        var elementType = targetType.Clone();
         var level = targetType.PointerLevel > 0 ? targetType.PointerLevel : 1;
         if (level > 1)
         {
-            return new TypeNode
-            {
-                Name = targetType.Name,
-                NamespacePath = new List<string>(targetType.NamespacePath),
-                IsVolatile = targetType.IsVolatile,
-                IsPointer = true,
-                PointerLevel = level - 1
-            };
+            elementType.IsPointer = true;
+            elementType.PointerLevel = level - 1;
+            return elementType;
         }
 
-        return new TypeNode
-        {
-            Name = targetType.Name,
-            NamespacePath = new List<string>(targetType.NamespacePath),
-            IsVolatile = targetType.IsVolatile
-        };
+        elementType.IsPointer = false;
+        elementType.PointerLevel = 0;
+        return elementType;
     }
     private TypeNode? ComputeFieldExpressionType(FieldExpr fieldExpression, bool reportErrors)
     {

@@ -330,7 +330,11 @@ public sealed partial class ZigBackendIrWriter
             var sourceIsPointer = IsPointerLike(sourceType);
             var targetIsPointer = IsPointerLike(targetType);
             if (sourceIsPointer && targetIsPointer)
-                return source;
+            {
+                var integerType = new TypeNode { Name = "i64" };
+                var asInteger = EmitCastInstruction(source, integerType, "pointer_to_integer");
+                return EmitCastInstruction(asInteger, targetType, "integer_to_pointer");
+            }
 
             if (sourceIsPointer || targetIsPointer)
                 return LowerPointerOrIntegerCast(source, sourceType, targetType);
@@ -393,8 +397,16 @@ public sealed partial class ZigBackendIrWriter
         }
         private bool IsPointerArithmetic(BinaryExpr binary, TypeNode leftType, TypeNode rightType)
         {
-            return binary.Operator is "+" or "-" &&
-                (leftType.IsPointer || rightType.IsPointer);
+            if (binary.Operator == "+")
+            {
+                return (leftType.IsPointer && IsScalarInteger(rightType)) ||
+                    (rightType.IsPointer && IsScalarInteger(leftType));
+            }
+
+            if (binary.Operator == "-")
+                return leftType.IsPointer && IsScalarInteger(rightType);
+
+            return false;
         }
         private TypeNode GetBinaryOperandType(
             BinaryExpr binary,
@@ -599,15 +611,14 @@ public sealed partial class ZigBackendIrWriter
             if (TryLowerContextualArrayCoercion(argument, argumentType, parameterType, out var contextualValue))
                 return contextualValue;
 
-            var value = LowerExpression(argument, parameterType);
             if (parameterType != null &&
                 IsScalarInteger(argumentType) &&
                 IsScalarInteger(parameterType))
             {
-                value = CoerceInteger(value, argumentType, parameterType);
+                return LowerIntegerOperand(argument, argumentType, parameterType);
             }
 
-            return value;
+            return LowerExpression(argument, parameterType);
         }
         private uint LowerLogical(BinaryExpr binary)
         {
@@ -700,17 +711,18 @@ public sealed partial class ZigBackendIrWriter
             var pointer = EmitExtractValue(slice, AddressOf(elementType), 0);
             var length = EmitExtractValue(slice, new TypeNode { Name = "i64" }, 1);
             var indexType = GetCheckedType(expression.Index);
-            var zero = EmitIntegerConstant(0, indexType);
+            var normalizedIndex = CoerceInteger(index, indexType, new TypeNode { Name = "i64" });
+            var zero = EmitIntegerConstant(0, new TypeNode { Name = "i64" });
             uint failed;
             if (IsSignedScalar(indexType))
             {
-                var negative = EmitComparison("signed_less", index, zero);
-                var pastEnd = EmitComparison("unsigned_greater_equal", index, length);
+                var negative = EmitComparison("signed_less", normalizedIndex, zero);
+                var pastEnd = EmitComparison("unsigned_greater_equal", normalizedIndex, length);
                 failed = EmitBinary("bit_or", negative, pastEnd, new TypeNode { Name = "bool" });
             }
             else
             {
-                failed = EmitComparison("unsigned_greater_equal", index, length);
+                failed = EmitComparison("unsigned_greater_equal", normalizedIndex, length);
             }
 
             var failureBlock = CreateBlock("slice.oob");
@@ -729,7 +741,7 @@ public sealed partial class ZigBackendIrWriter
             Terminate(new BackendTerminator { Op = "unreachable" });
 
             _currentBlock = successBlock;
-            return EmitIndexAddress(pointer, index, elementType, elementType);
+            return EmitIndexAddress(pointer, normalizedIndex, elementType, elementType);
         }
         private uint LowerAddress(Expr expression)
         {
@@ -762,7 +774,10 @@ public sealed partial class ZigBackendIrWriter
         {
             var targetType = GetCheckedType(index.Target);
             var elementType = GetCheckedType(index);
-            var indexValue = LowerExpression(index.Index, new TypeNode { Name = "i64" });
+            var indexType = GetCheckedType(index.Index);
+            var indexValue = IsScalarInteger(indexType)
+                ? LowerIntegerOperand(index.Index, indexType, new TypeNode { Name = "i64" })
+                : LowerExpression(index.Index, new TypeNode { Name = "i64" });
             if (targetType.ArraySize != null)
             {
                 return EmitIndexAddress(
