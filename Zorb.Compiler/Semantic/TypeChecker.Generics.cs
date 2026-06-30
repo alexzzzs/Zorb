@@ -235,6 +235,139 @@ public partial class TypeChecker
             parameters,
             returnType);
     }
+    private bool TrySpecializeGenericFunctionValueForTarget(
+        TypeNode target,
+        Expr? sourceExpr,
+        TypeNode source,
+        out TypeNode specializedSource)
+    {
+        specializedSource = source;
+        if (!target.IsFunction || sourceExpr == null || !source.IsFunction)
+            return false;
+
+        if (!TryResolveGenericFunctionValueSourceInfo(sourceExpr, out var symbolInfo, out var typeArguments))
+            return false;
+
+        if (symbolInfo.TypeParameters.Count == 0)
+            return false;
+
+        if (typeArguments.Count == 0)
+        {
+            var typeParameterNames = new HashSet<string>(symbolInfo.TypeParameters, StringComparer.Ordinal);
+            var inferredByName = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+            if (!TryInferTypeArgumentsFromTypes(symbolInfo.GetCallableFunctionType(), target, typeParameterNames, inferredByName))
+                return false;
+
+            if (!TryResolveGenericTypeArgumentsFromInference(
+                    symbolInfo.TypeParameterSpecs,
+                    inferredByName,
+                    sourceExpr,
+                    $"generic function '{symbolInfo.Name}'",
+                    out var inferredArguments,
+                    out _)
+                || inferredArguments == null)
+            {
+                return false;
+            }
+
+            ApplyFunctionValueTypeArguments(sourceExpr, inferredArguments);
+            typeArguments = inferredArguments;
+        }
+
+        if (!TryResolveSpecializedFunctionValueType(symbolInfo, typeArguments, sourceExpr, reportErrors: false, out specializedSource))
+            return false;
+
+        _checkedExpressionTypes[sourceExpr] = specializedSource.Clone();
+        return true;
+    }
+    private bool TryResolveGenericFunctionValueSourceInfo(
+        Expr sourceExpr,
+        out SymbolInfo symbolInfo,
+        out IReadOnlyList<TypeNode> typeArguments)
+    {
+        switch (sourceExpr)
+        {
+            case IdentifierExpr identifier:
+                identifier.Name = ResolveQualifiedName(identifier.Name);
+                if (_symbolTable.TryLookup(identifier.Name, out var identifierSymbol) &&
+                    identifierSymbol?.Kind == SymbolKind.Function)
+                {
+                    symbolInfo = identifierSymbol;
+                    typeArguments = identifier.TypeArguments;
+                    return true;
+                }
+
+                break;
+
+            case FieldExpr field:
+                if (ResolveQualifiedFieldSymbol(field) is { SymbolInfo.Kind: SymbolKind.Function } resolvedField)
+                {
+                    symbolInfo = resolvedField.SymbolInfo;
+                    typeArguments = field.TypeArguments;
+                    return true;
+                }
+
+                break;
+        }
+
+        symbolInfo = null!;
+        typeArguments = Array.Empty<TypeNode>();
+        return false;
+    }
+    private static void ApplyFunctionValueTypeArguments(Node sourceExpr, IReadOnlyList<TypeNode> typeArguments)
+    {
+        var clonedArguments = typeArguments.Select(argument => argument.Clone()).ToList();
+        switch (sourceExpr)
+        {
+            case IdentifierExpr identifier:
+                identifier.TypeArguments = clonedArguments;
+                break;
+
+            case FieldExpr field:
+                field.TypeArguments = clonedArguments;
+                break;
+        }
+    }
+    private bool TryResolveSpecializedFunctionValueType(
+        SymbolInfo symbolInfo,
+        IReadOnlyList<TypeNode> typeArguments,
+        Node context,
+        bool reportErrors,
+        out TypeNode specializedType)
+    {
+        if (symbolInfo.TypeParameters.Count == 0)
+        {
+            specializedType = symbolInfo.GetCallableFunctionType();
+            return true;
+        }
+
+        if (!TryResolveGenericTypeArguments(
+                symbolInfo.TypeParameterSpecs,
+                typeArguments,
+                context,
+                $"Function '{symbolInfo.Name}'",
+                out var resolvedTypeArguments,
+                reportErrors))
+        {
+            specializedType = null!;
+            return false;
+        }
+
+        ApplyFunctionValueTypeArguments(context, resolvedTypeArguments);
+        var substitutions = BuildTypeSubstitutions(symbolInfo.TypeParameters, resolvedTypeArguments);
+        specializedType = new TypeNode
+        {
+            Name = symbolInfo.Name,
+            IsFunction = true,
+            ReturnType = symbolInfo.GetCallableReturnType() is TypeNode returnType
+                ? SubstituteTypeParameters(returnType, substitutions)
+                : null,
+            ParamTypes = symbolInfo.GetCallableParameters()
+                .Select(parameter => SubstituteTypeParameters(parameter.TypeName, substitutions))
+                .ToList()
+        };
+        return true;
+    }
     private bool TryInferCallTypeArguments(
         SymbolInfo symbolInfo,
         CallExpr call,
@@ -563,17 +696,22 @@ public partial class TypeChecker
         IReadOnlyList<TypeNode> providedArguments,
         Node context,
         string ownerDescription,
-        out List<TypeNode> resolvedArguments)
+        out List<TypeNode> resolvedArguments,
+        bool reportErrors = true)
     {
         resolvedArguments = new List<TypeNode>();
 
-        foreach (var argument in providedArguments)
-            ValidateTypeReference(argument, context);
+        if (reportErrors)
+        {
+            foreach (var argument in providedArguments)
+                ValidateTypeReference(argument, context);
+        }
 
         var requiredCount = GetMinimumGenericArgumentCount(parameters);
         if (providedArguments.Count < requiredCount || providedArguments.Count > parameters.Count)
         {
-            _errors.Error(context, FormatGenericArityMessage(ownerDescription, requiredCount, parameters.Count, providedArguments.Count));
+            if (reportErrors)
+                _errors.Error(context, FormatGenericArityMessage(ownerDescription, requiredCount, parameters.Count, providedArguments.Count));
             return false;
         }
 
@@ -592,12 +730,20 @@ public partial class TypeChecker
             }
             else
             {
-                _errors.Error(context, FormatGenericArityMessage(ownerDescription, requiredCount, parameters.Count, providedArguments.Count));
+                if (reportErrors)
+                    _errors.Error(context, FormatGenericArityMessage(ownerDescription, requiredCount, parameters.Count, providedArguments.Count));
                 return false;
             }
 
-            if (!CheckGenericConstraint(parameter, argument, substitutions, context, ownerDescription))
+            if (reportErrors)
+            {
+                if (!CheckGenericConstraint(parameter, argument, substitutions, context, ownerDescription))
+                    return false;
+            }
+            else if (!TryCheckGenericConstraint(parameter, argument, substitutions, ownerDescription, out _))
+            {
                 return false;
+            }
 
             substitutions[parameter.Name] = argument.Clone();
             resolvedArguments.Add(argument);

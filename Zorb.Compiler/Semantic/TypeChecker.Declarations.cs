@@ -248,8 +248,6 @@ public partial class TypeChecker
     private void ValidateFunctionDeclaration(FunctionDecl functionDecl)
     {
         ResolveAlignmentAttribute(functionDecl.Attributes, functionDecl.AlignExpr, functionDecl, "Function Alignment");
-        if (functionDecl.IsExtern && functionDecl.TypeParameters.Count > 0)
-            _errors.Error(functionDecl, $"Extern function '{QualifiedNames.GetFullName(functionDecl.NamespacePath, functionDecl.Name)}' cannot declare type parameters.");
         ValidateTypeParameterDeclarations(functionDecl.TypeParameterSpecs, functionDecl, $"Function '{QualifiedNames.GetFullName(functionDecl.NamespacePath, functionDecl.Name)}'");
 
         PushTypeParameterScope(functionDecl.TypeParameters);

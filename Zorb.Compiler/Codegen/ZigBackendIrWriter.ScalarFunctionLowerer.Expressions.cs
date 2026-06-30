@@ -134,7 +134,7 @@ public sealed partial class ZigBackendIrWriter
         {
             var type = GetCheckedType(identifier);
             if (type.IsFunction &&
-                _functionIds.TryGetValue(identifier.Name, out var functionId))
+                _functionIds.TryGetValue(ResolveFunctionValueLoweringName(identifier.Name, identifier.TypeArguments), out var functionId))
             {
                 return EmitFunctionAddress(functionId, type);
             }
@@ -244,7 +244,7 @@ public sealed partial class ZigBackendIrWriter
             var fieldType = GetCheckedType(field);
             if (fieldType.IsFunction &&
                 field.ResolvedQualifiedName is string resolvedFunction &&
-                _functionIds.TryGetValue(resolvedFunction, out var resolvedFunctionId))
+                _functionIds.TryGetValue(ResolveFunctionValueLoweringName(resolvedFunction, field.TypeArguments), out var resolvedFunctionId))
             {
                 return EmitFunctionAddress(resolvedFunctionId, fieldType);
             }
@@ -588,6 +588,12 @@ public sealed partial class ZigBackendIrWriter
                 Callee = functionId
             });
             return functionValue;
+        }
+        private string ResolveFunctionValueLoweringName(string resolvedName, IReadOnlyList<TypeNode> typeArguments)
+        {
+            return typeArguments.Count > 0
+                ? GenericFunctionName(resolvedName, typeArguments)
+                : resolvedName;
         }
         private List<uint> LowerCallArguments(CallExpr call, TypeNode functionType)
         {

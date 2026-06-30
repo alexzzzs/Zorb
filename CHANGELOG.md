@@ -40,6 +40,9 @@ All notable changes to this project will be documented in this file.
   `std.async.send_exact(...)` and `std.async.recv_exact(...)` helpers.
 - Additional async runtime coverage for timeout expiry, helper-based socket
   ping-pong, and waiter fairness beyond the per-poll 64-fiber batch size.
+- Generic `extern fn` support, generic function values inferred from expected
+  concrete function types, and explicit-layout support for function, slice,
+  and error-union fields.
 
 ### Changed
 
@@ -49,6 +52,8 @@ All notable changes to this project will be documented in this file.
   instead of only in function-call argument position.
 - Generic calls no longer require explicit type arguments when the concrete
   instantiation can be inferred directly from the argument types.
+- Generic function values now infer their concrete instantiation from the
+  expected function type in assignability contexts.
 - `match` now acts as the general ordered-case branching form for scalars and
   enums, while retaining tagged-union payload binding as its richer extension.
 - `std.net`, `std.os`, and `std.task` now report `UnsupportedPlatform`

@@ -815,7 +815,7 @@ public partial class TypeChecker
                 return ComputeStringExpressionType();
 
             case IdentifierExpr ident:
-                return ComputeIdentifierExpressionType(ident);
+                return ComputeIdentifierExpressionType(ident, reportErrors);
 
             case TypeReferenceExpr:
                 return ComputeTypeReferenceExpressionType();
@@ -874,11 +874,25 @@ public partial class TypeChecker
     {
         return new TypeNode { Name = "string" };
     }
-    private TypeNode? ComputeIdentifierExpressionType(IdentifierExpr identifier)
+    private TypeNode? ComputeIdentifierExpressionType(IdentifierExpr identifier, bool reportErrors)
     {
         var resolvedName = ResolveQualifiedName(identifier.Name);
         var info = _symbolTable.Lookup(resolvedName);
-        return info?.Type;
+        if (info == null)
+            return null;
+
+        identifier.Name = resolvedName;
+        if (identifier.TypeArguments.Count == 0)
+            return info.Type;
+
+        return TryResolveSpecializedFunctionValueType(
+            info,
+            identifier.TypeArguments,
+            identifier,
+            reportErrors,
+            out var specializedType)
+            ? specializedType
+            : info.Type;
     }
     private static TypeNode? ComputeTypeReferenceExpressionType()
     {
@@ -976,7 +990,24 @@ public partial class TypeChecker
         }
 
         if (TryResolveFieldSymbolType(fieldExpression, reportErrors, out var resolvedFieldType))
-            return resolvedFieldType;
+        {
+            if (fieldExpression.TypeArguments.Count == 0)
+                return resolvedFieldType;
+
+            if (ResolveQualifiedFieldSymbol(fieldExpression) is not ResolvedFieldSymbolInfo resolvedField)
+            {
+                return resolvedFieldType;
+            }
+
+            return TryResolveSpecializedFunctionValueType(
+                resolvedField.SymbolInfo,
+                fieldExpression.TypeArguments,
+                fieldExpression,
+                reportErrors,
+                out var specializedType)
+                ? specializedType
+                : resolvedFieldType;
+        }
 
         var targetType = GetExpressionType(fieldExpression.Target, reportErrors);
         if (targetType == null)

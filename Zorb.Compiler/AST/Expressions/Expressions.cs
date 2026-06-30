@@ -25,6 +25,7 @@ public class NumberExpr : Expr
 public class IdentifierExpr : Expr
 {
     public string Name { get; set; } = null!;
+    public List<TypeNode> TypeArguments { get; set; } = new();
 }
 
 public class TypeReferenceExpr : Expr
@@ -79,6 +80,7 @@ public class FieldExpr : Expr
     public Expr Target { get; set; } = null!;
     public string Field { get; set; } = null!;
     public string? ResolvedQualifiedName { get; set; }
+    public List<TypeNode> TypeArguments { get; set; } = new();
 }
 
 public class CastExpr : Expr

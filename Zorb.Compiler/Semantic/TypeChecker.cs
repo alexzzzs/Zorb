@@ -227,12 +227,20 @@ public partial class TypeChecker
 
             case FieldExpr field:
                 field.Target = NormalizeAliasReferences(field.Target);
+                foreach (var typeArgument in field.TypeArguments)
+                    NormalizeTypeReferenceInPlace(typeArgument);
                 if (QualifiedNames.TryGetQualifiedName(field) is string qualifiedName &&
                     TryResolveAliasQualifiedName(qualifiedName, out var resolvedQualifiedName))
                     field.ResolvedQualifiedName = resolvedQualifiedName;
                 else
                     field.ResolvedQualifiedName = null;
                 return field;
+
+            case IdentifierExpr identifier:
+                foreach (var typeArgument in identifier.TypeArguments)
+                    NormalizeTypeReferenceInPlace(typeArgument);
+                identifier.Name = ResolveQualifiedName(identifier.Name);
+                return identifier;
 
             case UnaryExpr unary:
                 unary.Operand = NormalizeAliasReferences(unary.Operand);
@@ -266,11 +274,6 @@ public partial class TypeChecker
                 for (int i = 0; i < catchExpr.CatchBody.Count; i++)
                     catchExpr.CatchBody[i] = NormalizeAliasReferences(catchExpr.CatchBody[i]);
                 return catchExpr;
-
-            case IdentifierExpr ident:
-                ident.Name = ResolveQualifiedName(ident.Name);
-                return ident;
-
             default:
                 return expr;
         }

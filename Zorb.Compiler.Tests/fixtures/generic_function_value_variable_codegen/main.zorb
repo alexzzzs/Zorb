@@ -1,0 +1,13 @@
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn use(cb: fn(i64) -> i64) -> i64 {
+    return cb(41)
+}
+
+fn main() -> i64 {
+    cb: fn(i64) -> i64 = identity
+    cb_explicit: fn(i64) -> i64 = (identity<i64>)
+    return use(cb) + use(cb_explicit)
+}

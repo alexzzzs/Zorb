@@ -111,8 +111,13 @@ public sealed partial class ZigBackendIrWriter
                 => new BackendConstant { Kind = "string", Text = text.Value },
             CastExpr { Expr: NumberExpr number }
                 => new BackendConstant { Kind = "pointer_integer", Integer = number.Value },
-            IdentifierExpr identifier when functionIds.TryGetValue(identifier.Name, out var functionId)
+            IdentifierExpr identifier when functionIds.TryGetValue(
+                ResolveFunctionValueName(identifier.Name, identifier.TypeArguments),
+                out var functionId)
                 => new BackendConstant { Kind = "function", Function = functionId },
+            FieldExpr field when field.ResolvedQualifiedName is string resolvedFunction &&
+                functionIds.TryGetValue(ResolveFunctionValueName(resolvedFunction, field.TypeArguments), out var resolvedFunctionId)
+                => new BackendConstant { Kind = "function", Function = resolvedFunctionId },
             ArrayLiteralExpr array
                 => new BackendConstant
                 {
@@ -124,5 +129,11 @@ public sealed partial class ZigBackendIrWriter
             _ => throw new ZorbCompilerException(
                 $"Zig backend global initializer lowering does not support {expression.GetType().Name}.")
         };
+    }
+    private static string ResolveFunctionValueName(string resolvedName, IReadOnlyList<TypeNode> typeArguments)
+    {
+        return typeArguments.Count > 0
+            ? GenericFunctionName(resolvedName, typeArguments)
+            : resolvedName;
     }
 }

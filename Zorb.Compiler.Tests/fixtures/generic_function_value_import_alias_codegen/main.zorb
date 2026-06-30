@@ -1,0 +1,11 @@
+import "lib.zorb" as util
+
+fn use(cb: fn(i64) -> i64) -> i64 {
+    return cb(41)
+}
+
+fn main() -> i64 {
+    left: i64 = use(util.identity)
+    right: i64 = use((util.identity<i64>))
+    return left + right
+}
