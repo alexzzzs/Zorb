@@ -20,6 +20,9 @@ All notable changes to this project will be documented in this file.
   for a focused AArch64 lane.
 - Ubuntu CI coverage for the AArch64 Linux lane using `aarch64-linux-gnu-gcc`
   and `qemu-aarch64`.
+- Representative frontend runtime-fixture coverage for both
+  `freestanding-linux-aarch64` and `host-linux-aarch64`, reusing Linux
+  expectations by default while still allowing target-specific overrides.
 - Generic function type-argument inference for direct, obvious call sites,
   including imported generic declarations and parameter shapes involving
   pointers, slices, arrays, function types, and error unions.

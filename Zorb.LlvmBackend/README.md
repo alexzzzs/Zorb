@@ -68,5 +68,4 @@ Hosted Windows GNU/MinGW output is not currently supported.
 
 This backend is intended to be feature-complete for the implemented Zorb
 language subset on the supported targets above. That does not imply hosted
-Windows GNU/MinGW support, bare-metal `run` support, or AArch64 runtime test
-coverage in the frontend fixture suite.
+Windows GNU/MinGW support or bare-metal `run` support.
