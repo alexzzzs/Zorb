@@ -203,8 +203,7 @@ export struct Box<T> {
 
     private static void RunResolvedCallMetadataTests()
     {
-        var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
-        var fixtureRoot = Path.Combine(testProjectRoot, "fixtures");
+        var fixtureRoot = GetFixtureRoot();
 
         AssertResolvedCallMetadata(
             Path.Combine(fixtureRoot, "import_alias_function_value"),

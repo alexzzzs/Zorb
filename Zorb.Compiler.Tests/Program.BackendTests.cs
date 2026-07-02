@@ -11,27 +11,15 @@ internal static partial class Program
 {
     private static void RunLlvmWriterStateResetTests(string fixtureRoot)
     {
-        var fixtureDir = Path.Combine(fixtureRoot, "runtime_hello_world");
-        var mainPath = Path.Combine(fixtureDir, "main.zorb");
-        var parseResult = ParseFile(mainPath);
-        AssertNoErrors(parseResult.Errors);
-
-        var checker = new TypeChecker();
-        checker.Check(parseResult.EntryNodes, fixtureDir, parseResult.Files);
-        AssertNoErrors(checker.Errors.Errors);
-
-        var start = parseResult.EntryNodes
+        var fixture = LoadCheckedFixture(Path.Combine(fixtureRoot, "runtime_hello_world"));
+        var start = fixture.BackendNodes
             .OfType<FunctionDecl>()
             .Single(function => string.Equals(function.Name, "_start", StringComparison.Ordinal));
-        var backendNodes = parseResult.Files.Values
-            .SelectMany(nodes => nodes)
-            .Distinct<Node>(ReferenceEqualityComparer.Instance)
-            .ToList();
-        var writer = new ZigBackendIrWriter(checker);
+        var writer = new ZigBackendIrWriter(fixture.Checker);
         var target = new ZigBackendTarget("x86_64-pc-linux-gnu");
 
         _ = writer.Write(
-            backendNodes,
+            fixture.BackendNodes,
             "writer_state_first",
             target,
             ZigBackendOutputKind.Object,
@@ -41,7 +29,7 @@ internal static partial class Program
             throw new Exception("Hosted LLVM entry lowering mutated the checked _start declaration.");
 
         _ = writer.Write(
-            backendNodes,
+            fixture.BackendNodes,
             "writer_state_second",
             target,
             ZigBackendOutputKind.Object,

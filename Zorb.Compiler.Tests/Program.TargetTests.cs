@@ -13,11 +13,8 @@ internal static partial class Program
             "1",
             StringComparison.Ordinal);
 
-        var linuxCompiler = FindAArch64LinuxCompiler();
-        var qemu = FindAArch64Qemu();
-        var isNativeAArch64 = RuntimeInformation.ProcessArchitecture == Architecture.Arm64;
-        var canBuild = isNativeAArch64 || linuxCompiler != null;
-        var canRun = isNativeAArch64 || qemu != null;
+        var canBuild = CanBuildAArch64LinuxTarget();
+        var canRun = CanRunAArch64LinuxTarget();
 
         if (!shouldRun && (!canBuild || !canRun))
             return;
@@ -36,9 +33,7 @@ internal static partial class Program
 
         EnsureToolAvailable("timeout");
 
-        var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
-        var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
-            ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
+        var projectRoot = GetProjectRoot();
         var compilerInvocation = GetCompilerInvocation(projectRoot);
 
         RunAArch64EmissionVerification(compilerInvocation, projectRoot, fixtureRoot);

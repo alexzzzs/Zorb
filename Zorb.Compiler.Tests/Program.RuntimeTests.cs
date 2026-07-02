@@ -140,68 +140,39 @@ internal static partial class Program
         var hostStdOutPath = Path.Combine(fixtureDir, "expect-stdout.txt");
         var hostStdErrPath = Path.Combine(fixtureDir, "expect-stderr.txt");
         var hostExitPath = Path.Combine(fixtureDir, "expect-exit.txt");
-        if (File.Exists(hostStdOutPath) || File.Exists(hostStdErrPath) || File.Exists(hostExitPath))
-        {
-            expectations.Add(new RuntimeExpectation(
-                "freestanding-linux",
-                File.Exists(hostStdOutPath) ? NormalizeNewlines(File.ReadAllText(hostStdOutPath, Encoding.UTF8)) : null,
-                File.Exists(hostStdErrPath) ? NormalizeNewlines(File.ReadAllText(hostStdErrPath, Encoding.UTF8)) : null,
-                File.Exists(hostExitPath) ? int.Parse(File.ReadAllText(hostExitPath, Encoding.UTF8).Trim()) : 0));
-        }
 
-        var windowsStdOutPath = Path.Combine(fixtureDir, "expect-stdout-windows.txt");
-        var windowsStdErrPath = Path.Combine(fixtureDir, "expect-stderr-windows.txt");
-        var windowsExitPath = Path.Combine(fixtureDir, "expect-exit-windows.txt");
-        if (File.Exists(windowsStdOutPath) || File.Exists(windowsStdErrPath) || File.Exists(windowsExitPath))
-        {
-            expectations.Add(new RuntimeExpectation(
-                "host-windows",
-                File.Exists(windowsStdOutPath)
-                    ? NormalizeNewlines(File.ReadAllText(windowsStdOutPath, Encoding.UTF8))
-                    : (File.Exists(hostStdOutPath) ? NormalizeNewlines(File.ReadAllText(hostStdOutPath, Encoding.UTF8)) : null),
-                File.Exists(windowsStdErrPath)
-                    ? NormalizeNewlines(File.ReadAllText(windowsStdErrPath, Encoding.UTF8))
-                    : (File.Exists(hostStdErrPath) ? NormalizeNewlines(File.ReadAllText(hostStdErrPath, Encoding.UTF8)) : null),
-                File.Exists(windowsExitPath)
-                    ? int.Parse(File.ReadAllText(windowsExitPath, Encoding.UTF8).Trim())
-                    : (File.Exists(hostExitPath) ? int.Parse(File.ReadAllText(hostExitPath, Encoding.UTF8).Trim()) : 0)));
-        }
-
-        var aarch64StdOutPath = Path.Combine(fixtureDir, "expect-stdout-linux-aarch64.txt");
-        var aarch64StdErrPath = Path.Combine(fixtureDir, "expect-stderr-linux-aarch64.txt");
-        var aarch64ExitPath = Path.Combine(fixtureDir, "expect-exit-linux-aarch64.txt");
-        if (File.Exists(aarch64StdOutPath) || File.Exists(aarch64StdErrPath) || File.Exists(aarch64ExitPath))
-        {
-            expectations.Add(new RuntimeExpectation(
-                "freestanding-linux-aarch64",
-                File.Exists(aarch64StdOutPath)
-                    ? NormalizeNewlines(File.ReadAllText(aarch64StdOutPath, Encoding.UTF8))
-                    : (File.Exists(hostStdOutPath) ? NormalizeNewlines(File.ReadAllText(hostStdOutPath, Encoding.UTF8)) : null),
-                File.Exists(aarch64StdErrPath)
-                    ? NormalizeNewlines(File.ReadAllText(aarch64StdErrPath, Encoding.UTF8))
-                    : (File.Exists(hostStdErrPath) ? NormalizeNewlines(File.ReadAllText(hostStdErrPath, Encoding.UTF8)) : null),
-                File.Exists(aarch64ExitPath)
-                    ? int.Parse(File.ReadAllText(aarch64ExitPath, Encoding.UTF8).Trim())
-                    : (File.Exists(hostExitPath) ? int.Parse(File.ReadAllText(hostExitPath, Encoding.UTF8).Trim()) : 0)));
-        }
-
-        var hostAarch64StdOutPath = Path.Combine(fixtureDir, "expect-stdout-host-linux-aarch64.txt");
-        var hostAarch64StdErrPath = Path.Combine(fixtureDir, "expect-stderr-host-linux-aarch64.txt");
-        var hostAarch64ExitPath = Path.Combine(fixtureDir, "expect-exit-host-linux-aarch64.txt");
-        if (File.Exists(hostAarch64StdOutPath) || File.Exists(hostAarch64StdErrPath) || File.Exists(hostAarch64ExitPath))
-        {
-            expectations.Add(new RuntimeExpectation(
-                "host-linux-aarch64",
-                File.Exists(hostAarch64StdOutPath)
-                    ? NormalizeNewlines(File.ReadAllText(hostAarch64StdOutPath, Encoding.UTF8))
-                    : (File.Exists(hostStdOutPath) ? NormalizeNewlines(File.ReadAllText(hostStdOutPath, Encoding.UTF8)) : null),
-                File.Exists(hostAarch64StdErrPath)
-                    ? NormalizeNewlines(File.ReadAllText(hostAarch64StdErrPath, Encoding.UTF8))
-                    : (File.Exists(hostStdErrPath) ? NormalizeNewlines(File.ReadAllText(hostStdErrPath, Encoding.UTF8)) : null),
-                File.Exists(hostAarch64ExitPath)
-                    ? int.Parse(File.ReadAllText(hostAarch64ExitPath, Encoding.UTF8).Trim())
-                    : (File.Exists(hostExitPath) ? int.Parse(File.ReadAllText(hostExitPath, Encoding.UTF8).Trim()) : 0)));
-        }
+        AddRuntimeExpectationIfPresent(
+            expectations,
+            fixtureDir,
+            "freestanding-linux",
+            runtimeSuffix: null,
+            fallbackStdOutPath: null,
+            fallbackStdErrPath: null,
+            fallbackExitPath: null);
+        AddRuntimeExpectationIfPresent(
+            expectations,
+            fixtureDir,
+            "host-windows",
+            "windows",
+            hostStdOutPath,
+            hostStdErrPath,
+            hostExitPath);
+        AddRuntimeExpectationIfPresent(
+            expectations,
+            fixtureDir,
+            "freestanding-linux-aarch64",
+            "linux-aarch64",
+            hostStdOutPath,
+            hostStdErrPath,
+            hostExitPath);
+        AddRuntimeExpectationIfPresent(
+            expectations,
+            fixtureDir,
+            "host-linux-aarch64",
+            "host-linux-aarch64",
+            hostStdOutPath,
+            hostStdErrPath,
+            hostExitPath);
 
         return expectations;
     }
@@ -212,13 +183,6 @@ internal static partial class Program
         var expectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, targetName, StringComparison.Ordinal));
         if (expectation != null)
             return expectation;
-
-        if (string.Equals(targetName, "freestanding-linux", StringComparison.Ordinal))
-        {
-            var linuxExpectation = expectations.FirstOrDefault(item => string.Equals(item.TargetName, "freestanding-linux", StringComparison.Ordinal));
-            if (linuxExpectation != null)
-                return linuxExpectation;
-        }
 
         if (string.Equals(targetName, "host-linux", StringComparison.Ordinal))
         {
@@ -284,10 +248,53 @@ internal static partial class Program
         return runtimeExpectation.TargetName switch
         {
             "freestanding-linux" or "host-linux" => OperatingSystem.IsLinux(),
-            "freestanding-linux-aarch64" or "host-linux-aarch64" => OperatingSystem.IsLinux() && (RuntimeInformation.ProcessArchitecture == Architecture.Arm64 || FindAArch64Qemu() != null),
+            "freestanding-linux-aarch64" or "host-linux-aarch64" => OperatingSystem.IsLinux() && CanBuildAArch64LinuxTarget() && CanRunAArch64LinuxTarget(),
             "host-windows" => OperatingSystem.IsWindows(),
             _ => false
         };
+    }
+
+    private static void AddRuntimeExpectationIfPresent(
+        List<RuntimeExpectation> expectations,
+        string fixtureDir,
+        string targetName,
+        string? runtimeSuffix,
+        string? fallbackStdOutPath,
+        string? fallbackStdErrPath,
+        string? fallbackExitPath)
+    {
+        var suffix = string.IsNullOrEmpty(runtimeSuffix) ? string.Empty : "-" + runtimeSuffix;
+        var stdOutPath = Path.Combine(fixtureDir, "expect-stdout" + suffix + ".txt");
+        var stdErrPath = Path.Combine(fixtureDir, "expect-stderr" + suffix + ".txt");
+        var exitPath = Path.Combine(fixtureDir, "expect-exit" + suffix + ".txt");
+        if (!File.Exists(stdOutPath) && !File.Exists(stdErrPath) && !File.Exists(exitPath))
+            return;
+
+        expectations.Add(new RuntimeExpectation(
+            targetName,
+            ReadOptionalRuntimeText(stdOutPath, fallbackStdOutPath),
+            ReadOptionalRuntimeText(stdErrPath, fallbackStdErrPath),
+            ReadOptionalRuntimeExit(exitPath, fallbackExitPath)));
+    }
+
+    private static string? ReadOptionalRuntimeText(string path, string? fallbackPath)
+    {
+        if (File.Exists(path))
+            return NormalizeNewlines(File.ReadAllText(path, Encoding.UTF8));
+
+        return fallbackPath != null && File.Exists(fallbackPath)
+            ? NormalizeNewlines(File.ReadAllText(fallbackPath, Encoding.UTF8))
+            : null;
+    }
+
+    private static int ReadOptionalRuntimeExit(string path, string? fallbackPath)
+    {
+        if (File.Exists(path))
+            return int.Parse(File.ReadAllText(path, Encoding.UTF8).Trim());
+
+        return fallbackPath != null && File.Exists(fallbackPath)
+            ? int.Parse(File.ReadAllText(fallbackPath, Encoding.UTF8).Trim())
+            : 0;
     }
 
     private static void RunLlvmRuntimeExpectation(string fixtureDir, string mainPath, RuntimeExpectation runtimeExpectation)

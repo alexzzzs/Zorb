@@ -10,8 +10,8 @@ internal static partial class Program
 
     private static int Main()
     {
-        var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
-        var fixtureRoot = Path.Combine(testProjectRoot, "fixtures");
+        var projectRoot = GetProjectRoot();
+        var fixtureRoot = GetFixtureRoot();
         var fixtureDirs = Directory.GetDirectories(fixtureRoot).OrderBy(path => path, StringComparer.Ordinal).ToList();
         var failures = new List<string>();
 
@@ -34,8 +34,6 @@ internal static partial class Program
         RunNamedTest(failures, "generic_function_default_import_alias", RunGenericFunctionDefaultImportAliasTests);
         RunNamedTest(failures, "resolved_call_metadata", RunResolvedCallMetadataTests);
 
-        var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
-            ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
         var examplesRoot = Path.Combine(projectRoot, "examples");
         var examplePaths = Directory.EnumerateFiles(examplesRoot, "*.zorb", SearchOption.AllDirectories)
             .Where(path =>

@@ -12,9 +12,7 @@ internal static partial class Program
 {
     private static void RunSemanticDiagnosticOutputTests(string fixtureRoot)
     {
-        var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
-        var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
-            ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
+        var projectRoot = GetProjectRoot();
         var compilerInvocation = GetCompilerInvocation(projectRoot);
         var sampleInput = Path.Combine(fixtureRoot, "error_undeclared", "main.zorb");
         var result = RunProcessWithTimeoutArgs(
@@ -204,15 +202,29 @@ internal static partial class Program
     {
         var tempDir = Path.Combine(Path.GetTempPath(), prefix, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
+        Exception? actionException = null;
 
         try
         {
             action(tempDir);
         }
+        catch (Exception ex)
+        {
+            actionException = ex;
+            throw;
+        }
         finally
         {
             if (Directory.Exists(tempDir))
-                Directory.Delete(tempDir, recursive: true);
+            {
+                try
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+                catch when (actionException != null)
+                {
+                }
+            }
         }
     }
 
@@ -316,6 +328,21 @@ internal static partial class Program
         var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
         return Directory.GetParent(testProjectRoot)?.FullName
             ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
+    }
+
+    private static string GetFixtureRoot()
+    {
+        return Path.Combine(GetProjectRoot(), "Zorb.Compiler.Tests", "fixtures");
+    }
+
+    private static bool CanBuildAArch64LinuxTarget()
+    {
+        return RuntimeInformation.ProcessArchitecture == Architecture.Arm64 || FindAArch64LinuxCompiler() != null;
+    }
+
+    private static bool CanRunAArch64LinuxTarget()
+    {
+        return RuntimeInformation.ProcessArchitecture == Architecture.Arm64 || FindAArch64Qemu() != null;
     }
 
     private static ProcessResult RunProcessWithTimeoutArgs(string fileName, IEnumerable<string> arguments, string workingDirectory, TimeSpan timeout)

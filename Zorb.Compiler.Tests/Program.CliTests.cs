@@ -19,9 +19,7 @@ internal static partial class Program
             throw new Exception("CLI workflow tests currently require a Linux or Windows host.");
         }
 
-        var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
-        var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
-            ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
+        var projectRoot = GetProjectRoot();
         var compilerInvocation = GetCompilerInvocation(projectRoot);
 
         WithTempDirectory("zorb-cli-tests", tempDir =>
@@ -33,9 +31,7 @@ internal static partial class Program
 
     private static void RunCliArgumentValidationTests(string fixtureRoot)
     {
-        var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
-        var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
-            ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
+        var projectRoot = GetProjectRoot();
         var compilerInvocation = GetCompilerInvocation(projectRoot);
         var sampleInput = Path.Combine(fixtureRoot, "runtime_hello_world", "main.zorb");
         var hasWindowsHostToolchain = OperatingSystem.IsWindows() && IsAnyToolAvailable("clang-cl", "cl");
@@ -241,9 +237,7 @@ internal static partial class Program
         if (!IsBareMetalLinkerAvailable())
             return;
 
-        var testProjectRoot = FindAncestorContainingFile(AppContext.BaseDirectory, "Zorb.Compiler.Tests.csproj");
-        var projectRoot = Directory.GetParent(testProjectRoot)?.FullName
-            ?? throw new Exception($"Unable to determine repository root from '{testProjectRoot}'.");
+        var projectRoot = GetProjectRoot();
         var compilerInvocation = GetCompilerInvocation(projectRoot);
 
         var fixtureDir = Path.Combine(fixtureRoot, "bare_metal_debug_port");
