@@ -8,6 +8,9 @@ const FunctionRecord = struct {
     function_type: llvm.LLVMTypeRef,
 };
 
+const ValueMap = std.AutoHashMapUnmanaged(u32, llvm.LLVMValueRef);
+const BlockMap = std.AutoHashMapUnmanaged(u32, llvm.LLVMBasicBlockRef);
+
 pub const Backend = struct {
     allocator: std.mem.Allocator,
     module_ir: *const ir.Module,
@@ -337,95 +340,158 @@ pub const Backend = struct {
     fn emitFunctionBodies(self: *Backend) !void {
         for (self.module_ir.functions) |function_ir| {
             if (function_ir.blocks.len == 0) continue;
-            const record = self.functions.get(function_ir.id) orelse return error.InvalidBackendIr;
-            const builder = llvm.LLVMCreateBuilderInContext(self.context) orelse return error.OutOfMemory;
-            defer llvm.LLVMDisposeBuilder(builder);
+            try self.emitFunctionBody(function_ir);
+        }
+    }
 
-            var values: std.AutoHashMapUnmanaged(u32, llvm.LLVMValueRef) = .empty;
-            defer values.deinit(self.allocator);
-            var blocks: std.AutoHashMapUnmanaged(u32, llvm.LLVMBasicBlockRef) = .empty;
-            defer blocks.deinit(self.allocator);
-            for (function_ir.parameters, 0..) |parameter, index| {
-                const value = llvm.LLVMGetParam(record.function, @intCast(index));
-                const name = try self.allocator.dupeZ(u8, parameter.name);
-                defer self.allocator.free(name);
-                llvm.LLVMSetValueName2(value, name, parameter.name.len);
-                try values.put(self.allocator, parameter.id, value);
+    fn emitFunctionBody(self: *Backend, function_ir: ir.Function) !void {
+        const record = self.functions.get(function_ir.id) orelse return error.InvalidBackendIr;
+        const builder = llvm.LLVMCreateBuilderInContext(self.context) orelse return error.OutOfMemory;
+        defer llvm.LLVMDisposeBuilder(builder);
+
+        var values: ValueMap = .empty;
+        defer values.deinit(self.allocator);
+        var blocks: BlockMap = .empty;
+        defer blocks.deinit(self.allocator);
+
+        try self.populateParameterValues(function_ir, record.function, &values);
+        try self.createFunctionBlocks(function_ir, record.function, &blocks);
+        try self.emitFunctionInstructions(builder, function_ir, &values, &blocks);
+        try self.addPhiIncomingEdges(function_ir, &values, &blocks);
+    }
+
+    fn populateParameterValues(
+        self: *Backend,
+        function_ir: ir.Function,
+        function_ref: llvm.LLVMValueRef,
+        values: *ValueMap,
+    ) !void {
+        for (function_ir.parameters, 0..) |parameter, index| {
+            const value = llvm.LLVMGetParam(function_ref, @intCast(index));
+            const name = try self.allocator.dupeZ(u8, parameter.name);
+            defer self.allocator.free(name);
+            llvm.LLVMSetValueName2(value, name, parameter.name.len);
+            try values.put(self.allocator, parameter.id, value);
+        }
+    }
+
+    fn createFunctionBlocks(
+        self: *Backend,
+        function_ir: ir.Function,
+        function_ref: llvm.LLVMValueRef,
+        blocks: *BlockMap,
+    ) !void {
+        for (function_ir.blocks) |block_ir| {
+            const block_name = try self.allocator.dupeZ(u8, block_ir.name);
+            defer self.allocator.free(block_name);
+            const block = llvm.LLVMAppendBasicBlockInContext(self.context, function_ref, block_name);
+            try blocks.put(self.allocator, block_ir.id, block);
+        }
+    }
+
+    fn emitFunctionInstructions(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        function_ir: ir.Function,
+        values: *ValueMap,
+        blocks: *BlockMap,
+    ) !void {
+        for (function_ir.blocks) |block_ir| {
+            const block = blocks.get(block_ir.id) orelse return error.InvalidBackendIr;
+            llvm.LLVMPositionBuilderAtEnd(builder, block);
+
+            for (block_ir.instructions) |instruction| {
+                const value = try self.emitInstruction(builder, values, instruction);
+                try values.put(self.allocator, instruction.id, value);
             }
 
-            for (function_ir.blocks) |block_ir| {
-                const block_name = try self.allocator.dupeZ(u8, block_ir.name);
-                defer self.allocator.free(block_name);
-                const block = llvm.LLVMAppendBasicBlockInContext(self.context, record.function, block_name);
-                try blocks.put(self.allocator, block_ir.id, block);
-            }
+            try self.emitTerminator(builder, block_ir.terminator, values, blocks);
+        }
+    }
 
-            for (function_ir.blocks) |block_ir| {
-                const block = blocks.get(block_ir.id) orelse return error.InvalidBackendIr;
-                llvm.LLVMPositionBuilderAtEnd(builder, block);
+    fn emitTerminator(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        terminator: ir.Terminator,
+        values: *ValueMap,
+        blocks: *BlockMap,
+    ) !void {
+        _ = self;
+        switch (terminator.op) {
+            .return_void => _ = llvm.LLVMBuildRetVoid(builder),
+            .return_value => {
+                const value_id = terminator.value orelse return error.InvalidBackendIr;
+                const value = values.get(value_id) orelse return error.InvalidBackendIr;
+                _ = llvm.LLVMBuildRet(builder, value);
+            },
+            .branch => {
+                const target_id = terminator.target orelse return error.InvalidBackendIr;
+                const target = blocks.get(target_id) orelse return error.InvalidBackendIr;
+                _ = llvm.LLVMBuildBr(builder, target);
+            },
+            .conditional_branch => {
+                const condition_id = terminator.condition orelse return error.InvalidBackendIr;
+                const condition_value = values.get(condition_id) orelse return error.InvalidBackendIr;
+                const condition = toCondition(builder, condition_value);
+                const true_target_id = terminator.true_target orelse return error.InvalidBackendIr;
+                const false_target_id = terminator.false_target orelse return error.InvalidBackendIr;
+                const true_target = blocks.get(true_target_id) orelse return error.InvalidBackendIr;
+                const false_target = blocks.get(false_target_id) orelse return error.InvalidBackendIr;
+                _ = llvm.LLVMBuildCondBr(builder, condition, true_target, false_target);
+            },
+            .@"unreachable" => _ = llvm.LLVMBuildUnreachable(builder),
+        }
+    }
 
-                for (block_ir.instructions) |instruction| {
-                    const value = try self.emitInstruction(builder, &values, instruction);
-                    try values.put(self.allocator, instruction.id, value);
-                }
-                switch (block_ir.terminator.op) {
-                    .return_void => _ = llvm.LLVMBuildRetVoid(builder),
-                    .return_value => {
-                        const value_id = block_ir.terminator.value orelse return error.InvalidBackendIr;
-                        const value = values.get(value_id) orelse return error.InvalidBackendIr;
-                        _ = llvm.LLVMBuildRet(builder, value);
-                    },
-                    .branch => {
-                        const target = blocks.get(block_ir.terminator.target orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                        _ = llvm.LLVMBuildBr(builder, target);
-                    },
-                    .conditional_branch => {
-                        const condition_value = values.get(block_ir.terminator.condition orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                        const condition = toCondition(builder, condition_value);
-                        const true_target = blocks.get(block_ir.terminator.true_target orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                        const false_target = blocks.get(block_ir.terminator.false_target orelse return error.InvalidBackendIr) orelse return error.InvalidBackendIr;
-                        _ = llvm.LLVMBuildCondBr(builder, condition, true_target, false_target);
-                    },
-                    .@"unreachable" => _ = llvm.LLVMBuildUnreachable(builder),
-                }
-            }
-
-            for (function_ir.blocks) |block_ir| {
-                for (block_ir.instructions) |instruction| {
-                    if (instruction.op != .phi) continue;
-                    if (instruction.incoming_values.len != instruction.incoming_blocks.len or
-                        instruction.incoming_values.len == 0)
-                    {
-                        return error.InvalidBackendIr;
-                    }
-                    const phi = values.get(instruction.id) orelse return error.InvalidBackendIr;
-                    var incoming_values = try self.allocator.alloc(
-                        llvm.LLVMValueRef,
-                        instruction.incoming_values.len,
-                    );
-                    defer self.allocator.free(incoming_values);
-                    var incoming_blocks = try self.allocator.alloc(
-                        llvm.LLVMBasicBlockRef,
-                        instruction.incoming_blocks.len,
-                    );
-                    defer self.allocator.free(incoming_blocks);
-                    for (
-                        instruction.incoming_values,
-                        instruction.incoming_blocks,
-                        0..,
-                    ) |value_id, block_id, index| {
-                        incoming_values[index] = values.get(value_id) orelse return error.InvalidBackendIr;
-                        incoming_blocks[index] = blocks.get(block_id) orelse return error.InvalidBackendIr;
-                    }
-                    llvm.LLVMAddIncoming(
-                        phi,
-                        incoming_values.ptr,
-                        incoming_blocks.ptr,
-                        @intCast(incoming_values.len),
-                    );
-                }
+    fn addPhiIncomingEdges(
+        self: *Backend,
+        function_ir: ir.Function,
+        values: *ValueMap,
+        blocks: *BlockMap,
+    ) !void {
+        for (function_ir.blocks) |block_ir| {
+            for (block_ir.instructions) |instruction| {
+                if (instruction.op != .phi) continue;
+                try self.addPhiIncomingEdgesForInstruction(instruction, values, blocks);
             }
         }
+    }
+
+    fn addPhiIncomingEdgesForInstruction(
+        self: *Backend,
+        instruction: ir.Instruction,
+        values: *ValueMap,
+        blocks: *BlockMap,
+    ) !void {
+        if (instruction.incoming_values.len != instruction.incoming_blocks.len or
+            instruction.incoming_values.len == 0)
+        {
+            return error.InvalidBackendIr;
+        }
+
+        const phi = values.get(instruction.id) orelse return error.InvalidBackendIr;
+        var incoming_values = try self.allocator.alloc(
+            llvm.LLVMValueRef,
+            instruction.incoming_values.len,
+        );
+        defer self.allocator.free(incoming_values);
+        var incoming_blocks = try self.allocator.alloc(
+            llvm.LLVMBasicBlockRef,
+            instruction.incoming_blocks.len,
+        );
+        defer self.allocator.free(incoming_blocks);
+
+        for (instruction.incoming_values, instruction.incoming_blocks, 0..) |value_id, block_id, index| {
+            incoming_values[index] = values.get(value_id) orelse return error.InvalidBackendIr;
+            incoming_blocks[index] = blocks.get(block_id) orelse return error.InvalidBackendIr;
+        }
+
+        llvm.LLVMAddIncoming(
+            phi,
+            incoming_values.ptr,
+            incoming_blocks.ptr,
+            @intCast(incoming_values.len),
+        );
     }
 
     fn emitInstruction(
