@@ -38,6 +38,19 @@ compiler. Hosted Windows GNU/MinGW output is not currently supported;
 The AArch64 Linux targets are intended for Linux hosts with either native
 AArch64 execution or an AArch64 cross-toolchain and QEMU-backed runtime path.
 
+## Target Support Contract
+
+The stable target contract for this repository is:
+
+- `build`: supported for `host-linux`, `freestanding-linux`, `host-linux-aarch64`, `freestanding-linux-aarch64`, `host-windows`, and `bare-metal-x86_64`
+- `run`: supported for the hosted runtime paths covered by the fixture suite, namely `host-linux` and `freestanding-linux` on Linux hosts, `host-windows` on Windows hosts, and the optional AArch64 Linux runtime lane when the documented cross-toolchain and QEMU prerequisites are available
+- `bare-metal-x86_64`: build-only target with linker-script support; it does not participate in the `run` workflow
+
+Target-sensitive standard-library modules expose their own support checks or
+documented `error.UnsupportedPlatform` behavior. Portable programs should gate
+`std.net`, `std.task`, and `std.async` usage with the corresponding
+`is_supported()` APIs.
+
 ## Lexical Structure
 
 ### Whitespace

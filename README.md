@@ -37,7 +37,7 @@ the implemented language subset described in this repository.
 
 That parity claim currently covers:
 
-- `freestanding-linux` on Linux hosts
+- `host-linux` and `freestanding-linux` on Linux hosts
 - `freestanding-linux-aarch64` and `host-linux-aarch64` from Linux hosts with an AArch64 cross-toolchain
 - `host-windows` on Windows hosts using the MSVC ABI toolchain path
 - `bare-metal-x86_64` for kernel ELF builds
@@ -46,6 +46,23 @@ It does not currently mean:
 
 - hosted Windows GNU/MinGW support
 - `run` support for bare-metal output
+
+## Stability Contract
+
+The current stable contract for this repository is:
+
+- The language subset listed in [Current Status](#current-status) is expected to type-check, lower through the LLVM backend, and stay covered by the fixture suite.
+- `build` is stable for `host-linux`, `freestanding-linux`, `host-linux-aarch64`, `freestanding-linux-aarch64`, `host-windows`, and `bare-metal-x86_64`.
+- `run` is stable for the hosted runtime paths covered by the fixture suite: `host-linux` and `freestanding-linux` on Linux hosts, `host-windows` on Windows hosts, and the optional AArch64 Linux runtime lane when the documented cross-toolchain and QEMU prerequisites are present.
+- `bare-metal-x86_64` is a build-only target. It guarantees ELF kernel output plus linker-script support; it does not guarantee hosted runtime behavior or a `run` workflow.
+
+The standard library support contract is intentionally module-specific:
+
+- `std.os`, `std.io`, `std.str`, and `std.mem` are the base portable layer and are expected to work across the repo's main hosted targets, with target-specific behavior documented for bare-metal where applicable.
+- `std.fs` is a hosted-only module and is currently stable on Linux and Windows hosted targets.
+- `std.net` is stable on Linux and Windows hosted targets for low-level TCP sockets and readiness polling.
+- `std.task` is stable on Linux and Windows x86_64 and AArch64 hosted targets when `std.task.is_supported()` reports `true`.
+- `std.async` is stable only where both `std.task` and `std.net` are supported, and portable code should continue to gate use with `std.async.is_supported()`.
 
 ## Generics
 
@@ -74,9 +91,9 @@ Generic calls may provide explicit type arguments such as `identity<i64>(42)`, o
 
 Each concrete use is monomorphized into a distinct backend function or concrete nominal type. Generic unions also monomorphize their generated `.Tag` enums per concrete use, so expressions such as `Result<i64, bool>.Tag.Ok` remain type-safe.
 Constraints are exact-type requirements after substituting any earlier type
-arguments; they are not a trait or interface system. Generic extern functions
-and first-class values for uninstantiated generic functions are still not
-supported.
+arguments; they are not a trait or interface system. Generic `extern fn`
+declarations monomorphize per concrete use. First-class values for
+uninstantiated generic functions are still not supported.
 
 Cross-platform stdlib helpers currently include:
 
@@ -84,9 +101,9 @@ Cross-platform stdlib helpers currently include:
 - `std.os.is_x86_64()`, `std.os.is_aarch64()`, `std.os.arch_name()`
 - `std.os.monotonic_millis()` for timeout/deadline-oriented runtime code on hosted targets
 - `std.io.print(...)`, `std.io.println(...)`, `std.io.eprint(...)`, `std.io.eprintln(...)`, boolean and integer print helpers, slice-based `std.io.write(fd, buf)`, and `std.io.read(fd, buf)`
-- `std.fs.open_read(...)`, `std.fs.open_write(...)`, `std.fs.exists(...)`, `std.fs.size(...)`, `std.fs.read_all(...)`, `std.fs.write_all(...)`, `std.fs.rename(...)`, and `std.fs.delete(...)`
-- low-level Linux-first networking helpers in `std.net` for raw TCP socket setup, IPv4 socket addresses, send/recv, and close
-- `std.task.is_supported()` and `std.async.is_supported()` for checking runtime capability before using task or async features, plus async readiness waits with optional timeouts and exact send/recv helpers
+- hosted-target `std.fs.open_read(...)`, `std.fs.open_write(...)`, `std.fs.exists(...)`, `std.fs.size(...)`, `std.fs.read_all(...)`, `std.fs.write_all(...)`, `std.fs.rename(...)`, and `std.fs.delete(...)`
+- low-level hosted `std.net` helpers for raw TCP socket setup, IPv4 socket addresses, send/recv, and readiness polling on Linux and Windows
+- `std.task.is_supported()` and `std.async.is_supported()` for checking runtime capability before using task or async features, plus async readiness waits with optional timeouts and exact send/recv helpers where supported
 - `std.str.eql(...)`, `std.str.starts_with(...)`, `std.str.ends_with(...)`, `std.str.copy(...)`, and `std.str.from_u64(...)`
 - `std.mem.zero(...)` and `std.mem.copy(...)` for slice-oriented memory helpers
 

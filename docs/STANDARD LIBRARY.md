@@ -11,6 +11,23 @@ import "std/os.zorb"
 
 If a file imports another standard-library module internally, users normally do not need to import that dependency unless they call it directly.
 
+## Support Contract
+
+The standard library is stable on a per-module basis rather than as one
+uniform portability layer.
+
+Stable module expectations:
+
+- `std.os`, `std.io`, `std.str`, and `std.mem` are the base library surface for the repo's supported targets, with target-specific differences documented below.
+- `std.fs` is hosted-only and currently stable on Linux and Windows hosted targets.
+- `std.net` is hosted-only and currently stable on Linux and Windows hosted targets for low-level TCP sockets and readiness polling.
+- `std.task` is stable only on targets where `std.task.is_supported()` returns `true`.
+- `std.async` is stable only on targets where both `std.task` and `std.net` are supported, and portable code should gate it with `std.async.is_supported()`.
+
+`error.UnsupportedPlatform` and the various `is_supported()` helpers are part of
+the public contract. Target-sensitive code should use them rather than assume a
+module is available everywhere.
+
 ## Error Codes: `std/errors.zorb`
 
 ### Internal Definitions
@@ -579,9 +596,9 @@ fn main() -> i64 {
 ## File System: `std/fs.zorb`
 
 `std/fs.zorb` provides small cross-platform file helpers for the hosted
-targets. It currently exposes open-for-read, open-for-write, close, existence
-checks, simple metadata, rename/delete operations, and whole-file read/write
-helpers.
+targets. It is part of the stable hosted support surface for Linux and Windows
+targets and exposes open-for-read, open-for-write, close, existence checks,
+simple metadata, rename/delete operations, and whole-file read/write helpers.
 
 ### Open For Read
 
@@ -764,8 +781,8 @@ fn main() -> i64 {
 ## Networking: `std/net.zorb`
 
 `std/net.zorb` is a low-level cross-platform networking layer for the current
-hosted targets. It focuses on raw TCP socket setup and readiness polling rather
-than higher-level protocols.
+hosted targets. It is stable on Linux and Windows hosted targets for raw TCP
+socket setup and readiness polling, not higher-level protocols.
 
 ### Internal Definitions
 
@@ -1074,6 +1091,10 @@ export fn std.task.dequeue() -> *Fiber
 
 `std/async.zorb` imports `errors.zorb`, `net.zorb`, `os.zorb`, and `task.zorb` and
 implements a cooperative socket-wait scheduler layer on top of fibers.
+
+This module is stable only on targets where both `std.net` and `std.task`
+support is present. Portable programs should check `std.async.is_supported()`
+before depending on it.
 
 ### Internal Definitions
 
