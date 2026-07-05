@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The compiler version now advances to the `0.2.2-dev` line after the
+  `0.2.1` release.
+
+## [0.2.1] - July 5, 2026
+
+### Guarantees
+
+- The language subset documented in `README.md` and `docs/SEMANTICS.md`
+  remains the stable frontend contract for this release.
+- `build` is supported for `host-linux`, `freestanding-linux`,
+  `host-linux-aarch64`, `freestanding-linux-aarch64`, `host-windows`, and
+  `bare-metal-x86_64`.
+- `run` is supported for the hosted runtime paths covered by the fixture
+  suite: `host-linux` and `freestanding-linux` on Linux hosts,
+  `host-windows` on Windows hosts, and the optional AArch64 Linux runtime
+  lane when the documented cross-toolchain and QEMU prerequisites are
+  available.
+- `bare-metal-x86_64` remains a build-only target with linker-script support.
+- `std.os`, `std.io`, `std.str`, and `std.mem` remain the base standard
+  library surface across the repo's supported targets. `std.fs` is stable on
+  hosted Linux and Windows targets. `std.net`, `std.task`, and `std.async`
+  remain target-sensitive and should be gated with their `is_supported()`
+  checks in portable code.
+
+### Non-Goals
+
+- Hosted Windows GNU/MinGW output is still not supported.
+- `run` remains unsupported for bare-metal output.
+- Higher-level networking, process, and general hosted-OS abstractions remain
+  outside the current standard-library scope.
+
 ### Added
 
 - Generic enum and tagged-union support, including exact nominal typing per
