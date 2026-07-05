@@ -14,360 +14,6 @@ namespace Zorb.Compiler.Semantic;
 
 public partial class TypeChecker
 {
-    private ResolvedCallInfo? ResolveCallInfo(CallExpr call, bool reportErrors)
-    {
-        call.ResolvedFunctionType = null;
-        return call.TargetExpr != null
-            ? ResolveTargetExpressionCallInfo(call, reportErrors)
-            : ResolveNamedCallInfo(call, reportErrors);
-    }
-    private ResolvedCallInfo? ResolveTargetExpressionCallInfo(CallExpr call, bool reportErrors)
-    {
-        var targetExpr = call.TargetExpr!;
-        call.ResolvedQualifiedName = null;
-        var qualifiedName = QualifiedNames.TryGetQualifiedName(targetExpr);
-        if (IsInvalidPostfixTarget(targetExpr))
-            return null;
-
-        call.ResolvedTargetQualifiedName = null;
-        var displayName = qualifiedName ?? "call target";
-        if (TryResolveCallableTargetSymbol(call, qualifiedName, reportErrors, out var callableInfo, out var targetResolutionHandled))
-        {
-            return InstantiateCallableInfo(callableInfo, call, displayName, reportErrors);
-        }
-
-        if (targetResolutionHandled)
-            return null;
-
-        return ResolveFunctionPointerCallInfo(call, qualifiedName, reportErrors);
-    }
-    private bool TryResolveCallableTargetSymbol(
-        CallExpr call,
-        string? qualifiedName,
-        bool reportErrors,
-        out SymbolInfo callableInfo,
-        out bool resolutionHandled)
-    {
-        callableInfo = null!;
-        resolutionHandled = false;
-
-        var resolvedQualifiedName = qualifiedName;
-        var targetResolvedViaAlias = !string.IsNullOrEmpty(qualifiedName) &&
-            TryResolveAliasQualifiedName(qualifiedName, out resolvedQualifiedName);
-        if (string.IsNullOrEmpty(resolvedQualifiedName) || !_symbolTable.TryLookup(resolvedQualifiedName, out var qualifiedInfo))
-            return false;
-
-        var resolvedQualifiedInfo = qualifiedInfo!;
-
-        resolutionHandled = true;
-        if (!targetResolvedViaAlias && !CheckVisibility(resolvedQualifiedName))
-        {
-            if (reportErrors)
-                ReportNotVisible(call, "Function", qualifiedName ?? resolvedQualifiedName);
-            return false;
-        }
-
-        if (!resolvedQualifiedInfo.IsCallable())
-        {
-            if (reportErrors)
-                _errors.Error(call, $"'{qualifiedName}' is not a function or callable variable");
-            return false;
-        }
-
-        call.ResolvedTargetQualifiedName = targetResolvedViaAlias
-            ? resolvedQualifiedName
-            : resolvedQualifiedInfo.Name;
-        callableInfo = resolvedQualifiedInfo;
-        return true;
-    }
-    private ResolvedCallInfo? ResolveFunctionPointerCallInfo(CallExpr call, string? qualifiedName, bool reportErrors)
-    {
-        var targetType = GetExpressionType(call.TargetExpr!, reportErrors: false);
-        if (targetType == null || !targetType.IsFunction)
-        {
-            if (reportErrors)
-            {
-                _errors.Error(call, !string.IsNullOrEmpty(qualifiedName)
-                    ? $"Function '{qualifiedName}' is not declared or is not visible from this file."
-                    : "Expression is not a function or callable");
-            }
-            return null;
-        }
-
-        call.ResolvedFunctionType = targetType.Clone();
-        if (call.TypeArguments.Count > 0)
-        {
-            if (reportErrors)
-                _errors.Error(call, "Function pointer calls do not accept type arguments.");
-            return null;
-        }
-
-        return new ResolvedCallInfo(
-            !string.IsNullOrEmpty(qualifiedName) ? qualifiedName : "function pointer",
-            targetType.ParamTypes.Select(type => new Parameter("", type)).ToList(),
-            targetType.ReturnType?.Clone());
-    }
-    private ResolvedCallInfo? ResolveNamedCallInfo(CallExpr call, bool reportErrors)
-    {
-        call.ResolvedTargetQualifiedName = null;
-        var displayName = ResolveNamedCallDisplayName(call, out var resolvedViaAlias);
-        var fullName = QualifiedNames.GetFullName(call.NamespacePath, call.Name);
-        var symbolInfo = LookupNamedCallSymbol(call, fullName, resolvedViaAlias, reportErrors);
-        if (symbolInfo == null)
-            return null;
-
-        if (!symbolInfo.IsCallable())
-        {
-            if (reportErrors)
-                _errors.Error(call, $"'{call.Name}' is not a function or callable variable");
-            return null;
-        }
-
-        call.ResolvedQualifiedName = symbolInfo.Name;
-        return InstantiateCallableInfo(symbolInfo, call, displayName, reportErrors);
-    }
-    private string ResolveNamedCallDisplayName(CallExpr call, out bool resolvedViaAlias)
-    {
-        resolvedViaAlias = false;
-        var displayName = call.Name;
-        if (!call.NamespacePath.Any())
-            return displayName;
-
-        var sourceName = QualifiedNames.GetFullName(call.NamespacePath, call.Name);
-        if (!TryResolveAliasQualifiedName(sourceName, out var resolvedCallName))
-            return displayName;
-
-        QualifiedNames.ApplyResolvedQualifiedName(call, resolvedCallName);
-        resolvedViaAlias = true;
-        return sourceName;
-    }
-    private SymbolInfo? LookupNamedCallSymbol(CallExpr call, string fullName, bool resolvedViaAlias, bool reportErrors)
-    {
-        if (_symbolTable.TryLookup(fullName, out var qualifiedSymbol))
-        {
-            if (call.NamespacePath.Any() && !resolvedViaAlias && !CheckVisibility(fullName))
-            {
-                if (reportErrors)
-                    ReportNotVisible(call, "Function", fullName);
-                return null;
-            }
-
-            return qualifiedSymbol;
-        }
-
-        if (call.NamespacePath.Any())
-        {
-            if (reportErrors)
-                _errors.Error(call, $"Call to undeclared function '{fullName}'");
-            return null;
-        }
-
-        if (_symbolTable.TryLookup(call.Name, out var bareSymbol))
-        {
-            if (!CheckVisibility(call.Name))
-            {
-                if (reportErrors)
-                    ReportNotVisible(call, "Function", call.Name);
-                return null;
-            }
-
-            return bareSymbol;
-        }
-
-        if (reportErrors)
-            _errors.Error(call, $"Call to undeclared function '{fullName}'");
-        return null;
-    }
-    private ResolvedCallInfo? InstantiateCallableInfo(SymbolInfo symbolInfo, CallExpr call, string displayName, bool reportErrors)
-    {
-        if (symbolInfo.TypeParameters.Count == 0 && call.TypeArguments.Count > 0)
-        {
-            if (reportErrors)
-                _errors.Error(call, $"Function '{displayName}' is not generic and does not accept type arguments.");
-            return null;
-        }
-
-        if (symbolInfo.TypeParameters.Count > 0 && call.TypeArguments.Count == 0)
-        {
-            if (!TryInferCallTypeArguments(symbolInfo, call, out var inferredArguments, out var inferenceError))
-            {
-                if (reportErrors && !string.IsNullOrEmpty(inferenceError))
-                    _errors.Error(call, inferenceError);
-                return null;
-            }
-
-            if (inferredArguments != null && inferredArguments.Count > 0)
-                call.TypeArguments = inferredArguments;
-        }
-
-        if (symbolInfo.TypeParameters.Count > 0)
-        {
-            if (!TryResolveGenericTypeArguments(
-                    symbolInfo.TypeParameterSpecs,
-                    call.TypeArguments,
-                    call,
-                    $"Function '{displayName}'",
-                    out var resolvedTypeArguments))
-            {
-                return null;
-            }
-
-            call.TypeArguments = resolvedTypeArguments;
-        }
-
-        var substitutions = BuildTypeSubstitutions(symbolInfo.TypeParameters, call.TypeArguments);
-        var parameters = symbolInfo.GetCallableParameters()
-            .Select(parameter => new Parameter(parameter.Name, SubstituteTypeParameters(parameter.TypeName, substitutions)))
-            .ToList();
-        var returnType = symbolInfo.GetCallableReturnType() is TypeNode type
-            ? SubstituteTypeParameters(type, substitutions)
-            : null;
-
-        call.ResolvedFunctionType = new TypeNode
-        {
-            Name = symbolInfo.Name,
-            IsFunction = true,
-            ReturnType = returnType?.Clone(),
-            ParamTypes = parameters.Select(parameter => parameter.TypeName.Clone()).ToList()
-        };
-        return new ResolvedCallInfo(
-            displayName,
-            parameters,
-            returnType);
-    }
-    private bool TrySpecializeGenericFunctionValueForTarget(
-        TypeNode target,
-        Expr? sourceExpr,
-        TypeNode source,
-        out TypeNode specializedSource)
-    {
-        specializedSource = source;
-        if (!target.IsFunction || sourceExpr == null || !source.IsFunction)
-            return false;
-
-        if (!TryResolveGenericFunctionValueSourceInfo(sourceExpr, out var symbolInfo, out var typeArguments))
-            return false;
-
-        if (symbolInfo.TypeParameters.Count == 0)
-            return false;
-
-        if (typeArguments.Count == 0)
-        {
-            var typeParameterNames = new HashSet<string>(symbolInfo.TypeParameters, StringComparer.Ordinal);
-            var inferredByName = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-            if (!TryInferTypeArgumentsFromTypes(symbolInfo.GetCallableFunctionType(), target, typeParameterNames, inferredByName))
-                return false;
-
-            if (!TryResolveGenericTypeArgumentsFromInference(
-                    symbolInfo.TypeParameterSpecs,
-                    inferredByName,
-                    sourceExpr,
-                    $"generic function '{symbolInfo.Name}'",
-                    out var inferredArguments,
-                    out _)
-                || inferredArguments == null)
-            {
-                return false;
-            }
-
-            ApplyFunctionValueTypeArguments(sourceExpr, inferredArguments);
-            typeArguments = inferredArguments;
-        }
-
-        if (!TryResolveSpecializedFunctionValueType(symbolInfo, typeArguments, sourceExpr, reportErrors: false, out specializedSource))
-            return false;
-
-        _checkedExpressionTypes[sourceExpr] = specializedSource.Clone();
-        return true;
-    }
-    private bool TryResolveGenericFunctionValueSourceInfo(
-        Expr sourceExpr,
-        out SymbolInfo symbolInfo,
-        out IReadOnlyList<TypeNode> typeArguments)
-    {
-        switch (sourceExpr)
-        {
-            case IdentifierExpr identifier:
-                identifier.Name = ResolveQualifiedName(identifier.Name);
-                if (_symbolTable.TryLookup(identifier.Name, out var identifierSymbol) &&
-                    identifierSymbol?.Kind == SymbolKind.Function)
-                {
-                    symbolInfo = identifierSymbol;
-                    typeArguments = identifier.TypeArguments;
-                    return true;
-                }
-
-                break;
-
-            case FieldExpr field:
-                if (ResolveQualifiedFieldSymbol(field) is { SymbolInfo.Kind: SymbolKind.Function } resolvedField)
-                {
-                    symbolInfo = resolvedField.SymbolInfo;
-                    typeArguments = field.TypeArguments;
-                    return true;
-                }
-
-                break;
-        }
-
-        symbolInfo = null!;
-        typeArguments = Array.Empty<TypeNode>();
-        return false;
-    }
-    private static void ApplyFunctionValueTypeArguments(Node sourceExpr, IReadOnlyList<TypeNode> typeArguments)
-    {
-        var clonedArguments = typeArguments.Select(argument => argument.Clone()).ToList();
-        switch (sourceExpr)
-        {
-            case IdentifierExpr identifier:
-                identifier.TypeArguments = clonedArguments;
-                break;
-
-            case FieldExpr field:
-                field.TypeArguments = clonedArguments;
-                break;
-        }
-    }
-    private bool TryResolveSpecializedFunctionValueType(
-        SymbolInfo symbolInfo,
-        IReadOnlyList<TypeNode> typeArguments,
-        Node context,
-        bool reportErrors,
-        out TypeNode specializedType)
-    {
-        if (symbolInfo.TypeParameters.Count == 0)
-        {
-            specializedType = symbolInfo.GetCallableFunctionType();
-            return true;
-        }
-
-        if (!TryResolveGenericTypeArguments(
-                symbolInfo.TypeParameterSpecs,
-                typeArguments,
-                context,
-                $"Function '{symbolInfo.Name}'",
-                out var resolvedTypeArguments,
-                reportErrors))
-        {
-            specializedType = null!;
-            return false;
-        }
-
-        ApplyFunctionValueTypeArguments(context, resolvedTypeArguments);
-        var substitutions = BuildTypeSubstitutions(symbolInfo.TypeParameters, resolvedTypeArguments);
-        specializedType = new TypeNode
-        {
-            Name = symbolInfo.Name,
-            IsFunction = true,
-            ReturnType = symbolInfo.GetCallableReturnType() is TypeNode returnType
-                ? SubstituteTypeParameters(returnType, substitutions)
-                : null,
-            ParamTypes = symbolInfo.GetCallableParameters()
-                .Select(parameter => SubstituteTypeParameters(parameter.TypeName, substitutions))
-                .ToList()
-        };
-        return true;
-    }
     private bool TryInferCallTypeArguments(
         SymbolInfo symbolInfo,
         CallExpr call,
@@ -404,6 +50,7 @@ public partial class TypeChecker
             out inferredArguments,
             out error);
     }
+
     private bool TryInferTypeArgumentsFromTypes(
         TypeNode parameterType,
         TypeNode argumentType,
@@ -430,6 +77,7 @@ public partial class TypeChecker
 
         return TryInferNamedTypeArguments(parameterType, argumentType, typeParameterNames, inferredByName);
     }
+
     private static bool IsInferredTypeParameterReference(TypeNode parameterType, ISet<string> typeParameterNames)
     {
         return typeParameterNames.Contains(parameterType.Name) &&
@@ -441,6 +89,7 @@ public partial class TypeChecker
             !parameterType.IsErrorUnion &&
             parameterType.ArraySize == null;
     }
+
     private bool TryInferErrorUnionTypeArguments(
         TypeNode parameterType,
         TypeNode argumentType,
@@ -465,6 +114,7 @@ public partial class TypeChecker
         result = TryInferTypeArgumentsFromTypes(parameterInner, argumentInner, typeParameterNames, inferredByName);
         return true;
     }
+
     private bool TryInferSliceTypeArguments(
         TypeNode parameterType,
         TypeNode argumentType,
@@ -496,6 +146,7 @@ public partial class TypeChecker
         result = false;
         return true;
     }
+
     private bool TryInferPointerTypeArguments(
         TypeNode parameterType,
         TypeNode argumentType,
@@ -536,6 +187,7 @@ public partial class TypeChecker
         result = TryInferTypeArgumentsFromTypes(parameterElementType, argumentElementType, typeParameterNames, inferredByName);
         return true;
     }
+
     private bool TryInferArrayTypeArguments(
         TypeNode parameterType,
         TypeNode argumentType,
@@ -562,6 +214,7 @@ public partial class TypeChecker
         result = TryInferTypeArgumentsFromTypes(parameterElement, argumentElement, typeParameterNames, inferredByName);
         return true;
     }
+
     private bool TryInferFunctionTypeArguments(
         TypeNode parameterType,
         TypeNode argumentType,
@@ -603,6 +256,7 @@ public partial class TypeChecker
             inferredByName);
         return true;
     }
+
     private bool TryInferNamedTypeArguments(
         TypeNode parameterType,
         TypeNode argumentType,
@@ -624,6 +278,7 @@ public partial class TypeChecker
 
         return true;
     }
+
     private static TypeNode CreateInferenceElementType(
         TypeNode type,
         bool clearSlice = false,
@@ -646,6 +301,7 @@ public partial class TypeChecker
 
         return elementType;
     }
+
     private static TypeNode GetPointerElementTypeForInference(TypeNode pointerType)
     {
         var level = Math.Max(pointerType.PointerLevel, 1);
@@ -654,6 +310,7 @@ public partial class TypeChecker
         element.IsPointer = element.PointerLevel > 0;
         return element;
     }
+
     private static bool TryBindInferredType(string typeParameter, TypeNode inferredType, Dictionary<string, TypeNode> inferredByName)
     {
         if (inferredByName.TryGetValue(typeParameter, out var existing))
@@ -662,6 +319,7 @@ public partial class TypeChecker
         inferredByName[typeParameter] = inferredType.Clone();
         return true;
     }
+
     private void ValidateTypeParameterDeclarations(
         IReadOnlyList<GenericTypeParameter> parameters,
         Node context,
@@ -691,6 +349,7 @@ public partial class TypeChecker
             }
         }
     }
+
     private bool TryResolveGenericTypeArguments(
         IReadOnlyList<GenericTypeParameter> parameters,
         IReadOnlyList<TypeNode> providedArguments,
@@ -751,6 +410,7 @@ public partial class TypeChecker
 
         return true;
     }
+
     private bool ResolveTypeParameterReferences(
         IReadOnlyList<GenericTypeParameter> parameters,
         Node context)
@@ -789,6 +449,7 @@ public partial class TypeChecker
             _typeParameterScopes.Pop();
         }
     }
+
     private bool TryResolveGenericTypeArgumentsFromInference(
         IReadOnlyList<GenericTypeParameter> parameters,
         IReadOnlyDictionary<string, TypeNode> inferredByName,
@@ -828,6 +489,7 @@ public partial class TypeChecker
         resolvedArguments = resolved;
         return true;
     }
+
     private bool CheckGenericConstraint(
         GenericTypeParameter parameter,
         TypeNode argument,
@@ -841,6 +503,7 @@ public partial class TypeChecker
         _errors.Error(context, error!);
         return false;
     }
+
     private bool TryCheckGenericConstraint(
         GenericTypeParameter parameter,
         TypeNode argument,
@@ -859,6 +522,7 @@ public partial class TypeChecker
         error = $"Type argument '{parameter.Name}' for {ownerDescription} must satisfy constraint '{FormatType(resolvedConstraint)}', got '{FormatType(argument)}'.";
         return false;
     }
+
     private static string FormatGenericArityMessage(string ownerDescription, int requiredCount, int totalCount, int actualCount)
     {
         if (totalCount == 0)
@@ -869,6 +533,7 @@ public partial class TypeChecker
 
         return $"{ownerDescription} expects between {requiredCount} and {totalCount} type argument(s), got {actualCount}.";
     }
+
     private static int GetMinimumGenericArgumentCount(IReadOnlyList<GenericTypeParameter> parameters)
     {
         var requiredCount = parameters.Count;
@@ -877,6 +542,7 @@ public partial class TypeChecker
 
         return requiredCount;
     }
+
     private void ValidateConcreteGenericStructLayout(TypeNode type, Node context, StructNode structNode)
     {
         if (type.TypeArguments.Count == 0)
@@ -893,15 +559,18 @@ public partial class TypeChecker
         if (!StructLayout.TryCompute(concreteStruct, ResolveConcreteStructForLayout, out _, out var layoutError) && layoutError != null)
             _errors.Error(context, layoutError);
     }
+
     private void PushTypeParameterScope(IEnumerable<string> typeParameters)
     {
         _typeParameterScopes.Push(new HashSet<string>(typeParameters, StringComparer.Ordinal));
     }
+
     private void PopTypeParameterScope()
     {
         if (_typeParameterScopes.Count > 0)
             _typeParameterScopes.Pop();
     }
+
     private bool IsTypeParameterReference(TypeNode type)
     {
         return type.NamespacePath.Count == 0 &&
@@ -909,6 +578,7 @@ public partial class TypeChecker
             !type.IsFunction &&
             _typeParameterScopes.Any(scope => scope.Contains(type.Name));
     }
+
     private List<(string Name, TypeNode Type)> GetStructFieldsForType(TypeNode structType)
     {
         var fullName = QualifiedNames.GetFullName(structType.NamespacePath, structType.Name);
@@ -921,6 +591,7 @@ public partial class TypeChecker
             .Select(field => (field.Name, SubstituteTypeParameters(field.TypeName, substitutions)))
             .ToList();
     }
+
     private List<UnionVariant> GetUnionVariantsForType(TypeNode unionType)
     {
         var fullName = QualifiedNames.GetFullName(unionType.NamespacePath, unionType.Name);
@@ -943,146 +614,5 @@ public partial class TypeChecker
                 TypeName = SubstituteTypeParameters(variant.TypeName, substitutions)
             })
             .ToList();
-    }
-    private static Dictionary<string, TypeNode> BuildTypeSubstitutions(IReadOnlyList<string> parameters, IReadOnlyList<TypeNode> arguments)
-    {
-        var result = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-        for (int i = 0; i < parameters.Count && i < arguments.Count; i++)
-            result[parameters[i]] = arguments[i].Clone();
-        return result;
-    }
-    private static TypeNode SubstituteTypeParameters(TypeNode type, IReadOnlyDictionary<string, TypeNode> substitutions)
-    {
-        if (type.NamespacePath.Count == 0 && type.TypeArguments.Count == 0 && substitutions.TryGetValue(type.Name, out var replacement))
-        {
-            var substituted = replacement.Clone();
-            substituted.IsVolatile |= type.IsVolatile;
-            substituted.IsPointer = type.IsPointer || substituted.IsPointer;
-            substituted.PointerLevel += type.PointerLevel;
-            substituted.IsSlice |= type.IsSlice;
-            if (type.ArraySize != null)
-            {
-                substituted.ArraySize = type.ArraySize;
-                substituted.ArraySizeExpr = type.ArraySizeExpr;
-            }
-            if (type.IsErrorUnion)
-            {
-                var innerType = substituted.Clone();
-                substituted.IsErrorUnion = true;
-                substituted.ErrorInnerType = innerType;
-            }
-            return substituted;
-        }
-
-        var clone = type.Clone();
-        clone.TypeArguments = clone.TypeArguments.Select(argument => SubstituteTypeParameters(argument, substitutions)).ToList();
-        if (clone.IsErrorUnion && clone.ErrorInnerType != null)
-            clone.ErrorInnerType = SubstituteTypeParameters(clone.ErrorInnerType, substitutions);
-        if (clone.IsFunction)
-        {
-            clone.ParamTypes = clone.ParamTypes.Select(param => SubstituteTypeParameters(param, substitutions)).ToList();
-            if (clone.ReturnType != null)
-                clone.ReturnType = SubstituteTypeParameters(clone.ReturnType, substitutions);
-        }
-
-        return clone;
-    }
-    private StructNode? ResolveConcreteStructForLayout(TypeNode type)
-    {
-        var fullName = QualifiedNames.GetFullName(type.NamespacePath, type.Name);
-        var definition = _symbolTable.LookupStructNode(fullName);
-        if (definition == null)
-            return null;
-        return definition.TypeParameters.Count == 0 ? definition : InstantiateStruct(definition, type);
-    }
-    private static StructNode InstantiateStruct(StructNode definition, TypeNode concreteType)
-    {
-        var substitutions = BuildTypeSubstitutions(definition.TypeParameters, concreteType.TypeArguments);
-        return new StructNode
-        {
-            File = definition.File,
-            Line = definition.Line,
-            Column = definition.Column,
-            Length = definition.Length,
-            IsExported = definition.IsExported,
-            NamespacePath = new List<string>(definition.NamespacePath),
-            Name = FormatNonErrorType(concreteType),
-            Attributes = new List<string>(definition.Attributes),
-            AlignExpr = definition.AlignExpr,
-            Fields = definition.Fields.Select(field => new StructField
-            {
-                File = field.File,
-                Line = field.Line,
-                Column = field.Column,
-                Length = field.Length,
-                Name = field.Name,
-                TypeName = SubstituteTypeParameters(field.TypeName, substitutions),
-                Attributes = new List<string>(field.Attributes),
-                OffsetExpr = field.OffsetExpr
-            }).ToList()
-        };
-    }
-    private static EnumNode InstantiateEnum(EnumNode definition, TypeNode concreteType)
-    {
-        return new EnumNode
-        {
-            File = definition.File,
-            Line = definition.Line,
-            Column = definition.Column,
-            Length = definition.Length,
-            IsExported = definition.IsExported,
-            NamespacePath = new List<string>(definition.NamespacePath),
-            Name = concreteType.Name,
-            UnderlyingType = definition.UnderlyingType.Clone(),
-            Members = definition.Members
-                .Select(member => new EnumMember
-                {
-                    File = member.File,
-                    Line = member.Line,
-                    Column = member.Column,
-                    Length = member.Length,
-                    Name = member.Name,
-                    Value = member.Value,
-                    ResolvedValue = member.ResolvedValue
-                })
-                .ToList()
-        };
-    }
-    private static UnionNode InstantiateUnion(UnionNode definition, TypeNode concreteType)
-    {
-        var substitutions = BuildTypeSubstitutions(definition.TypeParameters, concreteType.TypeArguments);
-        return new UnionNode
-        {
-            File = definition.File,
-            Line = definition.Line,
-            Column = definition.Column,
-            Length = definition.Length,
-            IsExported = definition.IsExported,
-            NamespacePath = new List<string>(definition.NamespacePath),
-            Name = concreteType.Name,
-            Variants = definition.Variants
-                .Select(variant => new UnionVariant
-                {
-                    File = variant.File,
-                    Line = variant.Line,
-                    Column = variant.Column,
-                    Length = variant.Length,
-                    Name = variant.Name,
-                    TypeName = SubstituteTypeParameters(variant.TypeName, substitutions)
-                })
-                .ToList()
-        };
-    }
-    private static UnionVariant CloneUnionVariant(UnionVariant variant)
-    {
-        return new UnionVariant
-        {
-            File = variant.File,
-            Line = variant.Line,
-            Column = variant.Column,
-            Length = variant.Length,
-            Name = variant.Name,
-            TypeName = variant.TypeName.Clone()
-        };
     }
 }
