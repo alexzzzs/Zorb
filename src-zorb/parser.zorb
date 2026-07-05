@@ -22,22 +22,22 @@ export struct ZParser {
 }
 
 export fn ZParser.init(tokens: *ZTokenList) -> ZParser {
-    parser: ZParser
-    parser.tokens = tokens
-    parser.index = 0
-    parser.import_count = 0
-    parser.extern_count = 0
-    parser.error_count = 0
-    parser.const_count = 0
-    parser.global_count = 0
-    parser.struct_count = 0
-    parser.enum_count = 0
-    parser.union_count = 0
-    parser.last_function_locals = 0
-    parser.current_call_count = 0
-    parser.current_binary_count = 0
-    parser.function_count = 0
-    return parser
+    return ZParser{
+        tokens: tokens,
+        index: 0,
+        import_count: 0,
+        extern_count: 0,
+        error_count: 0,
+        const_count: 0,
+        global_count: 0,
+        struct_count: 0,
+        enum_count: 0,
+        union_count: 0,
+        last_function_locals: 0,
+        current_call_count: 0,
+        current_binary_count: 0,
+        function_count: 0
+    }
 }
 
 fn zparser_current(self: *ZParser) -> ZToken {

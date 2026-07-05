@@ -132,16 +132,17 @@ export struct ZAstModule {
 }
 
 export fn ZAstText.from_token(token: ZToken) -> ZAstText {
-    text: ZAstText
-    text.ptr = token.ptr
-    text.len = token.len
-    return text
+    return ZAstText{
+        ptr: token.ptr,
+        len: token.len
+    }
 }
 
 export fn ZAstText.from_range(start: ZToken, end: ZToken) -> ZAstText {
-    text: ZAstText
-    text.ptr = start.ptr
-    text.len = 0
+    text: ZAstText = ZAstText{
+        ptr: start.ptr,
+        len: 0
+    }
     cursor: *u8 = start.ptr
     while cursor != end.ptr {
         text.len = text.len + 1
@@ -152,10 +153,10 @@ export fn ZAstText.from_range(start: ZToken, end: ZToken) -> ZAstText {
 }
 
 export fn ZAstText.empty() -> ZAstText {
-    text: ZAstText
-    text.ptr = cast(*u8, 0)
-    text.len = 0
-    return text
+    return ZAstText{
+        ptr: cast(*u8, 0),
+        len: 0
+    }
 }
 
 export fn ZAstText.eql(self: ZAstText, other: ZAstText) -> bool {
@@ -260,53 +261,53 @@ export fn ZAstText.eql_string(self: ZAstText, value: string) -> bool {
 }
 
 export fn ZAstDecl.init(kind: i64, exported: bool) -> ZAstDecl {
-    decl: ZAstDecl
-    decl.kind = kind
-    decl.exported = exported
-    decl.name = ZAstText.empty()
-    decl.path = ZAstText.empty()
-    decl.alias = ZAstText.empty()
-    decl.is_c_import = false
-    decl.type_index = ZAstNoIndex
-    decl.return_type_index = ZAstNoIndex
-    decl.init_expr = ZAstNoIndex
-    decl.param_start = 0
-    decl.param_count = 0
-    decl.member_start = 0
-    decl.member_count = 0
-    decl.stmt_start = 0
-    decl.stmt_count = 0
-    decl.local_count = 0
-    decl.return_count = 0
-    decl.call_count = 0
-    decl.binary_count = 0
-    return decl
+    return ZAstDecl{
+        kind: kind,
+        exported: exported,
+        name: ZAstText.empty(),
+        path: ZAstText.empty(),
+        alias: ZAstText.empty(),
+        is_c_import: false,
+        type_index: ZAstNoIndex,
+        return_type_index: ZAstNoIndex,
+        init_expr: ZAstNoIndex,
+        param_start: 0,
+        param_count: 0,
+        member_start: 0,
+        member_count: 0,
+        stmt_start: 0,
+        stmt_count: 0,
+        local_count: 0,
+        return_count: 0,
+        call_count: 0,
+        binary_count: 0
+    }
 }
 
 export fn ZAstExpr.init(kind: i64) -> ZAstExpr {
-    expr: ZAstExpr
-    expr.kind = kind
-    expr.name = ZAstText.empty()
-    expr.literal = ZAstText.empty()
-    expr.op = ZAstNoIndex
-    expr.left = ZAstNoIndex
-    expr.right = ZAstNoIndex
-    expr.type_index = ZAstNoIndex
-    expr.arg_start = 0
-    expr.arg_count = 0
-    return expr
+    return ZAstExpr{
+        kind: kind,
+        name: ZAstText.empty(),
+        literal: ZAstText.empty(),
+        op: ZAstNoIndex,
+        left: ZAstNoIndex,
+        right: ZAstNoIndex,
+        type_index: ZAstNoIndex,
+        arg_start: 0,
+        arg_count: 0
+    }
 }
 
 export fn ZAstStmt.init(kind: i64) -> ZAstStmt {
-    stmt: ZAstStmt
-    stmt.kind = kind
-    stmt.name = ZAstText.empty()
-    stmt.type_index = ZAstNoIndex
-    stmt.expr_index = ZAstNoIndex
-    stmt.value_expr = ZAstNoIndex
-    stmt.child_start = 0
-    stmt.child_count = 0
-    return stmt
+    return ZAstStmt{
+        kind: kind,
+        name: ZAstText.empty(),
+        type_index: ZAstNoIndex,
+        expr_index: ZAstNoIndex,
+        value_expr: ZAstNoIndex,
+        child_start: 0,
+        child_count: 0
+    }
 }
 
 fn zast_next_capacity(current: i64, needed: i64) -> i64 {
@@ -323,37 +324,38 @@ fn zast_next_capacity(current: i64, needed: i64) -> i64 {
 }
 
 export fn ZAstModule.init(allocator: *std.mem.HeapAllocator, initial_capacity: i64) !ZAstModule {
-    module: ZAstModule
-    module.decls = cast(*ZAstDecl, 0)
-    module.len = 0
-    module.capacity = 0
-    module.types = cast(*ZAstType, 0)
-    module.type_count = 0
-    module.type_capacity = 0
-    module.params = cast(*ZAstParam, 0)
-    module.param_count_total = 0
-    module.param_capacity = 0
-    module.members = cast(*ZAstMember, 0)
-    module.member_count_total = 0
-    module.member_capacity = 0
-    module.stmts = cast(*ZAstStmt, 0)
-    module.stmt_count_total = 0
-    module.stmt_capacity = 0
-    module.exprs = cast(*ZAstExpr, 0)
-    module.expr_count = 0
-    module.expr_capacity = 0
-    module.expr_args = cast(*i64, 0)
-    module.expr_arg_count = 0
-    module.expr_arg_capacity = 0
-    module.import_count = 0
-    module.extern_count = 0
-    module.error_count = 0
-    module.const_count = 0
-    module.global_count = 0
-    module.struct_count = 0
-    module.enum_count = 0
-    module.union_count = 0
-    module.function_count = 0
+    module: ZAstModule = ZAstModule{
+        decls: cast(*ZAstDecl, 0),
+        len: 0,
+        capacity: 0,
+        types: cast(*ZAstType, 0),
+        type_count: 0,
+        type_capacity: 0,
+        params: cast(*ZAstParam, 0),
+        param_count_total: 0,
+        param_capacity: 0,
+        members: cast(*ZAstMember, 0),
+        member_count_total: 0,
+        member_capacity: 0,
+        stmts: cast(*ZAstStmt, 0),
+        stmt_count_total: 0,
+        stmt_capacity: 0,
+        exprs: cast(*ZAstExpr, 0),
+        expr_count: 0,
+        expr_capacity: 0,
+        expr_args: cast(*i64, 0),
+        expr_arg_count: 0,
+        expr_arg_capacity: 0,
+        import_count: 0,
+        extern_count: 0,
+        error_count: 0,
+        const_count: 0,
+        global_count: 0,
+        struct_count: 0,
+        enum_count: 0,
+        union_count: 0,
+        function_count: 0
+    }
 
     if initial_capacity < 0 {
         return error.InvalidSize

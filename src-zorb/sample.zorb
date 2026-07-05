@@ -1,8 +1,50 @@
-export fn answer(value: i64) -> i64 {
-    if value >= 40 && value <= 44 {
-        return value + 2
-    }
+import c "stdio.h"
+import "pkg/math.zorb" as math
 
-    return 0
+export error Bad = 1;
+export const answer: i64 = 42;
+counter: i64 = 0;
+
+export struct Pair {
+    lhs: i64,
+    rhs: i64
 }
 
+enum Mode: i64 {
+    Run = 1,
+    Stop
+}
+
+union Value {
+    Number: i64,
+    Flag: bool
+}
+
+extern fn puts(text: string) -> i32;
+
+fn helper(value: i64) -> i64 {
+    return value
+}
+
+fn use_pair(pair: Pair, items: [4]i64) -> i64 {
+    lhs: i64 = pair.lhs
+    first: i64 = items[0]
+    pair.lhs = first
+    pair_ptr: *Pair = &pair
+    deref_lhs: i64 = (*pair_ptr).lhs
+    calc: i64 = lhs + first * 2
+    narrowed: i32 = cast(i32, first)
+    err_code: i32 = error.Bad
+    return calc
+}
+
+export fn add(lhs: i64, rhs: i64) -> i64 {
+    total: i64 = lhs + rhs
+    ptr: *i64 = &lhs
+    neg: i64 = -lhs
+    more: i64 = helper(total)
+    if more > 0 {
+        return more
+    }
+    return helper(lhs + rhs)
+}

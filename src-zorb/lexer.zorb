@@ -144,12 +144,13 @@ fn zlexer_advance_count(self: *ZLexer, count: i64) {
 }
 
 fn zlexer_append_token(tokens: *ZTokenList, allocator: *std.mem.HeapAllocator, kind: i64, ptr: *u8, len: i64, line: i64, column: i64) !i64 {
-    token: ZToken
-    token.kind = kind
-    token.ptr = ptr
-    token.len = len
-    token.line = line
-    token.column = column
+    token: ZToken = ZToken{
+        kind: kind,
+        ptr: ptr,
+        len: len,
+        line: line,
+        column: column
+    }
     ZTokenList.append(tokens, allocator, token) catch |err| {
         if err == error.InvalidSize {
             return error.InvalidSize
@@ -373,12 +374,12 @@ fn zlexer_scan_punctuation(self: *ZLexer, tokens: *ZTokenList, allocator: *std.m
 }
 
 export fn ZLexer.init(source: []u8) -> ZLexer {
-    lexer: ZLexer
-    lexer.source = source
-    lexer.index = 0
-    lexer.line = 1
-    lexer.column = 1
-    return lexer
+    return ZLexer{
+        source: source,
+        index: 0,
+        line: 1,
+        column: 1
+    }
 }
 
 export fn ZLexer.tokenize(self: *ZLexer, allocator: *std.mem.HeapAllocator, tokens: *ZTokenList, interner: *std.collections.StringInterner) !i64 {

@@ -87,10 +87,11 @@ export struct ZTokenList {
 }
 
 export fn ZTokenList.init(allocator: *std.mem.HeapAllocator, initial_capacity: i64) !ZTokenList {
-    list: ZTokenList
-    list.ptr = cast(*ZToken, 0)
-    list.len = 0
-    list.capacity = 0
+    list: ZTokenList = ZTokenList{
+        ptr: cast(*ZToken, 0),
+        len: 0,
+        capacity: 0
+    }
 
     if initial_capacity < 0 {
         return error.InvalidSize
@@ -158,4 +159,3 @@ export fn ZTokenList.append(self: *ZTokenList, allocator: *std.mem.HeapAllocator
     self.len = self.len + 1
     return 0
 }
-
