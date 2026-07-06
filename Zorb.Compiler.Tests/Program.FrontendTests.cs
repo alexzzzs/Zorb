@@ -201,6 +201,61 @@ export struct Box<T> {
         });
     }
 
+    private static void RunGenericFunctionValueDeferredInferenceTests()
+    {
+        WithTempDirectory("zorb-generic-function-value-deferred-inference", tempDir =>
+        {
+            var mainPath = Path.Combine(tempDir, "main.zorb");
+            File.WriteAllText(mainPath, """
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn apply<T>(cb: fn(T) -> T, value: T) -> T {
+    return cb(value)
+}
+
+fn main() -> i64 {
+    return apply(identity, 41)
+}
+""");
+
+            var compilation = CompileFixture(mainPath, tempDir);
+            AssertPhase(compilation.Phase, FixturePhase.Success, compilation.FailureMessage);
+            AssertNoErrors(compilation.ParseErrors);
+            AssertNoErrors(compilation.Checker.Errors.Errors);
+            RunLlvmEmissionTest(tempDir, mainPath);
+        });
+    }
+
+    private static void RunGenericFunctionValueFactoryTests()
+    {
+        WithTempDirectory("zorb-generic-function-value-factory", tempDir =>
+        {
+            var mainPath = Path.Combine(tempDir, "main.zorb");
+            File.WriteAllText(mainPath, """
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn factory<T>() -> fn(T) -> T {
+    return identity
+}
+
+fn main() -> i64 {
+    cb: fn(i64) -> i64 = factory<i64>()
+    return cb(41)
+}
+""");
+
+            var compilation = CompileFixture(mainPath, tempDir);
+            AssertPhase(compilation.Phase, FixturePhase.Success, compilation.FailureMessage);
+            AssertNoErrors(compilation.ParseErrors);
+            AssertNoErrors(compilation.Checker.Errors.Errors);
+            RunLlvmEmissionTest(tempDir, mainPath);
+        });
+    }
+
     private static void RunResolvedCallMetadataTests()
     {
         var fixtureRoot = GetFixtureRoot();
@@ -234,7 +289,9 @@ export struct Box<T> {
 
         var mainFunction = compilation.Ast.OfType<FunctionDecl>().FirstOrDefault(fn => string.Equals(fn.Name, "main", StringComparison.Ordinal))
             ?? throw new Exception($"Expected fixture '{fixtureDir}' to define a main function.");
-        var call = FindFirstCallInStatements(mainFunction.Body)
+        var call = AstTraversal.EnumerateExpressions(mainFunction)
+            .OfType<CallExpr>()
+            .FirstOrDefault()
             ?? throw new Exception($"Expected to find a call expression in main() for fixture '{fixtureDir}'.");
 
         if (!string.Equals(call.ResolvedQualifiedName, expectedQualifiedName, StringComparison.Ordinal))
@@ -251,87 +308,5 @@ export struct Box<T> {
 
         if (call.ResolvedFunctionType.ReturnType?.Name != "i64")
             throw new Exception("ResolvedFunctionType cached unexpected return type.");
-    }
-
-    private static CallExpr? FindFirstCallInNode(Node node)
-    {
-        switch (node)
-        {
-            case FunctionDecl fn:
-                return FindFirstCallInStatements(fn.Body);
-            case VariableDeclarationNode varDecl:
-                return varDecl.Value != null ? FindFirstCallInExpr(varDecl.Value) : null;
-            case ExpressionStatement exprStmt:
-                return FindFirstCallInExpr(exprStmt.Expression);
-            case AssignStmt assign:
-                return FindFirstCallInExpr(assign.Target) ?? FindFirstCallInExpr(assign.Value);
-            case ReturnNode returnNode:
-                return returnNode.Value != null ? FindFirstCallInExpr(returnNode.Value) : null;
-            case IfStmt ifStmt:
-                return FindFirstCallInExpr(ifStmt.Condition) ?? FindFirstCallInStatements(ifStmt.Body) ?? FindFirstCallInStatements(ifStmt.ElseBody);
-            case WhileStmt whileStmt:
-                return FindFirstCallInExpr(whileStmt.Condition) ?? FindFirstCallInStatements(whileStmt.Body);
-            case ForStmt forStmt:
-                return (forStmt.Initializer != null ? FindFirstCallInStatement(forStmt.Initializer) : null)
-                    ?? (forStmt.Condition != null ? FindFirstCallInExpr(forStmt.Condition) : null)
-                    ?? (forStmt.Update != null ? FindFirstCallInStatement(forStmt.Update) : null)
-                    ?? FindFirstCallInStatements(forStmt.Body);
-            default:
-                return null;
-        }
-    }
-
-    private static CallExpr? FindFirstCallInStatement(Statement statement)
-    {
-        return FindFirstCallInStatements([statement]);
-    }
-
-    private static CallExpr? FindFirstCallInStatements(IEnumerable<Statement> statements)
-    {
-        foreach (var statement in statements)
-        {
-            if (FindFirstCallInNode(statement) is CallExpr call)
-                return call;
-        }
-
-        return null;
-    }
-
-    private static CallExpr? FindFirstCallInExpr(Expr expr)
-    {
-        switch (expr)
-        {
-            case CallExpr call:
-                return call;
-            case BinaryExpr binary:
-                return FindFirstCallInExpr(binary.Left) ?? FindFirstCallInExpr(binary.Right);
-            case UnaryExpr unary:
-                return FindFirstCallInExpr(unary.Operand);
-            case CastExpr cast:
-                return FindFirstCallInExpr(cast.Expr);
-            case IndexExpr index:
-                return FindFirstCallInExpr(index.Target) ?? FindFirstCallInExpr(index.Index);
-            case FieldExpr field:
-                return FindFirstCallInExpr(field.Target);
-            case StructLiteralExpr structLiteral:
-                return FindFirstCallInExprs(structLiteral.Fields.Select(field => field.Value));
-            case ArrayLiteralExpr arrayLiteral:
-                return FindFirstCallInExprs(arrayLiteral.Elements);
-            case CatchExpr catchExpr:
-                return FindFirstCallInExpr(catchExpr.Left) ?? FindFirstCallInStatements(catchExpr.CatchBody);
-            default:
-                return null;
-        }
-    }
-
-    private static CallExpr? FindFirstCallInExprs(IEnumerable<Expr> expressions)
-    {
-        foreach (var expr in expressions)
-        {
-            if (FindFirstCallInExpr(expr) is CallExpr call)
-                return call;
-        }
-
-        return null;
     }
 }

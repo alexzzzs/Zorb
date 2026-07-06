@@ -230,6 +230,8 @@ public partial class TypeChecker
             ? SubstituteTypeParameters(type, substitutions)
             : null;
 
+        SpecializeGenericFunctionValueArguments(call, parameters);
+
         call.ResolvedFunctionType = new TypeNode
         {
             Name = symbolInfo.Name,
@@ -241,6 +243,27 @@ public partial class TypeChecker
             displayName,
             parameters,
             returnType);
+    }
+
+    private void SpecializeGenericFunctionValueArguments(CallExpr call, IReadOnlyList<Parameter> parameters)
+    {
+        var argCount = Math.Min(parameters.Count, call.Args.Count);
+        for (var i = 0; i < argCount; i++)
+        {
+            var argument = call.Args[i];
+            if (!TryResolveGenericFunctionValueSourceInfo(argument, out _, out var typeArguments) || typeArguments.Count > 0)
+                continue;
+
+            var argumentType = GetExpressionType(argument, reportErrors: false);
+            if (argumentType == null)
+                continue;
+
+            _ = TrySpecializeGenericFunctionValueForTarget(
+                parameters[i].TypeName,
+                argument,
+                argumentType,
+                out _);
+        }
     }
 
     private bool TrySpecializeGenericFunctionValueForTarget(

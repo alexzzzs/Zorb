@@ -1,0 +1,11 @@
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn apply<T>(cb: fn(T) -> T, value: T) -> T {
+    return cb(value)
+}
+
+fn main() -> i64 {
+    return apply(identity, 41)
+}

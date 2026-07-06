@@ -31,6 +31,9 @@ public partial class TypeChecker
         var inferredByName = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         foreach (var (parameter, argument) in parameters.Zip(call.Args))
         {
+            if (ShouldDeferGenericFunctionValueInference(argument))
+                continue;
+
             var argumentType = GetExpressionType(argument, reportErrors: false);
             if (argumentType == null)
                 return true;
@@ -49,6 +52,13 @@ public partial class TypeChecker
             $"generic function '{symbolInfo.Name}'",
             out inferredArguments,
             out error);
+    }
+
+    private bool ShouldDeferGenericFunctionValueInference(Expr argument)
+    {
+        return TryResolveGenericFunctionValueSourceInfo(argument, out var symbolInfo, out var typeArguments) &&
+            symbolInfo.TypeParameters.Count > 0 &&
+            typeArguments.Count == 0;
     }
 
     private bool TryInferTypeArgumentsFromTypes(

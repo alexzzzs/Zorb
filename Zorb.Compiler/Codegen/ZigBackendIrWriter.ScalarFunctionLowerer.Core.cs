@@ -239,11 +239,16 @@ public sealed partial class ZigBackendIrWriter
                     => local.Type.Clone(),
                 IdentifierExpr identifier when _globals.TryGetValue(identifier.Name, out var global)
                     => global.TypeName.Clone(),
+                IdentifierExpr identifier when ResolveFunctionValueType(identifier.Name, identifier.TypeArguments) is TypeNode functionType
+                    => functionType,
                 IndexExpr index
                     => GetIndexedElementType(GetCheckedType(index.Target)),
                 FieldExpr field when field.ResolvedQualifiedName is string resolvedGlobal &&
                                      _globals.TryGetValue(resolvedGlobal, out var global)
                     => global.TypeName.Clone(),
+                FieldExpr field when field.ResolvedQualifiedName is string resolvedFunction &&
+                                     ResolveFunctionValueType(resolvedFunction, field.TypeArguments) is TypeNode resolvedFunctionType
+                    => resolvedFunctionType,
                 FieldExpr field when field.ResolvedQualifiedName is string resolvedFunction &&
                                      _functionTypes.TryGetValue(resolvedFunction, out var functionType)
                     => functionType.Clone(),
@@ -305,10 +310,13 @@ public sealed partial class ZigBackendIrWriter
             var resolvedName = call.ResolvedTargetQualifiedName
                 ?? call.ResolvedQualifiedName
                 ?? QualifiedNames.GetFullName(call.NamespacePath, call.Name);
-            if (call.TypeArguments.Count > 0)
-                resolvedName = GenericFunctionName(resolvedName, call.TypeArguments);
-            return _functionTypes.TryGetValue(resolvedName, out var type)
-                ? type
+            return ResolveFunctionValueType(resolvedName, call.TypeArguments);
+        }
+        private TypeNode? ResolveFunctionValueType(string resolvedName, IReadOnlyList<TypeNode> typeArguments)
+        {
+            var loweringName = ResolveFunctionValueLoweringName(resolvedName, typeArguments);
+            return _functionTypes.TryGetValue(loweringName, out var type)
+                ? type.Clone()
                 : null;
         }
         private uint NextValueId()
