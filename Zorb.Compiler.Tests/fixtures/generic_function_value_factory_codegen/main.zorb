@@ -1,0 +1,12 @@
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn factory<T>() -> fn(T) -> T {
+    return identity
+}
+
+fn main() -> i64 {
+    cb: fn(i64) -> i64 = factory<i64>()
+    return cb(41)
+}

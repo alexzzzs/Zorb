@@ -613,6 +613,13 @@ public sealed partial class ZigBackendIrWriter
         }
         private uint LowerCallArgument(Expr argument, TypeNode? parameterType)
         {
+            if (parameterType != null &&
+                parameterType.IsFunction &&
+                TryLowerSpecializedFunctionValueArgument(argument, parameterType, out var specializedFunctionValue))
+            {
+                return specializedFunctionValue;
+            }
+
             var argumentType = GetCheckedType(argument);
             if (TryLowerContextualArrayCoercion(argument, argumentType, parameterType, out var contextualValue))
                 return contextualValue;
@@ -625,6 +632,26 @@ public sealed partial class ZigBackendIrWriter
             }
 
             return LowerExpression(argument, parameterType);
+        }
+        private bool TryLowerSpecializedFunctionValueArgument(Expr argument, TypeNode parameterType, out uint functionValue)
+        {
+            switch (argument)
+            {
+                case IdentifierExpr identifier when _functionIds.TryGetValue(
+                    ResolveFunctionValueLoweringName(identifier.Name, identifier.TypeArguments),
+                    out var functionId):
+                    functionValue = EmitFunctionAddress(functionId, parameterType.Clone());
+                    return true;
+
+                case FieldExpr { ResolvedQualifiedName: string resolvedName } field when _functionIds.TryGetValue(
+                    ResolveFunctionValueLoweringName(resolvedName, field.TypeArguments),
+                    out var resolvedFunctionId):
+                    functionValue = EmitFunctionAddress(resolvedFunctionId, parameterType.Clone());
+                    return true;
+            }
+
+            functionValue = 0;
+            return false;
         }
         private uint LowerLogical(BinaryExpr binary)
         {

@@ -236,7 +236,9 @@ internal static class AstSpecialization
                     TargetExpr = call.TargetExpr != null ? CloneExpr(call.TargetExpr, substitutions) : null,
                     ResolvedQualifiedName = call.ResolvedQualifiedName,
                     ResolvedTargetQualifiedName = call.ResolvedTargetQualifiedName,
-                    ResolvedFunctionType = call.ResolvedFunctionType?.Clone()
+                    ResolvedFunctionType = call.ResolvedFunctionType != null
+                        ? SubstituteTypeParameters(call.ResolvedFunctionType, substitutions)
+                        : null
                 });
             case FieldExpr field:
                 return CopyNode(field, new FieldExpr

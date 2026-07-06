@@ -32,6 +32,8 @@ internal static partial class Program
         RunNamedTest(failures, "builtin_parser_reserved_declarations", RunBuiltinParserReservedDeclarationTests);
         RunNamedTest(failures, "generic_default_arity_recovery", RunGenericDefaultArityRecoveryTests);
         RunNamedTest(failures, "generic_function_default_import_alias", RunGenericFunctionDefaultImportAliasTests);
+        RunNamedTest(failures, "generic_function_value_deferred_inference", RunGenericFunctionValueDeferredInferenceTests);
+        RunNamedTest(failures, "generic_function_value_factory", RunGenericFunctionValueFactoryTests);
         RunNamedTest(failures, "resolved_call_metadata", RunResolvedCallMetadataTests);
 
         var examplesRoot = Path.Combine(projectRoot, "examples");
