@@ -1,0 +1,2 @@
+define i64 @"apply$g$i64"(ptr %cb, i64 %value)
+call i64 @"apply$g$i64"(ptr @"identity$g$i64", i64 41)

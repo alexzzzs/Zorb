@@ -249,9 +249,6 @@ public sealed partial class ZigBackendIrWriter
                 FieldExpr field when field.ResolvedQualifiedName is string resolvedFunction &&
                                      ResolveFunctionValueType(resolvedFunction, field.TypeArguments) is TypeNode resolvedFunctionType
                     => resolvedFunctionType,
-                FieldExpr field when field.ResolvedQualifiedName is string resolvedFunction &&
-                                     _functionTypes.TryGetValue(resolvedFunction, out var functionType)
-                    => functionType.Clone(),
                 FieldExpr field when GetCheckedType(field.Target).IsSlice && field.Field == "len"
                     => new TypeNode { Name = "i64" },
                 FieldExpr field when GetCheckedType(field.Target).IsSlice && field.Field == "ptr"
