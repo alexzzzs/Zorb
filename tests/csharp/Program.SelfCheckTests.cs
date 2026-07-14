@@ -32,6 +32,7 @@ internal static partial class Program
         var backendIrSignedDivInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_signed_div.zorb");
         var backendIrMultipleFunctionsInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_multiple_functions.zorb");
         var backendIrDirectCallInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_direct_call.zorb");
+        var backendIrNestedExpressionInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_nested_expression.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -74,6 +75,7 @@ internal static partial class Program
             AssertNativeBackendIr(binaryPath, projectRoot, tempDir, backendIrInput, backendIrAddInput, backendIrSignedDivInput);
             AssertNativeMultipleFunctionsBackendIr(binaryPath, projectRoot, tempDir, backendIrMultipleFunctionsInput);
             AssertNativeDirectCallBackendIr(binaryPath, projectRoot, tempDir, backendIrDirectCallInput);
+            AssertNativeNestedExpressionBackendIr(binaryPath, projectRoot, tempDir, backendIrNestedExpressionInput);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
@@ -250,6 +252,46 @@ internal static partial class Program
         if (!llvm.Contains("define i32 @add_again(i32 %lhs, i32 %rhs)", StringComparison.Ordinal) ||
             !llvm.Contains("call i32 @add(i32 %lhs, i32 %rhs)", StringComparison.Ordinal))
             throw new Exception($"native direct-call IR produced unexpected LLVM.\n{llvm}".Trim());
+    }
+
+    private static void AssertNativeNestedExpressionBackendIr(
+        string binaryPath,
+        string workingDirectory,
+        string tempDirectory,
+        string inputPath)
+    {
+        var llvmPath = Path.Combine(tempDirectory, "native-nested-expression.ll");
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--emit-backend-ir", GetNativeLlvmTriple(), llvmPath, inputPath],
+            workingDirectory,
+            TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
+        if (execution.ExitCode != 0 || !string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"native nested-expression backend IR emission failed.\n{execution.StdErr}{execution.StdOut}".Trim());
+        using (var document = System.Text.Json.JsonDocument.Parse(execution.StdOut))
+        {
+            var instructions = document.RootElement.GetProperty("functions")[1]
+                .GetProperty("blocks")[0].GetProperty("instructions");
+            var operations = instructions.EnumerateArray()
+                .Select(instruction => instruction.GetProperty("op").GetString() == "binary"
+                    ? instruction.GetProperty("binary_op").GetString()
+                    : instruction.GetProperty("op").GetString())
+                .ToArray();
+            if (!operations.SequenceEqual(["call", "integer_constant", "add", "mul"], StringComparer.Ordinal) ||
+                instructions[3].GetProperty("lhs").GetInt64() != 3 ||
+                instructions[3].GetProperty("rhs").GetInt64() != 5)
+                throw new Exception("native backend IR did not emit the nested expression in value dependency order.");
+        }
+        var irPath = Path.Combine(tempDirectory, "native-nested-expression.json");
+        File.WriteAllText(irPath, execution.StdOut);
+        var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
+        if (backend.ExitCode != 0 || !File.Exists(llvmPath))
+            throw new Exception($"Zig backend rejected native nested-expression IR.\n{backend.StdErr}{backend.StdOut}".Trim());
+        var llvm = File.ReadAllText(llvmPath);
+        if (!llvm.Contains("call i32 @add(i32 %lhs, i32 %rhs)", StringComparison.Ordinal) ||
+            !llvm.Contains("add i32 %lhs, 2", StringComparison.Ordinal) ||
+            !llvm.Contains("mul i32", StringComparison.Ordinal))
+            throw new Exception($"native nested-expression IR produced unexpected LLVM.\n{llvm}".Trim());
     }
 
     private static void AssertSelfCheckJsonResult(

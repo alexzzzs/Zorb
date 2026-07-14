@@ -92,4 +92,6 @@ sharing the same scalar type. Each function either returns a positive integer
 literal or applies an arithmetic, remainder, bitwise, or shift operation to two
 same-typed parameters. Unsupported AST shapes fail explicitly while native
 lowering is expanded incrementally. A function may also directly return a call
-to another same-scalar function using its own parameters as arguments.
+to another same-scalar function. Integer literals, parameters, direct calls,
+and supported binary operations may be nested; lowering emits their values in
+post-order so every instruction references an earlier function-local value.
