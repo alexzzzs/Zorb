@@ -71,6 +71,13 @@ fn zbackend_ir_write_instructions(instructions: *ZBackendIrInstruction, count: i
             std.io.print_i64(instruction.lhs)
             std.io.print(",\"rhs\":")
             std.io.print_i64(instruction.rhs)
+        } else if instruction.op == "compare" {
+            std.io.print(",\"compare_op\":")
+            ZJson.write_string(instruction.compare_op)
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+            std.io.print(",\"rhs\":")
+            std.io.print_i64(instruction.rhs)
         } else if instruction.op == "call" {
             std.io.print(",\"callee\":")
             std.io.print_i64(instruction.callee)

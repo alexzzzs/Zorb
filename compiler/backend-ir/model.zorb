@@ -28,6 +28,7 @@ export struct ZBackendIrInstruction {
     type_id: i64,
     integer: i64,
     binary_op: string,
+    compare_op: string,
     lhs: i64,
     rhs: i64,
     callee: i64,

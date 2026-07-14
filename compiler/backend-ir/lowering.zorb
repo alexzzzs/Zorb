@@ -95,6 +95,21 @@ fn zbackend_ir_binary_op(token: i64) !string {
     return error.NotImplemented
 }
 
+fn zbackend_ir_is_comparison(token: i64) -> bool {
+    return token == ZTokenEqualEqual || token == ZTokenBangEqual || token == ZTokenLess ||
+        token == ZTokenLessEqual || token == ZTokenGreater || token == ZTokenGreaterEqual
+}
+
+fn zbackend_ir_compare_op(token: i64) !string {
+    if token == ZTokenEqualEqual { return "equal" }
+    if token == ZTokenBangEqual { return "not_equal" }
+    if token == ZTokenLess { return "signed_less" }
+    if token == ZTokenLessEqual { return "signed_less_equal" }
+    if token == ZTokenGreater { return "signed_greater" }
+    if token == ZTokenGreaterEqual { return "signed_greater_equal" }
+    return error.NotImplemented
+}
+
 struct ZBackendIrExpressionLowering {
     allocator: *std.mem.HeapAllocator,
     ast: *ZAstModule,
@@ -115,6 +130,7 @@ fn zbackend_ir_new_instruction(id: i64, op: string) -> ZBackendIrInstruction {
         type_id: 1,
         integer: 0,
         binary_op: "",
+        compare_op: "",
         lhs: 0,
         rhs: 0,
         callee: 0,
@@ -205,9 +221,17 @@ fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, expressi
     if expression.kind == ZAstExprBinary {
         lhs: i64 = zbackend_ir_lower_expression(context, expression.left) catch |err| { return err }
         rhs: i64 = zbackend_ir_lower_expression(context, expression.right) catch |err| { return err }
-        binary_op: string = zbackend_ir_binary_op(expression.op) catch |err| { return err }
         id: i64 = context.next_value_id
         context.next_value_id = context.next_value_id + 1
+        if zbackend_ir_is_comparison(expression.op) {
+            compare_op: string = zbackend_ir_compare_op(expression.op) catch |err| { return err }
+            comparison: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "compare")
+            comparison.compare_op = compare_op
+            comparison.lhs = lhs
+            comparison.rhs = rhs
+            return zbackend_ir_append_instruction(context, comparison) catch |err| { return err }
+        }
+        binary_op: string = zbackend_ir_binary_op(expression.op) catch |err| { return err }
         instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "binary")
         instruction.binary_op = binary_op
         instruction.lhs = lhs
@@ -426,6 +450,8 @@ export fn ZBackendIrLowering.lower_module(
         scalar_name = "i32"
     } else if ZAstText.eql_string(first_return_type, "i64") {
         scalar_name = "i64"
+    } else if ZAstText.eql_string(first_return_type, "bool") {
+        scalar_name = "bool"
     } else {
         return error.NotImplemented
     }

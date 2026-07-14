@@ -105,3 +105,6 @@ incremental.
 Unary integer negation is compositional: the operand is recursively lowered,
 then the frontend emits an integer zero and a `sub` instruction. This supports
 both negative literals and negated nested expressions without a special IR op.
+
+Boolean functions and equality or signed ordered comparisons lower to the
+backend `compare` instruction with the canonical `compare_op` names.

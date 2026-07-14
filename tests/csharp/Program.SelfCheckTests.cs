@@ -37,6 +37,7 @@ internal static partial class Program
         var backendIrAssignmentInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_assignment.zorb");
         var backendIrParametersInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_parameters.zorb");
         var backendIrNegationInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_negation.zorb");
+        var backendIrComparisonInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_comparison.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -84,6 +85,7 @@ internal static partial class Program
             AssertNativeAssignmentBackendIr(binaryPath, projectRoot, tempDir, backendIrAssignmentInput);
             AssertNativeParametersBackendIr(binaryPath, projectRoot, tempDir, backendIrParametersInput);
             AssertNativeNegationBackendIr(binaryPath, projectRoot, tempDir, backendIrNegationInput);
+            AssertNativeComparisonBackendIr(binaryPath, projectRoot, tempDir, backendIrComparisonInput);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
@@ -453,6 +455,43 @@ internal static partial class Program
         if (!llvm.Contains("add i32 %value, 2", StringComparison.Ordinal) ||
             !llvm.Contains("sub i32 0", StringComparison.Ordinal))
             throw new Exception($"native negation IR produced unexpected LLVM.\n{llvm}".Trim());
+    }
+
+    private static void AssertNativeComparisonBackendIr(
+        string binaryPath,
+        string workingDirectory,
+        string tempDirectory,
+        string inputPath)
+    {
+        var llvmPath = Path.Combine(tempDirectory, "native-comparison.ll");
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--emit-backend-ir", GetNativeLlvmTriple(), llvmPath, inputPath],
+            workingDirectory,
+            TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
+        if (execution.ExitCode != 0 || !string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"native comparison backend IR emission failed.\n{execution.StdErr}{execution.StdOut}".Trim());
+        using (var document = System.Text.Json.JsonDocument.Parse(execution.StdOut))
+        {
+            var root = document.RootElement;
+            var instruction = root.GetProperty("functions")[0].GetProperty("blocks")[0].GetProperty("instructions")[0];
+            if (root.GetProperty("types")[0].GetProperty("scalar").GetString() != "bool" ||
+                instruction.GetProperty("op").GetString() != "compare" ||
+                instruction.GetProperty("compare_op").GetString() != "equal" ||
+                instruction.GetProperty("lhs").GetInt64() != 1 ||
+                instruction.GetProperty("rhs").GetInt64() != 2)
+                throw new Exception("native backend IR did not lower the boolean comparison.");
+        }
+        var irPath = Path.Combine(tempDirectory, "native-comparison.json");
+        File.WriteAllText(irPath, execution.StdOut);
+        var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
+        if (backend.ExitCode != 0 || !File.Exists(llvmPath))
+            throw new Exception($"Zig backend rejected native comparison IR.\n{backend.StdErr}{backend.StdOut}".Trim());
+        var llvm = File.ReadAllText(llvmPath);
+        if (!llvm.Contains("define i32 @same(i32 %lhs, i32 %rhs)", StringComparison.Ordinal) ||
+            !llvm.Contains("icmp eq i32 %lhs, %rhs", StringComparison.Ordinal) ||
+            !llvm.Contains("zext i1", StringComparison.Ordinal))
+            throw new Exception($"native comparison IR produced unexpected LLVM.\n{llvm}".Trim());
     }
 
     private static void AssertSelfCheckJsonResult(
