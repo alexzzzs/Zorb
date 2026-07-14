@@ -108,3 +108,7 @@ both negative literals and negated nested expressions without a special IR op.
 
 Boolean functions and equality or signed ordered comparisons lower to the
 backend `compare` instruction with the canonical `compare_op` names.
+Integer modules intern their value scalar as type 1 and `bool` as type 2;
+boolean-only modules reuse type 1. Expression lowering receives both IDs
+explicitly so comparisons can produce condition values without changing the
+surrounding function ABI.

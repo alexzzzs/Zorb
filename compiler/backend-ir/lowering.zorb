@@ -118,16 +118,18 @@ struct ZBackendIrExpressionLowering {
     instruction_capacity: i64,
     instruction_count: i64,
     next_value_id: i64,
+    value_type_id: i64,
+    bool_type_id: i64,
     local_name: ZAstText,
     local_address: i64,
     has_local: bool
 }
 
-fn zbackend_ir_new_instruction(id: i64, op: string) -> ZBackendIrInstruction {
+fn zbackend_ir_new_instruction(id: i64, op: string, type_id: i64) -> ZBackendIrInstruction {
     return ZBackendIrInstruction{
         id: id,
         op: op,
-        type_id: 1,
+        type_id: type_id,
         integer: 0,
         binary_op: "",
         compare_op: "",
@@ -188,7 +190,7 @@ fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, expressi
         if context.has_local && ZAstText.eql(expression.name, context.local_name) {
             id: i64 = context.next_value_id
             context.next_value_id = context.next_value_id + 1
-            instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "load")
+            instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "load", context.value_type_id)
             instruction.lhs = context.local_address
             return zbackend_ir_append_instruction(context, instruction) catch |err| { return err }
         }
@@ -198,7 +200,7 @@ fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, expressi
         integer: i64 = zbackend_ir_parse_positive_integer(expression.literal) catch |err| { return err }
         id: i64 = context.next_value_id
         context.next_value_id = context.next_value_id + 1
-        instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "integer_constant")
+        instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "integer_constant", context.value_type_id)
         instruction.integer = integer
         return zbackend_ir_append_instruction(context, instruction) catch |err| { return err }
     }
@@ -206,13 +208,13 @@ fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, expressi
         operand_id: i64 = zbackend_ir_lower_expression(context, expression.left) catch |err| { return err }
         zero_id: i64 = context.next_value_id
         context.next_value_id = context.next_value_id + 1
-        zero: ZBackendIrInstruction = zbackend_ir_new_instruction(zero_id, "integer_constant")
+        zero: ZBackendIrInstruction = zbackend_ir_new_instruction(zero_id, "integer_constant", context.value_type_id)
         zero.integer = 0
         zbackend_ir_append_instruction(context, zero) catch |err| { return err }
 
         result_id: i64 = context.next_value_id
         context.next_value_id = context.next_value_id + 1
-        subtraction: ZBackendIrInstruction = zbackend_ir_new_instruction(result_id, "binary")
+        subtraction: ZBackendIrInstruction = zbackend_ir_new_instruction(result_id, "binary", context.value_type_id)
         subtraction.binary_op = "sub"
         subtraction.lhs = zero_id
         subtraction.rhs = operand_id
@@ -225,14 +227,14 @@ fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, expressi
         context.next_value_id = context.next_value_id + 1
         if zbackend_ir_is_comparison(expression.op) {
             compare_op: string = zbackend_ir_compare_op(expression.op) catch |err| { return err }
-            comparison: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "compare")
+            comparison: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "compare", context.bool_type_id)
             comparison.compare_op = compare_op
             comparison.lhs = lhs
             comparison.rhs = rhs
             return zbackend_ir_append_instruction(context, comparison) catch |err| { return err }
         }
         binary_op: string = zbackend_ir_binary_op(expression.op) catch |err| { return err }
-        instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "binary")
+        instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "binary", context.value_type_id)
         instruction.binary_op = binary_op
         instruction.lhs = lhs
         instruction.rhs = rhs
@@ -258,7 +260,7 @@ fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, expressi
         callee: i64 = zbackend_ir_function_id(context.ast, expression.name) catch |err| { return err }
         id: i64 = context.next_value_id
         context.next_value_id = context.next_value_id + 1
-        instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "call")
+        instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "call", context.value_type_id)
         instruction.callee = callee
         instruction.arguments = arguments
         instruction.argument_count = expression.arg_count
@@ -318,13 +320,13 @@ fn zbackend_ir_lower_body(context: *ZBackendIrExpressionLowering) !i64 {
 
     address_id: i64 = context.next_value_id
     context.next_value_id = context.next_value_id + 1
-    alloca_instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(address_id, "alloca")
+    alloca_instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(address_id, "alloca", context.value_type_id)
     zbackend_ir_append_instruction(context, alloca_instruction) catch |err| { return err }
 
     initializer_id: i64 = zbackend_ir_lower_expression(context, local.expr_index) catch |err| { return err }
     store_id: i64 = context.next_value_id
     context.next_value_id = context.next_value_id + 1
-    store_instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(store_id, "store")
+    store_instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(store_id, "store", context.value_type_id)
     store_instruction.lhs = address_id
     store_instruction.rhs = initializer_id
     zbackend_ir_append_instruction(context, store_instruction) catch |err| { return err }
@@ -339,7 +341,7 @@ fn zbackend_ir_lower_body(context: *ZBackendIrExpressionLowering) !i64 {
         assigned_value_id: i64 = zbackend_ir_lower_expression(context, assignment.value_expr) catch |err| { return err }
         assignment_store_id: i64 = context.next_value_id
         context.next_value_id = context.next_value_id + 1
-        assignment_store: ZBackendIrInstruction = zbackend_ir_new_instruction(assignment_store_id, "store")
+        assignment_store: ZBackendIrInstruction = zbackend_ir_new_instruction(assignment_store_id, "store", context.value_type_id)
         assignment_store.lhs = address_id
         assignment_store.rhs = assigned_value_id
         zbackend_ir_append_instruction(context, assignment_store) catch |err| { return err }
@@ -352,7 +354,8 @@ fn zbackend_ir_lower_function(
     ast: *ZAstModule,
     declaration: ZAstDecl,
     function_id: i64,
-    scalar_name: string
+    scalar_name: string,
+    bool_type_id: i64
 ) !ZBackendIrFunction {
     if declaration.return_is_error_union || (declaration.stmt_count != 1 && declaration.stmt_count != 2 && declaration.stmt_count != 3) {
         return error.NotImplemented
@@ -398,6 +401,8 @@ fn zbackend_ir_lower_function(
         instruction_capacity: instruction_capacity,
         instruction_count: 0,
         next_value_id: declaration.param_count + 1,
+        value_type_id: 1,
+        bool_type_id: bool_type_id,
         local_name: ZAstText.empty(),
         local_address: 0,
         has_local: false
@@ -431,7 +436,8 @@ fn zbackend_ir_lower_function(
 
 // Lowering consumes the checked native AST and produces the same model accepted
 // by the Zig backend. Types are interned module-wide; this slice supports one
-// shared signed scalar type while function and expression coverage grows.
+// shared value scalar plus a module-wide bool condition type while function
+// and expression coverage grows.
 export fn ZBackendIrLowering.lower_module(
     allocator: *std.mem.HeapAllocator,
     ast: *ZAstModule,
@@ -446,21 +452,32 @@ export fn ZBackendIrLowering.lower_module(
     if first.return_type_index == ZAstNoIndex { return error.NotImplemented }
     first_return_type: ZAstText = ast.types[first.return_type_index].text
     scalar_name: string = ""
+    scalar_is_bool: bool = false
     if ZAstText.eql_string(first_return_type, "i32") {
         scalar_name = "i32"
     } else if ZAstText.eql_string(first_return_type, "i64") {
         scalar_name = "i64"
     } else if ZAstText.eql_string(first_return_type, "bool") {
         scalar_name = "bool"
+        scalar_is_bool = true
     } else {
         return error.NotImplemented
     }
 
-    types_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrType)) catch |err| {
+    type_count: i64 = 2
+    bool_type_id: i64 = 2
+    if scalar_is_bool {
+        type_count = 1
+        bool_type_id = 1
+    }
+    types_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, type_count * Builtin.sizeof(ZBackendIrType)) catch |err| {
         return error.OutOfMemory
     }
     types: *ZBackendIrType = cast(*ZBackendIrType, types_raw)
     types[0] = ZBackendIrType{ id: 1, kind: "scalar", scalar: scalar_name }
+    if !scalar_is_bool {
+        types[1] = ZBackendIrType{ id: bool_type_id, kind: "scalar", scalar: "bool" }
+    }
 
     functions_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, function_count * Builtin.sizeof(ZBackendIrFunction)) catch |err| {
         return error.OutOfMemory
@@ -476,7 +493,8 @@ export fn ZBackendIrLowering.lower_module(
                 ast,
                 declaration,
                 function_index + 1,
-                scalar_name
+                scalar_name,
+                bool_type_id
             ) catch |err| { return err }
             function_index = function_index + 1
         }
@@ -489,7 +507,7 @@ export fn ZBackendIrLowering.lower_module(
         output_kind: output_kind,
         output_path: output_path,
         types: types,
-        type_count: 1,
+        type_count: type_count,
         functions: functions,
         function_count: function_count
     }

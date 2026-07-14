@@ -113,6 +113,9 @@ internal static partial class Program
             var root = document.RootElement;
             if (root.GetProperty("schema_version").GetInt32() != 2)
                 throw new Exception("native backend IR emitted the wrong schema version.");
+            if (root.GetProperty("types").GetArrayLength() != 2 ||
+                root.GetProperty("types")[1].GetProperty("scalar").GetString() != "bool")
+                throw new Exception("native integer backend IR did not intern its bool condition type.");
             var function = root.GetProperty("functions")[0];
             if (function.GetProperty("name").GetString() != "answer")
                 throw new Exception("native backend IR did not retain the source function name.");
