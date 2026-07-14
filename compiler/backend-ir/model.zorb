@@ -38,7 +38,11 @@ export struct ZBackendIrInstruction {
 
 export struct ZBackendIrTerminator {
     op: string,
-    value: i64
+    value: i64,
+    target: i64,
+    condition: i64,
+    true_target: i64,
+    false_target: i64
 }
 
 export struct ZBackendIrBlock {

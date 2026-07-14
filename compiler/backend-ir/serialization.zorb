@@ -133,6 +133,16 @@ fn zbackend_ir_write_blocks(blocks: *ZBackendIrBlock, count: i64) {
         if block.terminator.op == "return_value" {
             std.io.print(",\"value\":")
             std.io.print_i64(block.terminator.value)
+        } else if block.terminator.op == "branch" {
+            std.io.print(",\"target\":")
+            std.io.print_i64(block.terminator.target)
+        } else if block.terminator.op == "conditional_branch" {
+            std.io.print(",\"condition\":")
+            std.io.print_i64(block.terminator.condition)
+            std.io.print(",\"true_target\":")
+            std.io.print_i64(block.terminator.true_target)
+            std.io.print(",\"false_target\":")
+            std.io.print_i64(block.terminator.false_target)
         }
         std.io.print("}}")
         index = index + 1

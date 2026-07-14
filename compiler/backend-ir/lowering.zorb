@@ -141,6 +141,50 @@ fn zbackend_ir_new_instruction(id: i64, op: string, type_id: i64) -> ZBackendIrI
     }
 }
 
+fn zbackend_ir_new_terminator(op: string) -> ZBackendIrTerminator {
+    return ZBackendIrTerminator{
+        op: op,
+        value: 0,
+        target: 0,
+        condition: 0,
+        true_target: 0,
+        false_target: 0
+    }
+}
+
+fn zbackend_ir_allocate_instructions(allocator: *std.mem.HeapAllocator, count: i64) !*ZBackendIrInstruction {
+    if count == 0 { return cast(*ZBackendIrInstruction, 0) }
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, count * Builtin.sizeof(ZBackendIrInstruction)) catch |err| {
+        return error.OutOfMemory
+    }
+    return cast(*ZBackendIrInstruction, raw)
+}
+
+fn zbackend_ir_expression_context(
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    declaration: ZAstDecl,
+    instructions: *ZBackendIrInstruction,
+    instruction_capacity: i64,
+    next_value_id: i64,
+    bool_type_id: i64
+) -> ZBackendIrExpressionLowering {
+    return ZBackendIrExpressionLowering{
+        allocator: allocator,
+        ast: ast,
+        declaration: declaration,
+        instructions: instructions,
+        instruction_capacity: instruction_capacity,
+        instruction_count: 0,
+        next_value_id: next_value_id,
+        value_type_id: 1,
+        bool_type_id: bool_type_id,
+        local_name: ZAstText.empty(),
+        local_address: 0,
+        has_local: false
+    }
+}
+
 fn zbackend_ir_expression_instruction_count(ast: *ZAstModule, expression_index: i64, local_name: ZAstText, has_local: bool) !i64 {
     if expression_index == ZAstNoIndex { return error.NotImplemented }
     expression: ZAstExpr = ast.exprs[expression_index]
@@ -349,6 +393,99 @@ fn zbackend_ir_lower_body(context: *ZBackendIrExpressionLowering) !i64 {
     return zbackend_ir_lower_expression(context, returned.expr_index) catch |err| { return err }
 }
 
+struct ZBackendIrIfElseShape {
+    condition_expression: i64,
+    then_expression: i64,
+    else_expression: i64
+}
+
+fn zbackend_ir_if_else_shape(ast: *ZAstModule, declaration: ZAstDecl) !ZBackendIrIfElseShape {
+    if declaration.stmt_count != 4 { return error.NotImplemented }
+    conditional: ZAstStmt = ast.stmts[declaration.stmt_start]
+    if conditional.kind != ZAstStmtIf || conditional.expr_index == ZAstNoIndex || conditional.child_count != 1 {
+        return error.NotImplemented
+    }
+    then_return: ZAstStmt = ast.stmts[conditional.child_start]
+    else_index: i64 = conditional.child_start + conditional.child_count
+    else_statement: ZAstStmt = ast.stmts[else_index]
+    if then_return.kind != ZAstStmtReturn || then_return.expr_index == ZAstNoIndex ||
+        else_statement.kind != ZAstStmtElse || else_statement.child_count != 1 {
+        return error.NotImplemented
+    }
+    else_return: ZAstStmt = ast.stmts[else_statement.child_start]
+    if else_return.kind != ZAstStmtReturn || else_return.expr_index == ZAstNoIndex { return error.NotImplemented }
+    return ZBackendIrIfElseShape{
+        condition_expression: conditional.expr_index,
+        then_expression: then_return.expr_index,
+        else_expression: else_return.expr_index
+    }
+}
+
+fn zbackend_ir_return_terminator(value: i64) -> ZBackendIrTerminator {
+    terminator: ZBackendIrTerminator = zbackend_ir_new_terminator("return_value")
+    terminator.value = value
+    return terminator
+}
+
+fn zbackend_ir_lower_if_else_function(
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    declaration: ZAstDecl,
+    function_id: i64,
+    function_name: string,
+    parameters: *ZBackendIrParameter,
+    bool_type_id: i64
+) !ZBackendIrFunction {
+    shape: ZBackendIrIfElseShape = zbackend_ir_if_else_shape(ast, declaration) catch |err| { return err }
+    condition_count: i64 = zbackend_ir_expression_instruction_count(ast, shape.condition_expression, ZAstText.empty(), false) catch |err| { return err }
+    then_count: i64 = zbackend_ir_expression_instruction_count(ast, shape.then_expression, ZAstText.empty(), false) catch |err| { return err }
+    else_count: i64 = zbackend_ir_expression_instruction_count(ast, shape.else_expression, ZAstText.empty(), false) catch |err| { return err }
+
+    condition_instructions: *ZBackendIrInstruction = zbackend_ir_allocate_instructions(allocator, condition_count) catch |err| { return err }
+    condition_context: ZBackendIrExpressionLowering = zbackend_ir_expression_context(
+        allocator, ast, declaration, condition_instructions, condition_count, declaration.param_count + 1, bool_type_id
+    )
+    condition_value: i64 = zbackend_ir_lower_expression(&condition_context, shape.condition_expression) catch |err| { return err }
+    if condition_context.instruction_count != condition_count { return error.InvalidArgument }
+
+    then_instructions: *ZBackendIrInstruction = zbackend_ir_allocate_instructions(allocator, then_count) catch |err| { return err }
+    then_context: ZBackendIrExpressionLowering = zbackend_ir_expression_context(
+        allocator, ast, declaration, then_instructions, then_count, condition_context.next_value_id, bool_type_id
+    )
+    then_value: i64 = zbackend_ir_lower_expression(&then_context, shape.then_expression) catch |err| { return err }
+    if then_context.instruction_count != then_count { return error.InvalidArgument }
+
+    else_instructions: *ZBackendIrInstruction = zbackend_ir_allocate_instructions(allocator, else_count) catch |err| { return err }
+    else_context: ZBackendIrExpressionLowering = zbackend_ir_expression_context(
+        allocator, ast, declaration, else_instructions, else_count, then_context.next_value_id, bool_type_id
+    )
+    else_value: i64 = zbackend_ir_lower_expression(&else_context, shape.else_expression) catch |err| { return err }
+    if else_context.instruction_count != else_count { return error.InvalidArgument }
+
+    blocks_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, 3 * Builtin.sizeof(ZBackendIrBlock)) catch |err| {
+        return error.OutOfMemory
+    }
+    blocks: *ZBackendIrBlock = cast(*ZBackendIrBlock, blocks_raw)
+    entry_terminator: ZBackendIrTerminator = zbackend_ir_new_terminator("conditional_branch")
+    entry_terminator.condition = condition_value
+    entry_terminator.true_target = 2
+    entry_terminator.false_target = 3
+    blocks[0] = ZBackendIrBlock{ id: 1, name: "entry", instructions: condition_instructions, instruction_count: condition_count, terminator: entry_terminator }
+    blocks[1] = ZBackendIrBlock{ id: 2, name: "then", instructions: then_instructions, instruction_count: then_count, terminator: zbackend_ir_return_terminator(then_value) }
+    blocks[2] = ZBackendIrBlock{ id: 3, name: "else", instructions: else_instructions, instruction_count: else_count, terminator: zbackend_ir_return_terminator(else_value) }
+
+    return ZBackendIrFunction{
+        id: function_id,
+        name: function_name,
+        linkage: "external",
+        return_type: 1,
+        parameters: parameters,
+        parameter_count: declaration.param_count,
+        blocks: blocks,
+        block_count: 3
+    }
+}
+
 fn zbackend_ir_lower_function(
     allocator: *std.mem.HeapAllocator,
     ast: *ZAstModule,
@@ -357,7 +494,7 @@ fn zbackend_ir_lower_function(
     scalar_name: string,
     bool_type_id: i64
 ) !ZBackendIrFunction {
-    if declaration.return_is_error_union || (declaration.stmt_count != 1 && declaration.stmt_count != 2 && declaration.stmt_count != 3) {
+    if declaration.return_is_error_union || (declaration.stmt_count != 1 && declaration.stmt_count != 2 && declaration.stmt_count != 3 && declaration.stmt_count != 4) {
         return error.NotImplemented
     }
     if declaration.return_type_index == ZAstNoIndex { return error.NotImplemented }
@@ -384,29 +521,17 @@ fn zbackend_ir_lower_function(
         }
     }
 
+    if declaration.stmt_count == 4 {
+        return zbackend_ir_lower_if_else_function(
+            allocator, ast, declaration, function_id, function_name, parameters, bool_type_id
+        ) catch |err| { return err }
+    }
+
     instruction_capacity: i64 = zbackend_ir_body_instruction_count(ast, declaration) catch |err| { return err }
-    instructions: *ZBackendIrInstruction = cast(*ZBackendIrInstruction, 0)
-    if instruction_capacity > 0 {
-        instructions_raw: *u8 = std.mem.HeapAllocator.alloc(
-            allocator,
-            instruction_capacity * Builtin.sizeof(ZBackendIrInstruction)
-        ) catch |err| { return error.OutOfMemory }
-        instructions = cast(*ZBackendIrInstruction, instructions_raw)
-    }
-    expression_context: ZBackendIrExpressionLowering = ZBackendIrExpressionLowering{
-        allocator: allocator,
-        ast: ast,
-        declaration: declaration,
-        instructions: instructions,
-        instruction_capacity: instruction_capacity,
-        instruction_count: 0,
-        next_value_id: declaration.param_count + 1,
-        value_type_id: 1,
-        bool_type_id: bool_type_id,
-        local_name: ZAstText.empty(),
-        local_address: 0,
-        has_local: false
-    }
+    instructions: *ZBackendIrInstruction = zbackend_ir_allocate_instructions(allocator, instruction_capacity) catch |err| { return err }
+    expression_context: ZBackendIrExpressionLowering = zbackend_ir_expression_context(
+        allocator, ast, declaration, instructions, instruction_capacity, declaration.param_count + 1, bool_type_id
+    )
     result_id: i64 = zbackend_ir_lower_body(&expression_context) catch |err| { return err }
     if expression_context.instruction_count != instruction_capacity { return error.InvalidArgument }
 
@@ -419,7 +544,14 @@ fn zbackend_ir_lower_function(
         name: "entry",
         instructions: instructions,
         instruction_count: instruction_capacity,
-        terminator: ZBackendIrTerminator{ op: "return_value", value: result_id }
+        terminator: ZBackendIrTerminator{
+            op: "return_value",
+            value: result_id,
+            target: 0,
+            condition: 0,
+            true_target: 0,
+            false_target: 0
+        }
     }
 
     return ZBackendIrFunction{

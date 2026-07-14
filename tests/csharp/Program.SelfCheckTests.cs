@@ -38,6 +38,7 @@ internal static partial class Program
         var backendIrParametersInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_parameters.zorb");
         var backendIrNegationInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_negation.zorb");
         var backendIrComparisonInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_comparison.zorb");
+        var backendIrIfElseInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_if_else.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -86,6 +87,7 @@ internal static partial class Program
             AssertNativeParametersBackendIr(binaryPath, projectRoot, tempDir, backendIrParametersInput);
             AssertNativeNegationBackendIr(binaryPath, projectRoot, tempDir, backendIrNegationInput);
             AssertNativeComparisonBackendIr(binaryPath, projectRoot, tempDir, backendIrComparisonInput);
+            AssertNativeIfElseBackendIr(binaryPath, projectRoot, tempDir, backendIrIfElseInput);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
@@ -495,6 +497,49 @@ internal static partial class Program
             !llvm.Contains("icmp eq i32 %lhs, %rhs", StringComparison.Ordinal) ||
             !llvm.Contains("zext i1", StringComparison.Ordinal))
             throw new Exception($"native comparison IR produced unexpected LLVM.\n{llvm}".Trim());
+    }
+
+    private static void AssertNativeIfElseBackendIr(
+        string binaryPath,
+        string workingDirectory,
+        string tempDirectory,
+        string inputPath)
+    {
+        var llvmPath = Path.Combine(tempDirectory, "native-if-else.ll");
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--emit-backend-ir", GetNativeLlvmTriple(), llvmPath, inputPath],
+            workingDirectory,
+            TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
+        if (execution.ExitCode != 0 || !string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"native if/else backend IR emission failed.\n{execution.StdErr}{execution.StdOut}".Trim());
+        using (var document = System.Text.Json.JsonDocument.Parse(execution.StdOut))
+        {
+            var function = document.RootElement.GetProperty("functions")[0];
+            var blocks = function.GetProperty("blocks");
+            var entryTerminator = blocks[0].GetProperty("terminator");
+            if (blocks.GetArrayLength() != 3 ||
+                blocks[0].GetProperty("instructions")[0].GetProperty("type").GetInt64() != 2 ||
+                blocks[0].GetProperty("instructions")[0].GetProperty("compare_op").GetString() != "signed_less" ||
+                entryTerminator.GetProperty("op").GetString() != "conditional_branch" ||
+                entryTerminator.GetProperty("condition").GetInt64() != 3 ||
+                entryTerminator.GetProperty("true_target").GetInt64() != 2 ||
+                entryTerminator.GetProperty("false_target").GetInt64() != 3 ||
+                blocks[1].GetProperty("terminator").GetProperty("value").GetInt64() != 1 ||
+                blocks[2].GetProperty("terminator").GetProperty("value").GetInt64() != 2)
+                throw new Exception("native backend IR did not lower the if/else block graph and value references.");
+        }
+        var irPath = Path.Combine(tempDirectory, "native-if-else.json");
+        File.WriteAllText(irPath, execution.StdOut);
+        var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
+        if (backend.ExitCode != 0 || !File.Exists(llvmPath))
+            throw new Exception($"Zig backend rejected native if/else IR.\n{backend.StdErr}{backend.StdOut}".Trim());
+        var llvm = File.ReadAllText(llvmPath);
+        if (!llvm.Contains("icmp slt i32 %lhs, %rhs", StringComparison.Ordinal) ||
+            !llvm.Contains("br i1", StringComparison.Ordinal) ||
+            !llvm.Contains("then:", StringComparison.Ordinal) ||
+            !llvm.Contains("else:", StringComparison.Ordinal))
+            throw new Exception($"native if/else IR produced unexpected LLVM.\n{llvm}".Trim());
     }
 
     private static void AssertSelfCheckJsonResult(
