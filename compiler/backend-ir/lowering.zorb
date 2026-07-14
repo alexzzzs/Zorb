@@ -131,6 +131,10 @@ fn zbackend_ir_expression_instruction_count(ast: *ZAstModule, expression_index: 
         return 0
     }
     if expression.kind == ZAstExprInteger { return 1 }
+    if expression.kind == ZAstExprUnary && expression.op == ZTokenMinus {
+        operand_count: i64 = zbackend_ir_expression_instruction_count(ast, expression.left, local_name, has_local) catch |err| { return err }
+        return operand_count + 2
+    }
     if expression.kind == ZAstExprBinary {
         left_count: i64 = zbackend_ir_expression_instruction_count(ast, expression.left, local_name, has_local) catch |err| { return err }
         right_count: i64 = zbackend_ir_expression_instruction_count(ast, expression.right, local_name, has_local) catch |err| { return err }
@@ -181,6 +185,22 @@ fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, expressi
         instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "integer_constant")
         instruction.integer = integer
         return zbackend_ir_append_instruction(context, instruction) catch |err| { return err }
+    }
+    if expression.kind == ZAstExprUnary && expression.op == ZTokenMinus {
+        operand_id: i64 = zbackend_ir_lower_expression(context, expression.left) catch |err| { return err }
+        zero_id: i64 = context.next_value_id
+        context.next_value_id = context.next_value_id + 1
+        zero: ZBackendIrInstruction = zbackend_ir_new_instruction(zero_id, "integer_constant")
+        zero.integer = 0
+        zbackend_ir_append_instruction(context, zero) catch |err| { return err }
+
+        result_id: i64 = context.next_value_id
+        context.next_value_id = context.next_value_id + 1
+        subtraction: ZBackendIrInstruction = zbackend_ir_new_instruction(result_id, "binary")
+        subtraction.binary_op = "sub"
+        subtraction.lhs = zero_id
+        subtraction.rhs = operand_id
+        return zbackend_ir_append_instruction(context, subtraction) catch |err| { return err }
     }
     if expression.kind == ZAstExprBinary {
         lhs: i64 = zbackend_ir_lower_expression(context, expression.left) catch |err| { return err }

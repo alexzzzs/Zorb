@@ -36,6 +36,7 @@ internal static partial class Program
         var backendIrLocalInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_local.zorb");
         var backendIrAssignmentInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_assignment.zorb");
         var backendIrParametersInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_parameters.zorb");
+        var backendIrNegationInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_negation.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -82,6 +83,7 @@ internal static partial class Program
             AssertNativeLocalBackendIr(binaryPath, projectRoot, tempDir, backendIrLocalInput);
             AssertNativeAssignmentBackendIr(binaryPath, projectRoot, tempDir, backendIrAssignmentInput);
             AssertNativeParametersBackendIr(binaryPath, projectRoot, tempDir, backendIrParametersInput);
+            AssertNativeNegationBackendIr(binaryPath, projectRoot, tempDir, backendIrNegationInput);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
@@ -414,6 +416,43 @@ internal static partial class Program
         if (!llvm.Contains("define i64 @sum_three(i64 %first, i64 %second, i64 %third)", StringComparison.Ordinal) ||
             llvm.Split("add i64", StringSplitOptions.None).Length - 1 != 2)
             throw new Exception($"native parameter IR produced unexpected LLVM.\n{llvm}".Trim());
+    }
+
+    private static void AssertNativeNegationBackendIr(
+        string binaryPath,
+        string workingDirectory,
+        string tempDirectory,
+        string inputPath)
+    {
+        var llvmPath = Path.Combine(tempDirectory, "native-negation.ll");
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--emit-backend-ir", GetNativeLlvmTriple(), llvmPath, inputPath],
+            workingDirectory,
+            TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
+        if (execution.ExitCode != 0 || !string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"native negation backend IR emission failed.\n{execution.StdErr}{execution.StdOut}".Trim());
+        using (var document = System.Text.Json.JsonDocument.Parse(execution.StdOut))
+        {
+            var instructions = document.RootElement.GetProperty("functions")[0]
+                .GetProperty("blocks")[0].GetProperty("instructions");
+            if (instructions.GetArrayLength() != 4 ||
+                instructions[2].GetProperty("op").GetString() != "integer_constant" ||
+                instructions[2].GetProperty("integer").GetInt64() != 0 ||
+                instructions[3].GetProperty("binary_op").GetString() != "sub" ||
+                instructions[3].GetProperty("lhs").GetInt64() != 4 ||
+                instructions[3].GetProperty("rhs").GetInt64() != 3)
+                throw new Exception("native backend IR did not lower unary negation as zero minus the nested operand.");
+        }
+        var irPath = Path.Combine(tempDirectory, "native-negation.json");
+        File.WriteAllText(irPath, execution.StdOut);
+        var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
+        if (backend.ExitCode != 0 || !File.Exists(llvmPath))
+            throw new Exception($"Zig backend rejected native negation IR.\n{backend.StdErr}{backend.StdOut}".Trim());
+        var llvm = File.ReadAllText(llvmPath);
+        if (!llvm.Contains("add i32 %value, 2", StringComparison.Ordinal) ||
+            !llvm.Contains("sub i32 0", StringComparison.Ordinal))
+            throw new Exception($"native negation IR produced unexpected LLVM.\n{llvm}".Trim());
     }
 
     private static void AssertSelfCheckJsonResult(

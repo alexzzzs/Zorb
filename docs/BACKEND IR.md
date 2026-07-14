@@ -101,3 +101,7 @@ One initialized scalar local before the return is supported through `alloca`,
 return; both the assignment value and return expression use the same recursive
 expression lowering. Broader statement and local-variable lowering remains
 incremental.
+
+Unary integer negation is compositional: the operand is recursively lowered,
+then the frontend emits an integer zero and a `sub` instruction. This supports
+both negative literals and negated nested expressions without a special IR op.
