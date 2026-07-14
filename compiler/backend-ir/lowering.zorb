@@ -321,7 +321,6 @@ fn zbackend_ir_lower_function(
 
     parameters: *ZBackendIrParameter = cast(*ZBackendIrParameter, 0)
     if declaration.param_count > 0 {
-        if declaration.param_count != 2 { return error.NotImplemented }
         parameters_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, declaration.param_count * Builtin.sizeof(ZBackendIrParameter)) catch |err| {
             return error.OutOfMemory
         }

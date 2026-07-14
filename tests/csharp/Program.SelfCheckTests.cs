@@ -35,6 +35,7 @@ internal static partial class Program
         var backendIrNestedExpressionInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_nested_expression.zorb");
         var backendIrLocalInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_local.zorb");
         var backendIrAssignmentInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_assignment.zorb");
+        var backendIrParametersInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_parameters.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -80,6 +81,7 @@ internal static partial class Program
             AssertNativeNestedExpressionBackendIr(binaryPath, projectRoot, tempDir, backendIrNestedExpressionInput);
             AssertNativeLocalBackendIr(binaryPath, projectRoot, tempDir, backendIrLocalInput);
             AssertNativeAssignmentBackendIr(binaryPath, projectRoot, tempDir, backendIrAssignmentInput);
+            AssertNativeParametersBackendIr(binaryPath, projectRoot, tempDir, backendIrParametersInput);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
@@ -375,6 +377,43 @@ internal static partial class Program
         if (llvm.Split("store i32", StringSplitOptions.None).Length - 1 != 2 ||
             !llvm.Contains("mul i32", StringComparison.Ordinal))
             throw new Exception($"native assignment IR produced unexpected LLVM.\n{llvm}".Trim());
+    }
+
+    private static void AssertNativeParametersBackendIr(
+        string binaryPath,
+        string workingDirectory,
+        string tempDirectory,
+        string inputPath)
+    {
+        var llvmPath = Path.Combine(tempDirectory, "native-parameters.ll");
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--emit-backend-ir", GetNativeLlvmTriple(), llvmPath, inputPath],
+            workingDirectory,
+            TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
+        if (execution.ExitCode != 0 || !string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"native parameter backend IR emission failed.\n{execution.StdErr}{execution.StdOut}".Trim());
+        using (var document = System.Text.Json.JsonDocument.Parse(execution.StdOut))
+        {
+            var function = document.RootElement.GetProperty("functions")[0];
+            var instructions = function.GetProperty("blocks")[0].GetProperty("instructions");
+            if (function.GetProperty("parameters").GetArrayLength() != 3 ||
+                instructions.GetArrayLength() != 2 ||
+                instructions[0].GetProperty("id").GetInt64() != 4 ||
+                instructions[1].GetProperty("id").GetInt64() != 5 ||
+                instructions[1].GetProperty("lhs").GetInt64() != 4 ||
+                instructions[1].GetProperty("rhs").GetInt64() != 3)
+                throw new Exception("native backend IR did not allocate values after all three parameter IDs.");
+        }
+        var irPath = Path.Combine(tempDirectory, "native-parameters.json");
+        File.WriteAllText(irPath, execution.StdOut);
+        var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
+        if (backend.ExitCode != 0 || !File.Exists(llvmPath))
+            throw new Exception($"Zig backend rejected native parameter IR.\n{backend.StdErr}{backend.StdOut}".Trim());
+        var llvm = File.ReadAllText(llvmPath);
+        if (!llvm.Contains("define i64 @sum_three(i64 %first, i64 %second, i64 %third)", StringComparison.Ordinal) ||
+            llvm.Split("add i64", StringSplitOptions.None).Length - 1 != 2)
+            throw new Exception($"native parameter IR produced unexpected LLVM.\n{llvm}".Trim());
     }
 
     private static void AssertSelfCheckJsonResult(
