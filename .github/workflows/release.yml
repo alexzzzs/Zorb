@@ -50,9 +50,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            Zorb.LlvmBackend/.zig-cache
+            backend/llvm/.zig-cache
             ~/.cache/zig
-          key: release-${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          key: release-${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
             release-${{ runner.os }}-zig-0.16.0-llvm21-
 
@@ -70,9 +70,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            Zorb.LlvmBackend/.zig-cache
+            backend/llvm/.zig-cache
             ~\AppData\Local\zig
-          key: release-${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          key: release-${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
             release-${{ runner.os }}-zig-0.16.0-llvm21-
 
@@ -133,12 +133,12 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            compiler="${{ matrix.output_dir }}/Zorb.Compiler"
+            compiler="${{ matrix.output_dir }}/seed/csharp"
           else
-            compiler="${{ matrix.output_dir }}/Zorb.Compiler.exe"
+            compiler="${{ matrix.output_dir }}/seed/csharp.exe"
           fi
-          "$compiler" --emit-llvm Zorb.Compiler.Tests/fixtures/runtime_hello_world/main.zorb -o "$RUNNER_TEMP/zorb-release-smoke.ll"
-          "$compiler" build Zorb.Compiler.Tests/fixtures/bare_metal_debug_port/main.zorb --target bare-metal-x86_64 -o "$RUNNER_TEMP/zorb-release-smoke.elf"
+          "$compiler" --emit-llvm tests/csharp/fixtures/runtime_hello_world/main.zorb -o "$RUNNER_TEMP/zorb-release-smoke.ll"
+          "$compiler" build tests/csharp/fixtures/bare_metal_debug_port/main.zorb --target bare-metal-x86_64 -o "$RUNNER_TEMP/zorb-release-smoke.elf"
           test -s "$RUNNER_TEMP/zorb-release-smoke.ll"
           test -s "$RUNNER_TEMP/zorb-release-smoke.elf"
 

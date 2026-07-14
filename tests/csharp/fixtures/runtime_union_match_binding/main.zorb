@@ -1,0 +1,33 @@
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/os.zorb"
+
+union Value {
+    Number: i64,
+    Flag: bool
+}
+
+fn score(value: Value) -> i64 {
+    match value {
+        case Value.Number(n) {
+            return n
+        }
+        case Value.Flag(flag) {
+            if flag {
+                return 1
+            }
+
+            return 0
+        }
+    }
+}
+
+fn _start() {
+    number: Value = Value{ Number: 9 }
+    flag: Value = Value{ Flag: true }
+
+    std.io.print_i64(score(number))
+    std.io.print("\n")
+    std.io.print_i64(score(flag))
+    std.io.print("\n")
+    std.os.exit(0)
+}

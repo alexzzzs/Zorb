@@ -1,6 +1,6 @@
-import "../../std/io.zorb"
-import "../../std/os.zorb"
-import "../../std/net.zorb"
+import "../../runtime/std/io.zorb"
+import "../../runtime/std/os.zorb"
+import "../../runtime/std/net.zorb"
 
 fn _start() {
     if !std.net.is_supported() {

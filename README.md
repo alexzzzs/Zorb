@@ -3,6 +3,15 @@
 Zorb is a small ahead-of-time compiler for a systems language. Native
 compilation lowers through a Zig 0.16 backend over LLVM 21.
 
+The project is moving toward a single self-hosted `zorb` executable: a
+Zorb-written frontend paired with the Zig/LLVM backend. The current C# project
+is the stage-0 bootstrap and release frontend during that transition. See
+[Compiler architecture](docs/ARCHITECTURE.md) and
+[Bootstrapping Zorb](docs/BOOTSTRAPPING.md) for the roles and migration plan.
+Target-specific native frontend seed artifacts are built and resolved through
+[`scripts/build-bootstrap-seeds.sh`](scripts/build-bootstrap-seeds.sh) and
+[`scripts/resolve-bootstrap-seed.sh`](scripts/resolve-bootstrap-seed.sh).
+
 The project already has:
 
 - a working `net8.0` frontend and Zig/LLVM native backend
@@ -110,8 +119,8 @@ Cross-platform stdlib helpers currently include:
 ## Build
 
 ```bash
-dotnet build Zorb.Compiler/Zorb.Compiler.csproj -c Release
-cd Zorb.LlvmBackend
+dotnet build seed/csharp/Zorb.Compiler.csproj -c Release
+cd backend/llvm
 zig build test
 zig build
 ```
@@ -157,43 +166,43 @@ compiler packages.
 Check a file without emitting output:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- main.zorb --check
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- main.zorb --check
 ```
 
 Print the compiler version:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- --version
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- --version
 ```
 
 Dump the token stream before parsing:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- main.zorb --dump-tokens --check
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- main.zorb --dump-tokens --check
 ```
 
 Emit verified LLVM IR:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- main.zorb -o out.ll
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- main.zorb -o out.ll
 ```
 
 Build a native executable on the current host:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb -o out
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb -o out
 ```
 
 Compile and run a program on the current host:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- run main.zorb
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- run main.zorb
 ```
 
 Select an explicit build target:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target host-linux -o out
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target host-linux -o out
 ```
 
 Supported `--target` values are `host-linux`, `freestanding-linux`, `host-linux-aarch64`, `freestanding-linux-aarch64`, `bare-metal-x86_64`, and `host-windows`.
@@ -203,19 +212,19 @@ The legacy `-nostdlib` flag remains available as shorthand for `--target freesta
 Build a bare-metal x86_64 kernel ELF with the bundled linker script:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 -o kernel.elf
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 -o kernel.elf
 ```
 
 Use a custom linker script instead of the bundled one:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --linker-script kernel.ld -o kernel.elf
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --linker-script kernel.ld -o kernel.elf
 ```
 
 Emit the linker script used for the build so you can inspect or customize it:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --emit-linker-script kernel.ld -o kernel.elf
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --emit-linker-script kernel.ld -o kernel.elf
 ```
 
 `bare-metal-x86_64` preserves `_start`, sets `Builtin.IsBareMetal`, routes
@@ -233,19 +242,19 @@ It integrates with the normal Windows/MSVC link environment, which makes it the 
 Build a native Windows executable:
 
 ```powershell
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb -o out.exe
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb -o out.exe
 ```
 
 Compile and run a program on the current Windows host:
 
 ```powershell
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- run main.zorb
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- run main.zorb
 ```
 
 Select the hosted Windows target explicitly:
 
 ```powershell
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target host-windows -o out.exe
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target host-windows -o out.exe
 ```
 
 Notes:
@@ -263,7 +272,7 @@ Notes:
 Run the full fixture suite:
 
 ```bash
-dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj
+dotnet run --project tests/csharp/tests/csharp.csproj
 ```
 
 Every semantically successful fixture and example is emitted through LLVM and
@@ -402,7 +411,7 @@ fn main() {
 
 Slice indexing is runtime-bounds-checked before reads or writes.
 
-Representative larger examples live in [`examples/`](./examples) and the executable fixture corpus under [`Zorb.Compiler.Tests/fixtures/`](./Zorb.Compiler.Tests/fixtures).
+Representative larger examples live in [`examples/`](./examples) and the executable fixture corpus under [`tests/csharp/fixtures/`](./tests/csharp/fixtures).
 
 Current checked-in examples:
 
@@ -422,7 +431,7 @@ Current checked-in examples:
 
 ## Project Shape
 
-- `Zorb.Compiler/`: lexer, parser, semantic checker, CLI, and LLVM backend IR emission
-- `Zorb.Compiler.Tests/`: fixture runner and regression fixtures
+- `seed/csharp/`: lexer, parser, semantic checker, CLI, and LLVM backend IR emission
+- `tests/csharp/`: fixture runner and regression fixtures
 - `std/`: standard library modules used by runtime-oriented examples
 - `SEMANTICS.md`: language behavior and current design constraints

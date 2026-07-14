@@ -1,0 +1,71 @@
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/os.zorb"
+import "../../../../runtime/std/str.zorb"
+import "../../../../runtime/std/mem.zorb"
+
+fn _start() {
+    buf1: [16]u8
+    buf2: [16]u8
+    view1: []u8 = buf1
+    view2: []u8 = buf2
+
+    std.mem.zero(view1)
+    std.mem.zero(view2)
+
+    copied: i64 = std.str.copy(view1, "hello")
+    if copied != 5 {
+        std.os.exit(11)
+        return
+    }
+    view1.len = copied
+
+    copied_again: i64 = std.mem.copy(view2, view1)
+    if copied_again != 5 {
+        std.os.exit(12)
+        return
+    }
+    view2.len = copied_again
+
+    if !std.str.slice_eql(view1, view2) {
+        std.os.exit(13)
+        return
+    }
+
+    if !std.str.eql("zorb", "zorb") {
+        std.os.exit(14)
+        return
+    }
+
+    if std.str.eql("zorb", "zorb!") {
+        std.os.exit(15)
+        return
+    }
+
+    if !std.str.starts_with("zorb-lang", "zorb") {
+        std.os.exit(16)
+        return
+    }
+
+    if !std.str.ends_with("zorb-lang", "lang") {
+        std.os.exit(17)
+        return
+    }
+
+    if std.str.ends_with("zorb-lang", "zorb") {
+        std.os.exit(18)
+        return
+    }
+
+    digits_buf: [32]u8
+    digits: []u8 = digits_buf
+    digits.len = std.str.from_u64(cast(u64, 42), digits)
+    if digits.len != 2 {
+        std.os.exit(19)
+        return
+    }
+
+    std.io.print_bool(true)
+    std.io.print(" ")
+    std.io.println_i64(copied_again)
+    std.os.exit(0)
+}

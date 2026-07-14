@@ -1,0 +1,1 @@
+Variable 'value' Alignment must be a constant integer expression.

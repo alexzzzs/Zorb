@@ -1,0 +1,29 @@
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/os.zorb"
+
+struct PtrBox {
+    ptr: *i64,
+}
+
+fn head<T>(items: []T) -> T {
+    return items[0]
+}
+
+fn first_ptr<T>(ptr: *T) -> T {
+    return ptr[0]
+}
+
+fn expose_ptr(values: [3]i64) -> *i64 {
+    return values
+}
+
+fn _start() {
+    values: [3]i64 = [3]i64{ 11, 22, 33 }
+    ptr: *i64 = values
+    box: PtrBox = PtrBox{ ptr: values }
+
+    total: i64 = head(values) + first_ptr(values) + ptr[1] + expose_ptr(values)[2] + box.ptr[0]
+    std.io.print_i64(total)
+    std.io.print("\n")
+    std.os.exit(0)
+}

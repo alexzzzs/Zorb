@@ -1,0 +1,1680 @@
+{
+  "version": 1,
+  "scopes": [
+    {
+      "root": "tests/csharp/fixtures",
+      "kind": "fixture",
+      "classification": "deferred",
+      "feature": "stage0.fixture",
+      "reason": "Awaiting native parser, semantic, and diagnostic-span coverage."
+    },
+    {
+      "root": "examples",
+      "kind": "example",
+      "classification": "deferred",
+      "feature": "stage0.example",
+      "reason": "Examples remain stage-0 compilation coverage until their required frontend features are parity-ready."
+    },
+    {
+      "root": "compiler/self-check/fixtures",
+      "kind": "native-bootstrap",
+      "classification": "deferred",
+      "feature": "native.bootstrap",
+      "reason": "Native bootstrap probes are not differential cases until their stage-0 outcome and normalized diagnostic contract are verified."
+    }
+  ],
+  "entries": [
+    {
+      "name": "simple",
+      "path": "compiler/self-check/fixtures/simple.zorb",
+      "classification": "differential",
+      "feature": "declarations.functions",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified success baseline."
+    },
+    {
+      "name": "builtin_sizeof",
+      "path": "compiler/self-check/fixtures/builtin_sizeof.zorb",
+      "classification": "differential",
+      "feature": "expressions.builtin-sizeof",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified nested type-context builtin parsing and integer result typing."
+    },
+    {
+      "name": "qualified_heap_alloc",
+      "path": "compiler/self-check/fixtures/qualified_heap_alloc.zorb",
+      "classification": "differential",
+      "feature": "expressions.nested-calls-imported-members",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified nested call-argument ownership, imported field types, and error-union recovery parsing."
+    },
+    {
+      "name": "array_literal_codegen",
+      "path": "tests/csharp/fixtures/array_literal_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "expressions.array-literals",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified explicit array literal type and element expression parsing."
+    },
+    {
+      "name": "array_literal_count_mismatch",
+      "path": "tests/csharp/fixtures/array_literal_count_mismatch/main.zorb",
+      "classification": "differential",
+      "feature": "semantics.array-literal-count",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified array element-count category and overlapping source location."
+    },
+    {
+      "name": "array_address_of_element_pointer",
+      "path": "tests/csharp/fixtures/array_address_of_element_pointer/main.zorb",
+      "classification": "differential",
+      "feature": "types.arrays.address-of",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified address-of an array value is accepted in a compatible pointer call context."
+    },
+    {
+      "name": "array_assignment_no_decay",
+      "path": "tests/csharp/fixtures/array_assignment_no_decay/main.zorb",
+      "classification": "differential",
+      "feature": "types.arrays.assignment",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified fixed-array assignment preserves array semantics without requiring pointer decay."
+    },
+    {
+      "name": "array_indexing",
+      "path": "tests/csharp/fixtures/array_indexing/main.zorb",
+      "classification": "differential",
+      "feature": "types.arrays.indexing",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified fixed-array indexing and element expression typing."
+    },
+    {
+      "name": "array_pointer_decay",
+      "path": "tests/csharp/fixtures/array_pointer_decay/main.zorb",
+      "classification": "differential",
+      "feature": "types.arrays.pointer-decay",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified fixed-array coercion to a compatible element pointer."
+    },
+    {
+      "name": "generic_function_codegen",
+      "path": "tests/csharp/fixtures/generic_function_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.functions.explicit-arguments",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified generic parameter parsing and direct explicit-call result substitution."
+    },
+    {
+      "name": "generic_struct_codegen",
+      "path": "tests/csharp/fixtures/generic_struct_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.structs.nominal-literals",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified generic type-reference parsing and generic struct literal checking."
+    },
+    {
+      "name": "generic_mangling_collision_codegen",
+      "path": "tests/csharp/fixtures/generic_mangling_collision_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.multi-argument-type-references",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified nested multi-argument generic type capture in returns and struct literals without treating inner commas as declaration separators."
+    },
+    {
+      "name": "generic_enum_codegen",
+      "path": "tests/csharp/fixtures/generic_enum_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.enums.nominal-members",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified retained postfix generic arguments on enum-member expressions and concrete nominal return checking."
+    },
+    {
+      "name": "generic_union_codegen",
+      "path": "tests/csharp/fixtures/generic_union_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.unions.pattern-bindings",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified generic union pattern bindings with direct concrete member-type substitution."
+    },
+    {
+      "name": "generic_wrapped_types_codegen",
+      "path": "tests/csharp/fixtures/generic_wrapped_types_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.structs.wrapped-members",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified indexing an array-wrapped generic struct member preserves its wrapper until the concrete element type is required."
+    },
+    {
+      "name": "runtime_generic_struct",
+      "path": "tests/csharp/fixtures/runtime_generic_struct/main.zorb",
+      "classification": "differential",
+      "feature": "generics.structs.nested-substitution",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified direct generic member substitution through nested concrete generic struct values."
+    },
+    {
+      "name": "runtime_union_match_binding",
+      "path": "tests/csharp/fixtures/runtime_union_match_binding/main.zorb",
+      "classification": "differential",
+      "feature": "unions.pattern-bindings",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified non-generic union case bindings remain lexically scoped to their case body."
+    },
+    {
+      "name": "match_union_requires_exhaustive_or_else",
+      "path": "tests/csharp/fixtures/match_union_requires_exhaustive_or_else/main.zorb",
+      "classification": "differential",
+      "feature": "flow.match-exhaustiveness.unions",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified union variant coverage reports the stable match-exhaustiveness category at the match span."
+    },
+    {
+      "name": "generic_function_value_variable_codegen",
+      "path": "tests/csharp/fixtures/generic_function_value_variable_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.function-values.local",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified delimiter-terminated explicit generic function values and local callback invocation."
+    },
+    {
+      "name": "global_function_value_initializer_codegen",
+      "path": "tests/csharp/fixtures/global_function_value_initializer_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.function-values.global",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified global typed function-value initialization and callback invocation."
+    },
+    {
+      "name": "generic_function_value_import_alias_codegen",
+      "path": "tests/csharp/fixtures/generic_function_value_import_alias_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.function-values.imported",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified qualified imported generic function values, including an explicit specialization in parentheses."
+    },
+    {
+      "name": "import_alias_function_value",
+      "path": "tests/csharp/fixtures/import_alias_function_value/main.zorb",
+      "classification": "differential",
+      "feature": "imports.function-values",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified direct exported function lookup through a file alias when passed as a callback."
+    },
+    {
+      "name": "runtime_bool_match",
+      "path": "tests/csharp/fixtures/runtime_bool_match/main.zorb",
+      "classification": "differential",
+      "feature": "control-flow.match.bool",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified boolean match/case parsing with an exhaustive success case."
+    },
+    {
+      "name": "match_bool_requires_exhaustive_or_else",
+      "path": "tests/csharp/fixtures/match_bool_requires_exhaustive_or_else/main.zorb",
+      "classification": "differential",
+      "feature": "flow.match-exhaustiveness",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified boolean match exhaustiveness category and overlapping match span."
+    },
+    {
+      "name": "runtime_enum_match",
+      "path": "tests/csharp/fixtures/runtime_enum_match/main.zorb",
+      "classification": "differential",
+      "feature": "control-flow.match.enum",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified enum member resolution and exhaustive enum match success."
+    },
+    {
+      "name": "match_enum_requires_exhaustive_or_else",
+      "path": "tests/csharp/fixtures/match_enum_requires_exhaustive_or_else/main.zorb",
+      "classification": "differential",
+      "feature": "flow.match-enum-exhaustiveness",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified enum match exhaustiveness category and overlapping match span."
+    },
+    {
+      "name": "runtime_for_loop",
+      "path": "tests/csharp/fixtures/runtime_for_loop/main.zorb",
+      "classification": "differential",
+      "feature": "control-flow.for.three-clause",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified initializer, condition, update, nested control flow, and loop body parsing."
+    },
+    {
+      "name": "runtime_tagged_union",
+      "path": "tests/csharp/fixtures/runtime_tagged_union/main.zorb",
+      "classification": "differential",
+      "feature": "control-flow.switch.union-tags",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified union tag/member field parsing and case-body control flow without pattern bindings."
+    },
+    {
+      "name": "invalid_string_escape",
+      "path": "tests/csharp/fixtures/invalid_string_escape/main.zorb",
+      "classification": "differential",
+      "feature": "lexer.string-escapes",
+      "expected": "lexical-failure",
+      "gate": "frontend",
+      "reason": "Verified lexical invalid-escape phase, category, file, and opening-quote span."
+    },
+    {
+      "name": "unterminated_string_literal",
+      "path": "tests/csharp/fixtures/unterminated_string_literal/main.zorb",
+      "classification": "differential",
+      "feature": "lexer.unterminated-strings",
+      "expected": "lexical-failure",
+      "gate": "frontend",
+      "reason": "Verified lexical unterminated-string phase, category, file, and opening-quote span."
+    },
+    {
+      "name": "c_header_extern_type",
+      "path": "tests/csharp/fixtures/c_header_extern_type/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.extern-types",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified C-header import, extern type declaration, and use in an extern function signature."
+    },
+    {
+      "name": "builtin_sizeof_codegen",
+      "path": "tests/csharp/fixtures/builtin_sizeof_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "expressions.builtin-sizeof-types",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified sizeof type-argument parsing and integer result typing."
+    },
+    {
+      "name": "array_size_const_expression_codegen",
+      "path": "tests/csharp/fixtures/array_size_const_expression_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "types.array-constant-sizes",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified array type parsing inside sizeof with a constant size expression."
+    },
+    {
+      "name": "field_offset_const_expression_codegen",
+      "path": "tests/csharp/fixtures/field_offset_const_expression_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "attributes.field-offset-constants",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified explicit-layout member offset parsing and constant expression validation."
+    },
+    {
+      "name": "for_condition_required",
+      "path": "tests/csharp/fixtures/for_condition_required/main.zorb",
+      "classification": "differential",
+      "feature": "flow.for-condition-bool",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified three-clause for condition typing, category, and overlapping loop span."
+    },
+    {
+      "name": "import_alias",
+      "path": "compiler/self-check/fixtures/import_alias/main.zorb",
+      "classification": "differential",
+      "feature": "imports.aliases",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified direct exported-symbol alias lookup."
+    },
+    {
+      "name": "parse_parameter_missing_colon",
+      "path": "tests/csharp/fixtures/parse_parameter_missing_colon/main.zorb",
+      "classification": "differential",
+      "feature": "parser.parameters",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified parse diagnostic normalization baseline."
+    },
+    {
+      "name": "import_missing",
+      "path": "compiler/self-check/fixtures/import_missing/main.zorb",
+      "classification": "differential",
+      "feature": "imports.not-found",
+      "expected": "import-failure",
+      "gate": "frontend",
+      "reason": "Verified missing-import phase, code, file, and span normalization."
+    },
+    {
+      "name": "import_graph",
+      "path": "compiler/self-check/fixtures/import_graph/main.zorb",
+      "classification": "differential",
+      "feature": "imports.direct-exports",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified direct import graph success in both frontends."
+    },
+    {
+      "name": "import_alias_enum",
+      "path": "compiler/self-check/fixtures/import_alias_enum/main.zorb",
+      "classification": "differential",
+      "feature": "imports.alias-enum-members",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified aliased enum member lookup in both frontends."
+    },
+    {
+      "name": "import_canonical",
+      "path": "compiler/self-check/fixtures/import_canonical/main.zorb",
+      "classification": "differential",
+      "feature": "imports.canonical-paths",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified canonical duplicate import graph success in both frontends."
+    },
+    {
+      "name": "import_private",
+      "path": "compiler/self-check/fixtures/import_private/main.zorb",
+      "classification": "differential",
+      "feature": "imports.visibility",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified private imported functions are rejected with a stable unknown-name diagnostic."
+    },
+    {
+      "name": "import_transitive",
+      "path": "compiler/self-check/fixtures/import_transitive/main.zorb",
+      "classification": "differential",
+      "feature": "imports.direct-exports",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified transitive imports do not re-export their dependencies into the direct importer scope."
+    },
+    {
+      "name": "import_cycle",
+      "path": "compiler/self-check/fixtures/import_cycle/main.zorb",
+      "classification": "differential",
+      "feature": "imports.cycles",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified recursive imports reuse the in-progress graph node without reparsing it."
+    },
+    {
+      "name": "import_canonical_cycle",
+      "path": "compiler/self-check/fixtures/import_canonical_cycle/main.zorb",
+      "classification": "differential",
+      "feature": "imports.canonical-paths",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified canonicalized recursive imports share one graph node."
+    },
+    {
+      "name": "bool_condition_required",
+      "path": "tests/csharp/fixtures/bool_condition_required/main.zorb",
+      "classification": "differential",
+      "feature": "flow.boolean-conditions",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified if-condition boolean typing, category, and overlapping condition span."
+    },
+    {
+      "name": "break_outside_while",
+      "path": "tests/csharp/fixtures/break_outside_while/main.zorb",
+      "classification": "differential",
+      "feature": "flow.loop-control",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified break is rejected outside a while or for loop at the keyword span."
+    },
+    {
+      "name": "continue_outside_while",
+      "path": "tests/csharp/fixtures/continue_outside_while/main.zorb",
+      "classification": "differential",
+      "feature": "flow.loop-control",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified continue is rejected outside a while or for loop at the keyword span."
+    },
+    {
+      "name": "duplicate_local_rejected",
+      "path": "tests/csharp/fixtures/duplicate_local_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.local-scope",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified same-scope local redeclaration while permitting lexical block shadowing."
+    },
+    {
+      "name": "duplicate_parameter_rejected",
+      "path": "tests/csharp/fixtures/duplicate_parameter_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.function-parameters",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified duplicate function parameters are rejected at the declaration span."
+    },
+    {
+      "name": "duplicate_struct_field_rejected",
+      "path": "tests/csharp/fixtures/duplicate_struct_field_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.aggregate-members",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified repeated struct fields are rejected at the second member span."
+    },
+    {
+      "name": "union_duplicate_variant_rejected",
+      "path": "tests/csharp/fixtures/union_duplicate_variant_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.aggregate-members",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified repeated union variants are rejected at the second member span."
+    },
+    {
+      "name": "enum_duplicate_value_rejected",
+      "path": "tests/csharp/fixtures/enum_duplicate_value_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.enum-values",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified repeated explicit integer enum values are rejected at the repeated member span."
+    },
+    {
+      "name": "const_requires_initializer",
+      "path": "tests/csharp/fixtures/const_requires_initializer/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.local-const",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified local const declarations require an initializer at the declaration span."
+    },
+    {
+      "name": "assign_const_rejected",
+      "path": "tests/csharp/fixtures/assign_const_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "assignments.const-targets",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified assignments to local const bindings are rejected at the assignment target span."
+    },
+    {
+      "name": "unary_not_requires_bool",
+      "path": "tests/csharp/fixtures/unary_not_requires_bool/main.zorb",
+      "classification": "differential",
+      "feature": "expressions.boolean-operators",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified unary not requires a boolean operand at the unary expression span."
+    },
+    {
+      "name": "logical_operator_requires_bool",
+      "path": "tests/csharp/fixtures/logical_operator_requires_bool/main.zorb",
+      "classification": "differential",
+      "feature": "expressions.boolean-operators",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified logical operators require boolean operands at the offending operand span."
+    },
+    {
+      "name": "comparison_operand_rules",
+      "path": "tests/csharp/fixtures/comparison_operand_rules/main.zorb",
+      "classification": "differential",
+      "feature": "expressions.comparisons",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified comparison operands preserve pointer identity and reject invalid ordered comparisons."
+    },
+    {
+      "name": "error_duplicate_value_rejected",
+      "path": "tests/csharp/fixtures/error_duplicate_value_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.error-values",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified explicit error values are unique at the repeated declaration span."
+    },
+    {
+      "name": "error_declaration_invalid",
+      "path": "tests/csharp/fixtures/error_declaration_invalid/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.error-values",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified error declarations require numeric literal initializers at the declaration span."
+    },
+    {
+      "name": "function_type_mismatch_params",
+      "path": "tests/csharp/fixtures/function_type_mismatch_params/main.zorb",
+      "classification": "differential",
+      "feature": "types.function-signatures",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified direct function values match callback parameter signatures."
+    },
+    {
+      "name": "function_type_mismatch_return",
+      "path": "tests/csharp/fixtures/function_type_mismatch_return/main.zorb",
+      "classification": "differential",
+      "feature": "types.function-signatures",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified direct function values match callback return signatures."
+    },
+    {
+      "name": "pointer_level_mismatch_argument",
+      "path": "tests/csharp/fixtures/pointer_level_mismatch_argument/main.zorb",
+      "classification": "differential",
+      "feature": "types.pointer-arguments",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified pointer call arguments preserve indirection level and pointee type."
+    },
+    {
+      "name": "generic_nominal_assignment_rejected",
+      "path": "tests/csharp/fixtures/generic_nominal_assignment_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.nominal-identity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified distinct generic struct specializations remain nominally incompatible."
+    },
+    {
+      "name": "generic_enum_nominal_assignment_rejected",
+      "path": "tests/csharp/fixtures/generic_enum_nominal_assignment_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.nominal-identity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified distinct generic enum specializations remain nominally incompatible."
+    },
+    {
+      "name": "generic_non_generic_enum_rejected",
+      "path": "tests/csharp/fixtures/generic_non_generic_enum_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.nominal-identity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified non-generic enums cannot be treated as generic specializations."
+    },
+    {
+      "name": "generic_union_nominal_assignment_rejected",
+      "path": "tests/csharp/fixtures/generic_union_nominal_assignment_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.nominal-identity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified distinct generic union specializations remain nominally incompatible."
+    },
+    {
+      "name": "numeric_argument_signedness_requires_cast",
+      "path": "tests/csharp/fixtures/numeric_argument_signedness_requires_cast/main.zorb",
+      "classification": "differential",
+      "feature": "types.integer-conversions",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified typed signed values require an explicit cast before an unsigned call parameter."
+    },
+    {
+      "name": "missing_return_if_branch",
+      "path": "tests/csharp/fixtures/missing_return_if_branch/main.zorb",
+      "classification": "differential",
+      "feature": "flow.return-paths",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified a value-returning function requires an alternate path when an if branch alone returns."
+    },
+    {
+      "name": "catch_in_if_branch_missing_return",
+      "path": "tests/csharp/fixtures/catch_in_if_branch_missing_return/main.zorb",
+      "classification": "differential",
+      "feature": "flow.return-paths",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified branch-local catch recovery does not make a value-returning function exhaustive."
+    },
+    {
+      "name": "switch_case_type_mismatch",
+      "path": "tests/csharp/fixtures/switch_case_type_mismatch/main.zorb",
+      "classification": "differential",
+      "feature": "flow.switch-validation",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified switch cases are comparable to the operand type."
+    },
+    {
+      "name": "switch_duplicate_case_rejected",
+      "path": "tests/csharp/fixtures/switch_duplicate_case_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "flow.switch-validation",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified duplicate scalar switch cases are rejected at the repeated value."
+    },
+    {
+      "name": "switch_enum_requires_exhaustive_or_else",
+      "path": "tests/csharp/fixtures/switch_enum_requires_exhaustive_or_else/main.zorb",
+      "classification": "differential",
+      "feature": "flow.switch-validation",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified enum switches cover every member or provide an else branch."
+    },
+    {
+      "name": "switch_operand_type_rejected",
+      "path": "tests/csharp/fixtures/switch_operand_type_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "flow.switch-validation",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified switch operands are restricted to integer, boolean, and enum types."
+    },
+    {
+      "name": "import_alias_missing_export",
+      "path": "tests/csharp/fixtures/import_alias_missing_export/main.zorb",
+      "classification": "differential",
+      "feature": "imports.visibility",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified qualified imports reject non-exported symbols."
+    },
+    {
+      "name": "import_alias_unqualified_call_rejected",
+      "path": "tests/csharp/fixtures/import_alias_unqualified_call_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "imports.visibility",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified imported callables remain inaccessible without the required export path."
+    },
+    {
+      "name": "import_alias_unqualified_type_rejected",
+      "path": "tests/csharp/fixtures/import_alias_unqualified_type_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "imports.visibility",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified imported types remain inaccessible without the required export path."
+    },
+    {
+      "name": "import_no_transitive_reexport",
+      "path": "tests/csharp/fixtures/import_no_transitive_reexport/main.zorb",
+      "classification": "differential",
+      "feature": "imports.visibility",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified imports do not expose unexported transitive symbols."
+    },
+    {
+      "name": "export_const_private_rejected",
+      "path": "tests/csharp/fixtures/export_const_private_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "imports.visibility",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified a private imported constant is not visible through an export."
+    },
+    {
+      "name": "export_direct_import_private_rejected",
+      "path": "tests/csharp/fixtures/export_direct_import_private_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "imports.visibility",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified a private imported function is not visible through an export."
+    },
+    {
+      "name": "error_undeclared",
+      "path": "tests/csharp/fixtures/error_undeclared/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.error-values",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified uses of undeclared errors produce an unknown-name diagnostic."
+    },
+    {
+      "name": "array_decay_to_void_pointer_rejected",
+      "path": "tests/csharp/fixtures/array_decay_to_void_pointer_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "types.array-pointer-decay",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified fixed arrays decay only to pointers to their declared element type."
+    },
+    {
+      "name": "array_size_non_const_identifier_rejected",
+      "path": "tests/csharp/fixtures/array_size_non_const_identifier_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "types.array-bounds",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified local fixed-array bounds require constant integer expressions."
+    },
+    {
+      "name": "struct_field_array_size_non_const_identifier_rejected",
+      "path": "tests/csharp/fixtures/struct_field_array_size_non_const_identifier_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "types.array-bounds",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified struct fixed-array bounds require constant integer expressions."
+    },
+    {
+      "name": "generic_enum_arity_rejected",
+      "path": "tests/csharp/fixtures/generic_enum_arity_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.arity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified generic enum specializations provide the declared number of type arguments."
+    },
+    {
+      "name": "generic_function_arity_rejected",
+      "path": "tests/csharp/fixtures/generic_function_arity_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.arity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified explicit generic function calls provide the declared number of type arguments."
+    },
+    {
+      "name": "generic_non_generic_function_rejected",
+      "path": "tests/csharp/fixtures/generic_non_generic_function_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.arity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified non-generic functions reject explicit type arguments."
+    },
+    {
+      "name": "generic_non_generic_struct_rejected",
+      "path": "tests/csharp/fixtures/generic_non_generic_struct_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.arity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified non-generic structs reject explicit type arguments."
+    },
+    {
+      "name": "generic_non_generic_union_rejected",
+      "path": "tests/csharp/fixtures/generic_non_generic_union_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.arity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified non-generic unions reject explicit type arguments."
+    },
+    {
+      "name": "generic_struct_arity_rejected",
+      "path": "tests/csharp/fixtures/generic_struct_arity_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.arity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified generic struct specializations provide the declared number of type arguments."
+    },
+    {
+      "name": "generic_struct_default_arity_rejected",
+      "path": "tests/csharp/fixtures/generic_struct_default_arity_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.arity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified generic struct specializations cannot omit all type arguments."
+    },
+    {
+      "name": "generic_union_arity_rejected",
+      "path": "tests/csharp/fixtures/generic_union_arity_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.arity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified generic union specializations provide the declared number of type arguments."
+    },
+    {
+      "name": "enum_underlying_type_rejected",
+      "path": "tests/csharp/fixtures/enum_underlying_type_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.enums.underlying-type",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified enums require a built-in integer underlying type."
+    },
+    {
+      "name": "union_reserved_tag_name_rejected",
+      "path": "tests/csharp/fixtures/union_reserved_tag_name_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.unions.discriminator",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified union payload variants cannot shadow the synthesized .tag discriminator."
+    },
+    {
+      "name": "union_literal_requires_one_variant",
+      "path": "tests/csharp/fixtures/union_literal_requires_one_variant/main.zorb",
+      "classification": "differential",
+      "feature": "expressions.union-literals.cardinality",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified tagged-union literals initialize exactly one payload variant."
+    },
+    {
+      "name": "struct_literal_unknown_field_position",
+      "path": "tests/csharp/fixtures/struct_literal_unknown_field_position/main.zorb",
+      "classification": "differential",
+      "feature": "expressions.struct-literals.members",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified unknown struct-literal fields report the authored field location."
+    },
+    {
+      "name": "struct_literal_missing_field",
+      "path": "tests/csharp/fixtures/struct_literal_missing_field/main.zorb",
+      "classification": "differential",
+      "feature": "expressions.struct-literals.members",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified struct literals require every declared field."
+    },
+    {
+      "name": "pointer_arithmetic_codegen",
+      "path": "tests/csharp/fixtures/pointer_arithmetic_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "types.pointer-arithmetic",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified pointer plus/minus integer expressions retain their pointer result type."
+    },
+    {
+      "name": "unsupported_pointer_arithmetic_rejected",
+      "path": "tests/csharp/fixtures/unsupported_pointer_arithmetic_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "types.pointer-arithmetic",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified pointer arithmetic rejects pointer-pointer subtraction, integer-pointer subtraction, multiplication, and division."
+    },
+    {
+      "name": "global_array_initializer_requires_literal",
+      "path": "tests/csharp/fixtures/global_array_initializer_requires_literal/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.globals.array-initializers",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified fixed-array globals reject value-copy initializers and preserve the following top-level declaration."
+    },
+    {
+      "name": "global_initializer_divide_by_zero_rejected",
+      "path": "tests/csharp/fixtures/global_initializer_divide_by_zero_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.globals.constant-evaluation",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified integer global initializers reject a constant divide by zero at the expression span."
+    },
+    {
+      "name": "global_initializer_overflow_rejected",
+      "path": "tests/csharp/fixtures/global_initializer_overflow_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.globals.constant-evaluation",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified direct i64-boundary addition in a global initializer reports overflow at the operator span."
+    },
+    {
+      "name": "global_initializer_catch_rejected",
+      "path": "tests/csharp/fixtures/global_initializer_catch_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.globals.catch",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified global initializers reject recovered catch expressions at the catch-token span."
+    },
+    {
+      "name": "pointer_level_mismatch_assignment",
+      "path": "tests/csharp/fixtures/pointer_level_mismatch_assignment/main.zorb",
+      "classification": "differential",
+      "feature": "types.pointers.assignment",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified assignment preserves pointer indirection level."
+    },
+    {
+      "name": "pointer_to_integer_requires_cast",
+      "path": "tests/csharp/fixtures/pointer_to_integer_requires_cast/main.zorb",
+      "classification": "differential",
+      "feature": "types.pointers.conversions",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified pointer-to-integer conversion requires an explicit cast."
+    },
+    {
+      "name": "assignment_target_rejected",
+      "path": "tests/csharp/fixtures/assignment_target_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "types.assignment-targets",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified assignment targets are restricted to assignable expressions."
+    },
+    {
+      "name": "numeric_literal_negative_unsigned_rejected",
+      "path": "tests/csharp/fixtures/numeric_literal_negative_unsigned_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "types.integers.literal-ranges",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified negative integer literals cannot initialize unsigned variables."
+    },
+    {
+      "name": "switch_case_after_else_rejected",
+      "path": "tests/csharp/fixtures/switch_case_after_else_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "flow.switch.branch-order",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified switch cases cannot follow an else branch at the offending case-value span."
+    },
+    {
+      "name": "switch_duplicate_else_rejected",
+      "path": "tests/csharp/fixtures/switch_duplicate_else_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "flow.switch.branch-order",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified switch statements reject a second else branch at its opening brace."
+    },
+    {
+      "name": "cast_error_union_rejected",
+      "path": "tests/csharp/fixtures/cast_error_union_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "error-unions.cast-recovery",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified error-union call results require recovery before non-pointer casts."
+    },
+    {
+      "name": "parse_export_invalid_declaration",
+      "path": "tests/csharp/fixtures/parse_export_invalid_declaration/main.zorb",
+      "classification": "differential",
+      "feature": "parser.exports",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified invalid export declarations preserve the export-following token span."
+    },
+    {
+      "name": "builtin_syscall_redeclaration_rejected",
+      "path": "tests/csharp/fixtures/builtin_syscall_redeclaration_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.builtin-symbols",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified top-level declarations cannot shadow the syscall intrinsic."
+    },
+    {
+      "name": "parse_unknown_attribute",
+      "path": "tests/csharp/fixtures/parse_unknown_attribute/main.zorb",
+      "classification": "differential",
+      "feature": "parser.attributes",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified unknown leading declaration attributes fail at the attribute identifier."
+    },
+    {
+      "name": "parse_function_attribute_missing_comma",
+      "path": "tests/csharp/fixtures/parse_function_attribute_missing_comma/main.zorb",
+      "classification": "differential",
+      "feature": "parser.attributes",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified adjacent declaration attributes require a separating comma."
+    },
+    {
+      "name": "generic_duplicate_type_parameter",
+      "path": "tests/csharp/fixtures/generic_duplicate_type_parameter/main.zorb",
+      "classification": "differential",
+      "feature": "generics.declaration-parameters",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified duplicate generic parameter names fail at the duplicate parameter."
+    },
+    {
+      "name": "generic_duplicate_type_parameter_annotations",
+      "path": "tests/csharp/fixtures/generic_duplicate_type_parameter_annotations/main.zorb",
+      "classification": "differential",
+      "feature": "generics.declaration-parameters",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified duplicate generic parameters are rejected even with constraints and defaults."
+    },
+    {
+      "name": "generic_extern_rejected",
+      "path": "tests/csharp/fixtures/generic_extern_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.extern-functions",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified inferred direct generic return values from extern declarations."
+    },
+    {
+      "name": "duplicate_top_level_rejected",
+      "path": "tests/csharp/fixtures/duplicate_top_level_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "declarations.duplicates",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified duplicate top-level declarations report the duplicate declaration span."
+    },
+    {
+      "name": "import_invalid_string_escape",
+      "path": "tests/csharp/fixtures/import_invalid_string_escape/main.zorb",
+      "classification": "differential",
+      "feature": "imports.lexical-diagnostics",
+      "expected": "lexical-failure",
+      "gate": "frontend",
+      "reason": "Verified invalid escapes in imported files retain lexical diagnostics and source spans."
+    },
+    {
+      "name": "import_unterminated_string_literal",
+      "path": "tests/csharp/fixtures/import_unterminated_string_literal/main.zorb",
+      "classification": "differential",
+      "feature": "imports.lexical-diagnostics",
+      "expected": "lexical-failure",
+      "gate": "frontend",
+      "reason": "Verified unterminated strings in imported files retain lexical diagnostics and source spans."
+    },
+    {
+      "name": "parse_unexpected_top_level_token",
+      "path": "tests/csharp/fixtures/parse_unexpected_top_level_token/main.zorb",
+      "classification": "differential",
+      "feature": "parser.top-level-recovery",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified unexpected top-level tokens fail at the token span."
+    },
+    {
+      "name": "parse_unexpected_expression_token",
+      "path": "tests/csharp/fixtures/parse_unexpected_expression_token/main.zorb",
+      "classification": "differential",
+      "feature": "parser.expression-recovery",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified invalid primary expression tokens fail during parsing at the token span."
+    },
+    {
+      "name": "numeric_return_narrowing_requires_cast",
+      "path": "tests/csharp/fixtures/numeric_return_narrowing_requires_cast/main.zorb",
+      "classification": "differential",
+      "feature": "types.integers.return-conversions",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified integer return narrowing requires an explicit cast."
+    },
+    {
+      "name": "numeric_variable_conversion_requires_cast",
+      "path": "tests/csharp/fixtures/numeric_variable_conversion_requires_cast/main.zorb",
+      "classification": "differential",
+      "feature": "types.integers.variable-conversions",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified integer variable narrowing requires an explicit cast."
+    },
+    {
+      "name": "numeric_literal_out_of_range",
+      "path": "tests/csharp/fixtures/numeric_literal_out_of_range/main.zorb",
+      "classification": "differential",
+      "feature": "types.integers.literal-ranges",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified positive integer literals must fit their declared narrow integer type."
+    },
+    {
+      "name": "array_type_postfix_syntax_rejected",
+      "path": "tests/csharp/fixtures/array_type_postfix_syntax_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "parser.array-types",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified fixed-array types use prefix rather than postfix syntax."
+    },
+    {
+      "name": "slice_postfix_syntax_rejected",
+      "path": "tests/csharp/fixtures/slice_postfix_syntax_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "parser.slice-types",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified slice types use prefix rather than postfix syntax."
+    },
+    {
+      "name": "invalid_abi_attribute",
+      "path": "tests/csharp/fixtures/invalid_abi_attribute/main.zorb",
+      "classification": "differential",
+      "feature": "parser.attributes.abi",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified ABI attributes reject unsupported ABI names at the payload span."
+    },
+    {
+      "name": "error_union_arrow_return_syntax",
+      "path": "tests/csharp/fixtures/error_union_arrow_return_syntax/main.zorb",
+      "classification": "differential",
+      "feature": "error-unions.return-syntax",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified arrow-form error-union return syntax normalizes to the native return metadata."
+    },
+    {
+      "name": "catch_requires_error_union",
+      "path": "tests/csharp/fixtures/catch_requires_error_union/main.zorb",
+      "classification": "differential",
+      "feature": "error-unions.catch-preconditions",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified catch expressions require a local error-union call source."
+    },
+    {
+      "name": "catch_body_must_terminate",
+      "path": "tests/csharp/fixtures/catch_body_must_terminate/main.zorb",
+      "classification": "differential",
+      "feature": "error-unions.catch-body-flow",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified value-producing catch bodies require a fallback expression or terminal control transfer."
+    },
+    {
+      "name": "catch_fallback_type_mismatch",
+      "path": "tests/csharp/fixtures/catch_fallback_type_mismatch/main.zorb",
+      "classification": "differential",
+      "feature": "error-unions.catch-fallback-type",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified a fallthrough catch fallback must be assignable to the protected expression payload type."
+    },
+    {
+      "name": "catch_expression_codegen",
+      "path": "tests/csharp/fixtures/catch_expression_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "error-unions.catch-expression",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified a catch body may transfer control with the scoped error variable."
+    },
+    {
+      "name": "runtime_catch_fallback",
+      "path": "tests/csharp/fixtures/runtime_catch_fallback/main.zorb",
+      "classification": "differential",
+      "feature": "error-unions.catch-expression",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified a value-producing catch body accepts a compatible fallback expression."
+    },
+    {
+      "name": "local_align_const_expression",
+      "path": "tests/csharp/fixtures/local_align_const_expression/main.zorb",
+      "classification": "differential",
+      "feature": "attributes.local-align",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified block-scope variable alignment accepts a compile-time expression."
+    },
+    {
+      "name": "local_align_non_const_identifier_rejected",
+      "path": "tests/csharp/fixtures/local_align_non_const_identifier_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "attributes.local-align",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified block-scope alignment rejects a non-constant identifier."
+    },
+    {
+      "name": "function_align_const_expression_codegen",
+      "path": "tests/csharp/fixtures/function_align_const_expression_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "attributes.declaration-align",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified a function alignment accepts a compile-time expression after a preceding declaration."
+    },
+    {
+      "name": "struct_align_const_expression_codegen",
+      "path": "tests/csharp/fixtures/struct_align_const_expression_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "attributes.declaration-align",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified a struct alignment accepts a compile-time expression after a preceding declaration."
+    },
+    {
+      "name": "variable_align_const_expression_codegen",
+      "path": "tests/csharp/fixtures/variable_align_const_expression_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "attributes.declaration-align",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified a global alignment accepts a compile-time expression after a preceding declaration."
+    },
+    {
+      "name": "variable_align_non_const_identifier_rejected",
+      "path": "tests/csharp/fixtures/variable_align_non_const_identifier_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "attributes.declaration-align",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified a global alignment rejects a non-constant identifier expression."
+    },
+    {
+      "name": "generic_function_value_deferred_inference_codegen",
+      "path": "tests/csharp/fixtures/generic_function_value_deferred_inference_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.function-values.inference",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Covers inference of a generic function value from its higher-order call context."
+    },
+    {
+      "name": "asm_and_attributes",
+      "path": "tests/csharp/fixtures/asm_and_attributes/main.zorb",
+      "classification": "differential",
+      "feature": "assembly.operands",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Covers assembly templates with assignable output and scalar input operands."
+    },
+    {
+      "name": "asm_error_union_operand_rejected",
+      "path": "tests/csharp/fixtures/asm_error_union_operand_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "assembly.operands",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified assembly operands reject embedded catch expressions."
+    },
+    {
+      "name": "asm_output_requires_assignable",
+      "path": "tests/csharp/fixtures/asm_output_requires_assignable/main.zorb",
+      "classification": "differential",
+      "feature": "assembly.operands",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified assembly output operands must be assignable targets."
+    },
+    {
+      "name": "generic_function_value_factory_codegen",
+      "path": "tests/csharp/fixtures/generic_function_value_factory_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.function-values",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Covers explicit generic factory specialization returning a function value."
+    },
+    {
+      "name": "runtime_generic_defaults",
+      "path": "tests/csharp/fixtures/runtime_generic_defaults/main.zorb",
+      "classification": "differential",
+      "feature": "generics.defaults-and-constraints",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Covers retained default type arguments and constrained default parameter syntax."
+    },
+    {
+      "name": "runtime_generic_inference_and_coercions",
+      "path": "tests/csharp/fixtures/runtime_generic_inference_and_coercions/main.zorb",
+      "classification": "differential",
+      "feature": "generics.wrapped-inference",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Covers generic inference through array, slice, and pointer arguments."
+    },
+    {
+      "name": "generic_result_codegen",
+      "path": "tests/csharp/fixtures/generic_result_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.error-unions",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Covers an explicitly specialized generic error-union result recovered by catch."
+    },
+    {
+      "name": "generic_inference_import_alias_codegen",
+      "path": "tests/csharp/fixtures/generic_inference_import_alias_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.imported-symbols.inference",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Covers generic inference through an imported alias projection."
+    },
+    {
+      "name": "generic_import_alias_codegen",
+      "path": "tests/csharp/fixtures/generic_import_alias_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "generics.imported-symbols",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Covers explicit generic specialization through an imported alias projection."
+    },
+    {
+      "name": "generic_import_alias_union_enum",
+      "path": "tests/csharp/fixtures/generic_import_alias_union_enum/main.zorb",
+      "classification": "differential",
+      "feature": "generics.imported-symbols.nominal-types",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Covers imported generic enum/union nominal members and tag access."
+    },
+    {
+      "name": "generic_unknown_type_argument",
+      "path": "tests/csharp/fixtures/generic_unknown_type_argument/main.zorb",
+      "classification": "differential",
+      "feature": "generics.arity",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified generic type arguments resolve to known types."
+    },
+    {
+      "name": "match_union_import_alias_tag_variant",
+      "path": "tests/csharp/fixtures/match_union_import_alias_tag_variant/main.zorb",
+      "classification": "differential",
+      "feature": "flow.match.imported-unions",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Covers exhaustive match cases expressed through imported union tag variants."
+    },
+    {
+      "name": "builtin_sizeof_unknown_type",
+      "path": "tests/csharp/fixtures/builtin_sizeof_unknown_type/main.zorb",
+      "classification": "differential",
+      "feature": "builtins.sizeof-type-resolution",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified Builtin.sizeof rejects an undeclared type with a semantic unknown-name diagnostic."
+    },
+    {
+      "name": "generic_constraint_rejected",
+      "path": "tests/csharp/fixtures/generic_constraint_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.constraints",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified constrained explicit generic calls are classified as type validation failures."
+    },
+    {
+      "name": "generic_function_requires_explicit_arguments",
+      "path": "tests/csharp/fixtures/generic_function_requires_explicit_arguments/main.zorb",
+      "classification": "differential",
+      "feature": "generics.call-inference",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified direct generic function calls infer their type argument from a value argument."
+    },
+    {
+      "name": "import_error_no_transitive_reexport",
+      "path": "tests/csharp/fixtures/import_error_no_transitive_reexport/main.zorb",
+      "classification": "differential",
+      "feature": "imports.error-visibility",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified imported errors are not transitively re-exported."
+    },
+    {
+      "name": "import_private_error_rejected",
+      "path": "tests/csharp/fixtures/import_private_error_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "imports.error-visibility",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified private errors from imported modules remain inaccessible."
+    },
+    {
+      "name": "invalid_struct_explicit_layout",
+      "path": "tests/csharp/fixtures/invalid_struct_explicit_layout/main.zorb",
+      "classification": "differential",
+      "feature": "attributes.explicit-layout",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified explicit-layout structs require an offset attribute on every field."
+    },
+    {
+      "name": "field_offset_non_const_identifier_rejected",
+      "path": "tests/csharp/fixtures/field_offset_non_const_identifier_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "attributes.field-offset",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified explicit-layout field offsets must be compile-time integer values."
+    },
+    {
+      "name": "builtin_arch_comparison_rejected",
+      "path": "tests/csharp/fixtures/builtin_arch_comparison_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "builtins.arch-comparison",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified architecture predicates reject comparisons with integer operands."
+    },
+    {
+      "name": "builtin_platform_comparison_rejected",
+      "path": "tests/csharp/fixtures/builtin_platform_comparison_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "builtins.platform-comparison",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified platform predicates reject comparisons with integer operands."
+    },
+    {
+      "name": "for_initializer_scope",
+      "path": "tests/csharp/fixtures/for_initializer_scope/main.zorb",
+      "classification": "differential",
+      "feature": "flow.for-scope",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified for-initializer bindings do not escape their loop scope."
+    },
+    {
+      "name": "import_syntax_error",
+      "path": "tests/csharp/fixtures/import_syntax_error/main.zorb",
+      "classification": "differential",
+      "feature": "imports.transitive-parse-diagnostics",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified imported-source parse failure phase, code, resolved file, and overlapping primary span."
+    },
+    {
+      "name": "import_file_not_found",
+      "path": "tests/csharp/fixtures/import_file_not_found/main.zorb",
+      "classification": "differential",
+      "feature": "imports.missing-source",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified missing import normalization to the import-not-found category and import statement span."
+    },
+    {
+      "name": "parse_semicolon_statement_recovery",
+      "path": "tests/csharp/fixtures/parse_semicolon_statement_recovery/main.zorb",
+      "classification": "differential",
+      "feature": "parser.statement-recovery",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified a semicolon outside a for clause is rejected at the unexpected token."
+    },
+    {
+      "name": "parse_switch_unexpected_branch",
+      "path": "tests/csharp/fixtures/parse_switch_unexpected_branch/main.zorb",
+      "classification": "differential",
+      "feature": "flow.switch-branch-grammar",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified direct switch-body statements must start with case or else."
+    },
+    {
+      "name": "parse_if_missing_brace",
+      "path": "tests/csharp/fixtures/parse_if_missing_brace/main.zorb",
+      "classification": "differential",
+      "feature": "flow.if-body-grammar",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified if statements require a braced body at the following statement boundary."
+    },
+    {
+      "name": "string_to_integer_requires_cast",
+      "path": "tests/csharp/fixtures/string_to_integer_requires_cast/main.zorb",
+      "classification": "differential",
+      "feature": "types.call-argument-conversions",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified string literals cannot implicitly convert to scalar call parameters."
+    }
+  ],
+  "successInputs": [
+      "tests/csharp/fixtures/bare_metal_debug_port/main.zorb",
+      "tests/csharp/fixtures/block_scope_shadowing/main.zorb",
+      "tests/csharp/fixtures/bool_condition_literal/main.zorb",
+      "tests/csharp/fixtures/bool_equality_codegen/main.zorb",
+      "tests/csharp/fixtures/builtin_arch_codegen/main.zorb",
+      "tests/csharp/fixtures/builtin_platform_codegen/main.zorb",
+      "tests/csharp/fixtures/c_header_and_extern/main.zorb",
+      "tests/csharp/fixtures/c_keyword_local_codegen/main.zorb",
+      "tests/csharp/fixtures/c_keyword_member_codegen/main.zorb",
+      "tests/csharp/fixtures/c_keyword_name_codegen/main.zorb",
+      "tests/csharp/fixtures/c_name_collision_codegen/main.zorb",
+      "tests/csharp/fixtures/call_preserves_pointer_return/main.zorb",
+      "tests/csharp/fixtures/catch_call_argument_codegen/main.zorb",
+      "tests/csharp/fixtures/catch_nested_cast_codegen/main.zorb",
+      "tests/csharp/fixtures/codegen_catch_expression_statement/main.zorb",
+      "tests/csharp/fixtures/comparison_result_bool_assignment/main.zorb",
+      "tests/csharp/fixtures/condition_catch_codegen/main.zorb",
+      "tests/csharp/fixtures/const_local_codegen/main.zorb",
+      "tests/csharp/fixtures/error_declared_expression/main.zorb",
+      "tests/csharp/fixtures/error_distinct_values_ok/main.zorb",
+      "tests/csharp/fixtures/error_keyword_declaration/main.zorb",
+      "tests/csharp/fixtures/error_union_bool_codegen/main.zorb",
+      "tests/csharp/fixtures/error_union_codegen/main.zorb",
+      "tests/csharp/fixtures/export_const_direct_import/main.zorb",
+      "tests/csharp/fixtures/export_direct_import/main.zorb",
+      "tests/csharp/fixtures/function_pointer_field_call/main.zorb",
+      "tests/csharp/fixtures/generic_layout_codegen/main.zorb",
+      "tests/csharp/fixtures/generic_nested_layout_codegen/main.zorb",
+      "tests/csharp/fixtures/global_array_size_const_expression_codegen/main.zorb",
+      "tests/csharp/fixtures/global_const_expression_codegen/main.zorb",
+      "tests/csharp/fixtures/global_folded_const_dependency_codegen/main.zorb",
+      "tests/csharp/fixtures/hosted_start_reserved_names_codegen/main.zorb",
+      "tests/csharp/fixtures/if_both_branches_return/main.zorb",
+      "tests/csharp/fixtures/import_alias_enum_member/main.zorb",
+      "tests/csharp/fixtures/import_alias_qualified_call/main.zorb",
+      "tests/csharp/fixtures/import_alias_type_reference/main.zorb",
+      "tests/csharp/fixtures/import_alias_union_member/main.zorb",
+      "tests/csharp/fixtures/import_dedup_canonicalized/main.zorb",
+      "tests/csharp/fixtures/local_array_copy_succeeds/main.zorb",
+      "tests/csharp/fixtures/logical_short_circuit_canonical_bool_codegen/main.zorb",
+      "tests/csharp/fixtures/logical_short_circuit_runtime/main.zorb",
+      "tests/csharp/fixtures/multilevel_pointer_error_union_codegen/main.zorb",
+      "tests/csharp/fixtures/nested_imports/main.zorb",
+      "tests/csharp/fixtures/nested_struct_return_codegen/main.zorb",
+      "tests/csharp/fixtures/numeric_explicit_narrowing_cast_codegen/main.zorb",
+      "tests/csharp/fixtures/numeric_literal_assignment_fits/main.zorb",
+      "tests/csharp/fixtures/numeric_mixed_comparison_codegen/main.zorb",
+      "tests/csharp/fixtures/numeric_unsigned_to_signed_widening_codegen/main.zorb",
+      "tests/csharp/fixtures/platform_if_scope_codegen/main.zorb",
+      "tests/csharp/fixtures/runtime_array_value_copy/main.zorb",
+      "tests/csharp/fixtures/runtime_break_loop/main.zorb",
+      "tests/csharp/fixtures/runtime_condition_catch/main.zorb",
+      "tests/csharp/fixtures/runtime_continue_loop/main.zorb",
+      "tests/csharp/fixtures/runtime_dogfood_lexer/main.zorb",
+      "tests/csharp/fixtures/runtime_dogfood_lexer_edges/main.zorb",
+      "tests/csharp/fixtures/runtime_enum_switch/main.zorb",
+      "tests/csharp/fixtures/runtime_for_break_empty_clauses/main.zorb",
+      "tests/csharp/fixtures/runtime_generic_enum/main.zorb",
+      "tests/csharp/fixtures/runtime_generic_union/main.zorb",
+      "tests/csharp/fixtures/runtime_generic_union_tag_default/main.zorb",
+      "tests/csharp/fixtures/runtime_global_string_array/main.zorb",
+      "tests/csharp/fixtures/runtime_heap_init_invalid_size/main.zorb",
+      "tests/csharp/fixtures/runtime_hello_world/main.zorb",
+      "tests/csharp/fixtures/runtime_host_import_alias/main.zorb",
+      "tests/csharp/fixtures/runtime_host_nonzero_exit/main.zorb",
+      "tests/csharp/fixtures/runtime_host_platform_branch/main.zorb",
+      "tests/csharp/fixtures/runtime_host_platform_catch/main.zorb",
+      "tests/csharp/fixtures/runtime_host_stderr_write/main.zorb",
+      "tests/csharp/fixtures/runtime_local_string_start/main.zorb",
+      "tests/csharp/fixtures/runtime_numeric_match/main.zorb",
+      "tests/csharp/fixtures/runtime_repeated_catch_names/main.zorb",
+      "tests/csharp/fixtures/runtime_slice_index_oob/main.zorb",
+      "tests/csharp/fixtures/runtime_slice_indexing/main.zorb",
+      "tests/csharp/fixtures/runtime_src_zorb_ast_module/main.zorb",
+      "tests/csharp/fixtures/runtime_src_zorb_lexer/main.zorb",
+      "tests/csharp/fixtures/runtime_src_zorb_parser/main.zorb",
+      "tests/csharp/fixtures/runtime_src_zorb_semantics/main.zorb",
+      "tests/csharp/fixtures/runtime_statement_catch/main.zorb",
+      "tests/csharp/fixtures/runtime_statement_catch_fallthrough/main.zorb",
+      "tests/csharp/fixtures/runtime_stdlib_collections/main.zorb",
+      "tests/csharp/fixtures/runtime_stdlib_cross_platform/main.zorb",
+      "tests/csharp/fixtures/runtime_stdlib_fs/main.zorb",
+      "tests/csharp/fixtures/runtime_stdlib_fs_errors/main.zorb",
+      "tests/csharp/fixtures/runtime_stdlib_fs_truncate/main.zorb",
+      "tests/csharp/fixtures/runtime_stdlib_helpers/main.zorb",
+      "tests/csharp/fixtures/runtime_string_escapes/main.zorb",
+      "tests/csharp/fixtures/runtime_switch_evaluated_once/main.zorb",
+      "tests/csharp/fixtures/runtime_switch_match/main.zorb",
+      "tests/csharp/fixtures/slice_parameter_codegen/main.zorb",
+      "tests/csharp/fixtures/snapshot_minimal_program/main.zorb",
+      "tests/csharp/fixtures/stdlib_io_windows_codegen/main.zorb",
+      "tests/csharp/fixtures/stdlib_str_usage/main.zorb",
+      "tests/csharp/fixtures/string_escape_codegen/main.zorb",
+      "tests/csharp/fixtures/struct_error_union_return_codegen/main.zorb",
+      "tests/csharp/fixtures/struct_field_array_size_const_expression_codegen/main.zorb",
+      "tests/csharp/fixtures/struct_forward_reference_codegen/main.zorb",
+      "tests/csharp/fixtures/struct_literal_array_field_copy_codegen/main.zorb",
+      "tests/csharp/fixtures/struct_literal_array_field_inline_codegen/main.zorb",
+      "tests/csharp/fixtures/struct_literal_codegen/main.zorb",
+      "tests/csharp/fixtures/struct_return_through_local_codegen/main.zorb",
+      "tests/csharp/fixtures/symbol_lookup_prefers_local_shadow/main.zorb",
+      "tests/csharp/fixtures/unary_not_bool_codegen/main.zorb",
+      "tests/csharp/fixtures/union_tag_c_name_collision_codegen/main.zorb",
+      "tests/csharp/fixtures/warning_unreachable_after_loop_control/main.zorb",
+      "tests/csharp/fixtures/warning_unreachable_after_return/main.zorb",
+      "tests/csharp/fixtures/windows_exit_process_signature/main.zorb",
+      "examples/baremetal/hello_kernel.zorb",
+      "examples/basics/enum_switch.zorb",
+      "examples/basics/error_catch.zorb",
+      "examples/basics/generic_adts.zorb",
+      "examples/basics/import_alias/main.zorb",
+      "examples/basics/literals.zorb",
+      "examples/basics/platform_info.zorb",
+      "examples/basics/stdlib_helpers.zorb",
+      "examples/basics/switch_for.zorb",
+      "examples/basics/tagged_union.zorb",
+      "examples/dogfood/lexer/main.zorb",
+      "compiler/self-check/fixtures/builtin_compile_error.zorb",
+      "compiler/self-check/fixtures/builtin_platform.zorb",
+      "compiler/self-check/fixtures/extern_call.zorb",
+      "compiler/self-check/fixtures/import_std_string.zorb",
+      "compiler/self-check/fixtures/import_std_string_call.zorb",
+      "compiler/self-check/fixtures/import_string_slice_use.zorb",
+      "compiler/self-check/fixtures/qualified_call.zorb",
+      "compiler/self-check/fixtures/qualified_empty_call.zorb",
+      "compiler/self-check/fixtures/qualified_empty_params.zorb",
+      "compiler/self-check/fixtures/slice_ptr_assignment.zorb",
+      "compiler/self-check/fixtures/string_len.zorb",
+      "compiler/self-check/fixtures/string_reverse.zorb"
+  ]
+}

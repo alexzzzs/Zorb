@@ -153,7 +153,7 @@ All notable changes to this project will be documented in this file.
 - Native `build`, `run`, and default emission now use the Zig/LLVM backend.
 - C-fragment snapshots and the GCC/QEMU runtime harness were replaced by LLVM
   emission checks, focused LLVM IR assertions, and LLVM-built runtime tests.
-- The backend project now lives under `Zorb.LlvmBackend/`.
+- The backend project now lives under `backend/llvm/`.
 - Bare-metal x86_64 builds use LLD and are supported from x86_64 Linux and
   Windows hosts. Hosted Windows output remains MSVC ABI; Windows GNU/MinGW is
   not supported.

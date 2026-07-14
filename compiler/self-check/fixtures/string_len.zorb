@@ -1,0 +1,12 @@
+fn std.str.len(s: string) -> i64 {
+    len: i64 = 0
+    ptr: *i8 = cast(*i8, s)
+    while cast(i8, ptr[len]) != 0 {
+        len = len + 1
+    }
+    return len
+}
+
+fn main() -> i64 {
+    return std.str.len("ok")
+}

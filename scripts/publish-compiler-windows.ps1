@@ -2,8 +2,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent $PSScriptRoot
-$ProjectPath = Join-Path $RootDir "Zorb.Compiler/Zorb.Compiler.csproj"
-$BackendDir = Join-Path $RootDir "Zorb.LlvmBackend"
+$ProjectPath = Join-Path $RootDir "seed/csharp/Zorb.Compiler.csproj"
+$BackendDir = Join-Path $RootDir "backend/llvm"
 $OutputDir = if ($args.Count -ge 1) {
     $args[0]
 } else {

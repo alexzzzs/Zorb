@@ -1,0 +1,425 @@
+import "../../runtime/std/collections.zorb"
+import "../../runtime/std/errors.zorb"
+import "../../runtime/std/fs.zorb"
+import "../../runtime/std/mem.zorb"
+import "../../runtime/std/str.zorb"
+import "../ast.zorb"
+import "../lexer.zorb"
+import "../parser.zorb"
+import "../token.zorb"
+import "diagnostic.zorb"
+import "serialization.zorb"
+import "source.zorb"
+
+// All allocations made while checking one graph are rooted here.  A new
+// session is required for every compilation, avoiding cross-run frontend state.
+export struct ZFrontendSession {
+    heap: std.mem.HeapAllocator,
+    sources: ZSourceManager,
+    diagnostics: i64,
+    machine_output: bool,
+    serialization_mode: i64
+}
+
+export const ZFrontendPhaseLexical: i64 = 1
+export const ZFrontendPhaseParse: i64 = 2
+export const ZFrontendPhaseImport: i64 = 3
+export const ZFrontendPhaseSemantic: i64 = 4
+export const ZFrontendSerializationNone: i64 = 0
+export const ZFrontendSerializationTokens: i64 = 1
+export const ZFrontendSerializationAst: i64 = 2
+
+export fn ZFrontendSession.init(heap_size: i64) !ZFrontendSession {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(heap_size) catch |err| {
+        return err
+    }
+    return ZFrontendSession{
+        heap: heap,
+        sources: ZSourceManager.init(),
+        diagnostics: 0,
+        machine_output: false,
+        serialization_mode: ZFrontendSerializationNone
+    }
+}
+
+// A session owns every graph-local allocation through its heap.  Destroying it
+// after each entry keeps source, import, and diagnostic state isolated across
+// repeated checks in the same native process.
+export fn ZFrontendSession.deinit(self: *ZFrontendSession) {
+    std.mem.HeapAllocator.deinit(&self.heap)
+    self.sources = ZSourceManager.init()
+    self.diagnostics = 0
+    self.machine_output = false
+    self.serialization_mode = ZFrontendSerializationNone
+}
+
+export fn ZFrontendSession.set_machine_output(self: *ZFrontendSession, enabled: bool) {
+    self.machine_output = enabled
+}
+
+export fn ZFrontendSession.set_serialization_mode(self: *ZFrontendSession, mode: i64) {
+    self.serialization_mode = mode
+    if mode != ZFrontendSerializationNone {
+        self.machine_output = true
+    }
+}
+
+fn zsession_phase_name(phase: i64) -> string {
+    if phase == ZFrontendPhaseLexical { return "lexical" }
+    if phase == ZFrontendPhaseParse { return "parse" }
+    if phase == ZFrontendPhaseImport { return "import" }
+    return "semantic"
+}
+
+fn zsession_diagnostic_code(phase: i64, message: string) -> string {
+    if phase == ZFrontendPhaseLexical { return "lex.invalid-token" }
+    if phase == ZFrontendPhaseParse { return "parse.invalid-syntax" }
+    if phase == ZFrontendPhaseImport {
+        if std.str.eql(message, "unable to read source file") { return "import.not-found" }
+        if std.str.eql(message, "import cycle detected") { return "import.cycle" }
+        if std.str.eql(message, "unable to resolve import path") { return "import.invalid-path" }
+        return "import.invalid"
+    }
+    if std.str.eql(message, "unknown name or type") { return "name.unknown" }
+    if std.str.eql(message, "array literal element count mismatch") { return "type.array-element-count" }
+    if std.str.eql(message, "match is not exhaustive") { return "flow.match-not-exhaustive" }
+    if std.str.eql(message, "condition must be bool") { return "type.condition-not-bool" }
+    return "type.invalid"
+}
+
+fn zsession_report_span(self: *ZFrontendSession, path: string, phase: i64, line: i64, column: i64, length: i64, message: string) {
+    code: string = zsession_diagnostic_code(phase, message)
+    diagnostic: ZDiagnostic = ZDiagnostic{
+        severity: ZDiagnosticSeverityError,
+        phase: zsession_phase_name(phase),
+        code: code,
+        message: message,
+        span: ZSourceSpan{
+            source: ZSourceId{ value: self.sources.len - 1 },
+            line: line,
+            column: column,
+            length: length
+        }
+    }
+    if self.machine_output {
+        ZDiagnostic.render_json(diagnostic, path)
+    } else {
+        ZDiagnostic.render_human(diagnostic, path)
+    }
+    self.diagnostics = self.diagnostics + 1
+}
+
+fn zsession_report(self: *ZFrontendSession, path: string, phase: i64, line: i64, column: i64, message: string) {
+    zsession_report_span(self, path, phase, line, column, 1, message)
+}
+
+// This owns the bytes, token list, identifier interner, and AST allocations for
+// the checked file. Parser recovery retains the first invalid-token span so the
+// session reports the stable, source-authored location rather than EOF.
+export fn ZFrontendSession.check_file(self: *ZFrontendSession, path: string) -> i64 {
+    path_bytes: []u8
+    path_bytes.ptr = cast(*u8, path)
+    path_bytes.len = std.str.len(path)
+    canonical_path: string = zsource_canonicalize_path(&self.heap, path_bytes) catch |err| {
+        zsession_report(self, path, ZFrontendPhaseSemantic, 1, 1, "out of memory while canonicalizing source path")
+        return 1
+    }
+    return zsession_check_file(self, canonical_path, ZFrontendPhaseParse, canonical_path)
+}
+
+// The entry file and an imported file have different failure phases when they
+// cannot be read. Keeping that context at the graph edge prevents a missing
+// import from being misreported as a parse failure.
+fn zsession_check_file(self: *ZFrontendSession, path: string, missing_file_phase: i64, failure_path: string) -> i64 {
+    existing_index: i64 = ZSourceManager.find(&self.sources, path)
+    if existing_index >= 0 {
+        if self.sources.files[existing_index].state == ZSourceStateLoading {
+            // The managed graph parser treats an in-progress canonical path as
+            // an already-visited node. Keep that finite graph edge without
+            // recursively reparsing or rejecting an otherwise valid cycle.
+            return 0
+        }
+        return 0
+    }
+
+    bytes: []u8 = std.fs.read_all(path, &self.heap) catch |err| {
+        zsession_report(self, failure_path, missing_file_phase, 1, 1, "unable to read source file")
+        return 1
+    }
+    source_id: ZSourceId = ZSourceManager.append(&self.sources, &self.heap, path, bytes, ZSourceStateLoading) catch |err| {
+        zsession_report(self, path, ZFrontendPhaseSemantic, 1, 1, "out of memory while recording source")
+        return 1
+    }
+
+    tokens: ZTokenList = ZTokenList.init(&self.heap, 128) catch |err| {
+        zsession_report(self, path, ZFrontendPhaseLexical, 1, 1, "out of memory while creating token storage")
+        return 1
+    }
+    interner: std.collections.StringInterner = std.collections.StringInterner.init(&self.heap, 128) catch |err| {
+        zsession_report(self, path, ZFrontendPhaseLexical, 1, 1, "out of memory while creating identifier storage")
+        return 1
+    }
+    lexer: ZLexer = ZLexer.init(bytes)
+    ZLexer.tokenize(&lexer, &self.heap, &tokens, &interner) catch |err| {
+        error_line: i64 = lexer.line
+        error_column: i64 = lexer.column
+        if lexer.error_line > 0 { error_line = lexer.error_line }
+        if lexer.error_column > 0 { error_column = lexer.error_column }
+        zsession_report(self, path, ZFrontendPhaseLexical, error_line, error_column, "invalid source text")
+        return 1
+    }
+    if self.serialization_mode == ZFrontendSerializationTokens {
+        ZFrontendSerialization.write_tokens(path, &tokens)
+    }
+
+    parser: ZParser = ZParser.init(&tokens)
+    ZParser.set_debug_output(&parser, false)
+    module: ZAstModule = ZAstModule.init(&self.heap, 16) catch |err| {
+        zsession_report(self, path, ZFrontendPhaseParse, 1, 1, "out of memory while creating AST storage")
+        return 1
+    }
+    ZParser.parse_program(&parser, &self.heap, &module) catch |err| {
+        line: i64 = parser.first_error_line
+        column: i64 = parser.first_error_column
+        length: i64 = parser.first_error_length
+        if line == 0 {
+            token: ZToken = tokens.ptr[parser.index]
+            line = token.line
+            column = token.column
+            length = token.len
+        }
+        if length < 1 { length = 1 }
+        zsession_report_span(self, path, ZFrontendPhaseParse, line, column, length, "invalid syntax")
+        return 1
+    }
+
+    module_storage: *u8 = std.mem.HeapAllocator.alloc(&self.heap, Builtin.sizeof(ZAstModule)) catch |err| {
+        zsession_report(self, path, ZFrontendPhaseSemantic, 1, 1, "out of memory while retaining AST")
+        return 1
+    }
+    retained_module: *ZAstModule = cast(*ZAstModule, module_storage)
+    retained_module[0] = module
+    ZSourceManager.set_module(&self.sources, source_id, retained_module)
+    import_index: i64 = 0
+    while import_index < module.len {
+        import_decl: ZAstDecl = module.decls[import_index]
+        if import_decl.kind == ZAstDeclImport && !import_decl.is_c_import {
+            imported_path: string = ZSourceManager.resolve_import_path(&self.heap, path, import_decl.path) catch |err| {
+                zsession_report(self, path, ZFrontendPhaseImport, 1, 1, "unable to resolve import path")
+                return 1
+            }
+            if zsession_check_file(self, imported_path, ZFrontendPhaseImport, path) != 0 {
+                return 1
+            }
+        }
+        import_index = import_index + 1
+    }
+
+    zsession_add_direct_import_exports(self, retained_module, path) catch |err| {
+        zsession_report(self, path, ZFrontendPhaseSemantic, 1, 1, "out of memory while collecting imports")
+        return 1
+    }
+    // AST serialization reflects the graph-visible module: direct import
+    // projections have been attached, while transitive symbols remain absent.
+    if self.serialization_mode == ZFrontendSerializationAst {
+        ZFrontendSerialization.write_ast(path, retained_module)
+    }
+
+    ZAstModule.check_semantics(retained_module) catch |err| {
+        line: i64 = retained_module.semantic_error_span.line
+        column: i64 = retained_module.semantic_error_span.column
+        length: i64 = retained_module.semantic_error_span.length
+        if line == 0 { line = 1 }
+        if column == 0 { column = 1 }
+        if length < 1 { length = 1 }
+        message: string = "type validation failed"
+        if retained_module.semantic_error_category == ZAstSemanticErrorArrayElementCount {
+            message = "array literal element count mismatch"
+        }
+        if retained_module.semantic_error_category == ZAstSemanticErrorMatchNotExhaustive {
+            message = "match is not exhaustive"
+        }
+        if retained_module.semantic_error_category == ZAstSemanticErrorConditionNotBool {
+            message = "condition must be bool"
+        }
+        if retained_module.semantic_error_category == ZAstSemanticErrorUnionLiteralVariantCount {
+            message = "union literal must initialize exactly one variant"
+        }
+        if err == error.NotFound && retained_module.semantic_error_category != ZAstSemanticErrorGenericConstraint {
+            zsession_report_span(self, path, ZFrontendPhaseSemantic, line, column, length, "unknown name or type")
+        } else {
+            zsession_report_span(self, path, ZFrontendPhaseSemantic, line, column, length, message)
+        }
+        return 1
+    }
+
+    source_index: i64 = ZSourceManager.find(&self.sources, path)
+    self.sources.files[source_index].state = ZSourceStateLoaded
+    return 0
+}
+
+fn zsession_copy_type(self: *ZFrontendSession, destination: *ZAstModule, source: *ZAstModule, type_index: i64) !i64 {
+    if type_index == ZAstNoIndex {
+        return ZAstNoIndex
+    }
+    copied_index: i64 = ZAstModule.append_type(destination, &self.heap, source.types[type_index].text) catch |err| {
+        return err
+    }
+    return copied_index
+}
+
+fn zsession_imported_name(self: *ZFrontendSession, alias: ZAstText, name: ZAstText) !ZAstText {
+    if alias.len == 0 {
+        return name
+    }
+    builder: std.collections.StringBuilder = std.collections.StringBuilder.init(&self.heap, alias.len + name.len + 1) catch |err| {
+        return error.OutOfMemory
+    }
+    alias_bytes: []u8
+    alias_bytes.ptr = alias.ptr
+    alias_bytes.len = alias.len
+    std.collections.StringBuilder.append_slice(&builder, &self.heap, alias_bytes) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(&builder, &self.heap, ".") catch |err| { return error.OutOfMemory }
+    name_bytes: []u8
+    name_bytes.ptr = name.ptr
+    name_bytes.len = name.len
+    std.collections.StringBuilder.append_slice(&builder, &self.heap, name_bytes) catch |err| { return error.OutOfMemory }
+    return ZAstText{ ptr: builder.bytes.ptr, len: builder.bytes.len }
+}
+
+fn zsession_name_is_unqualified(name: ZAstText) -> bool {
+    index: i64 = 0
+    while index < name.len {
+        if name.ptr[index] == 46 { return false }
+        index = index + 1
+    }
+    return true
+}
+
+// Enum members are independently visible symbols in the stage-0 frontend
+// (`Mode.Run`), so project them beside their exported enum declaration.
+fn zsession_add_imported_enum_members(self: *ZFrontendSession, module: *ZAstModule, imported_module: *ZAstModule, enum_decl: ZAstDecl) !i64 {
+    member_index: i64 = 0
+    while member_index < enum_decl.member_count {
+        member: ZAstMember = imported_module.members[enum_decl.member_start + member_index]
+        member_decl: ZAstDecl = ZAstDecl.init(ZAstDeclConst, false)
+        member_decl.name = zsession_imported_name(self, enum_decl.name, member.name) catch |err| {
+            return err
+        }
+        if ZAstModule.find_decl(module, member_decl.name) == ZAstNoIndex {
+            member_decl.type_index = ZAstModule.append_type(module, &self.heap, enum_decl.name) catch |err| {
+                return err
+            }
+            member_decl.is_imported = true
+            ZAstModule.append(module, &self.heap, member_decl) catch |err| {
+                return err
+            }
+        }
+        member_index = member_index + 1
+    }
+    return 0
+}
+
+// Struct and union field types are required to type-check direct imported
+// values (`token.ptr`, for example). Copy that small declaration-only slice
+// into the receiving arena; foreign executable arenas remain unshared.
+fn zsession_copy_imported_members(self: *ZFrontendSession, module: *ZAstModule, imported_module: *ZAstModule, candidate: *ZAstDecl, source_decl: ZAstDecl) !i64 {
+    candidate.member_start = module.member_count_total
+    candidate.member_count = 0
+    member_index: i64 = 0
+    while member_index < source_decl.member_count {
+        source_member: ZAstMember = imported_module.members[source_decl.member_start + member_index]
+        member: ZAstMember = source_member
+        member.type_index = zsession_copy_type(self, module, imported_module, source_member.type_index) catch |err| {
+            return err
+        }
+        // Member constant expressions point into the source AST. They are
+        // intentionally deferred to the cross-module constant pass.
+        member.value_expr = ZAstNoIndex
+        ZAstModule.append_member(module, &self.heap, member) catch |err| {
+            return err
+        }
+        candidate.member_count = candidate.member_count + 1
+        member_index = member_index + 1
+    }
+    return 0
+}
+
+// Project only direct, explicitly exported declarations. Aliased imports use
+// qualified projection names (`alias.symbol`); unaliased imports retain the
+// exported name. Projected declarations are lookup records, not re-exports.
+fn zsession_add_direct_import_exports(self: *ZFrontendSession, module: *ZAstModule, path: string) !i64 {
+    importing_std_module: bool = std.str.starts_with(path, "std/")
+    // Projection appends lookup records to this module. Traverse only the
+    // parsed declarations so those records can never feed back into import
+    // traversal, even if a malformed or future declaration resembles import.
+    parsed_declaration_count: i64 = module.len
+    import_index: i64 = 0
+    while import_index < parsed_declaration_count {
+        import_decl: ZAstDecl = module.decls[import_index]
+        if import_decl.kind == ZAstDeclImport && !import_decl.is_c_import {
+            imported_path: string = ZSourceManager.resolve_import_path(&self.heap, path, import_decl.path) catch |err| {
+                return err
+            }
+            source_index: i64 = ZSourceManager.find(&self.sources, imported_path)
+            if source_index >= 0 {
+                imported_module: *ZAstModule = self.sources.files[source_index].module
+                if cast(i64, imported_module) != 0 {
+                    declaration_index: i64 = 0
+                    while declaration_index < imported_module.len {
+                        candidate: ZAstDecl = imported_module.decls[declaration_index]
+                        // `std/` modules intentionally use a small internal
+                        // surface (for example std.io -> std.str.len). Keep
+                        // that implementation detail available inside the
+                        // standard library while ordinary project imports see
+                        // explicit exports only.
+                        // The managed graph makes an unqualified function
+                        // imported through an unaliased module visible to a
+                        // direct importer. Keep qualified namespace members
+                        // private to their owning import edge, preventing a
+                        // transitive `leaf.answer` re-export.
+                        candidate_is_direct_or_unqualified_function: bool = !candidate.is_imported || ((candidate.kind == ZAstDeclFunction || candidate.kind == ZAstDeclExternFunction) && zsession_name_is_unqualified(candidate.name))
+                        if candidate.kind != ZAstDeclImport && (candidate.exported || importing_std_module || candidate.is_imported) && candidate_is_direct_or_unqualified_function {
+                            candidate.name = zsession_imported_name(self, import_decl.alias, candidate.name) catch |err| {
+                                return err
+                            }
+                            if ZAstModule.find_decl(module, candidate.name) != ZAstNoIndex {
+                                declaration_index = declaration_index + 1
+                                continue
+                            }
+                            candidate.type_index = zsession_copy_type(self, module, imported_module, candidate.type_index) catch |err| { return err }
+                            candidate.return_type_index = zsession_copy_type(self, module, imported_module, candidate.return_type_index) catch |err| { return err }
+                            // Parameter, expression, and statement indexes
+                            // belong to the defining module. Preserve only
+                            // copied fields, which are declaration metadata
+                            // needed for direct imported field access.
+                            candidate.generic_param_start = 0
+                            candidate.generic_param_count = 0
+                            candidate.param_start = 0
+                            candidate.param_count = 0
+                            zsession_copy_imported_members(self, module, imported_module, &candidate, imported_module.decls[declaration_index]) catch |err| {
+                                return err
+                            }
+                            candidate.stmt_start = 0
+                            candidate.stmt_count = 0
+                            candidate.init_expr = ZAstNoIndex
+                            candidate.exported = false
+                            candidate.is_imported = true
+                            ZAstModule.append(module, &self.heap, candidate) catch |err| {
+                                return err
+                            }
+                            if candidate.kind == ZAstDeclEnum {
+                                zsession_add_imported_enum_members(self, module, imported_module, candidate) catch |err| {
+                                    return err
+                                }
+                            }
+                        }
+                        declaration_index = declaration_index + 1
+                    }
+                }
+            }
+        }
+        import_index = import_index + 1
+    }
+    return 0
+}

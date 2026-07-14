@@ -1,0 +1,30 @@
+// Minimal hosted-process surface for programs that need their command line.
+// The compiler passes these values directly from the platform C entry point.
+
+export struct std.process {}
+
+export struct std.process.Arguments {
+    count: i64,
+    values: **u8
+}
+
+export fn std.process.from_native(argc: i64, argv: **u8) -> std.process.Arguments {
+    // Keep construction explicit while the self-hosted frontend is still
+    // gaining struct-literal parsing. The returned ABI record is unchanged.
+    result: std.process.Arguments
+    result.count = argc
+    result.values = argv
+    return result
+}
+
+export fn std.process.len(self: std.process.Arguments) -> i64 {
+    return self.count
+}
+
+export fn std.process.at(self: std.process.Arguments, index: i64) -> string {
+    if index < 0 || index >= self.count {
+        return cast(string, cast(*u8, 0))
+    }
+
+    return cast(string, self.values[index])
+}

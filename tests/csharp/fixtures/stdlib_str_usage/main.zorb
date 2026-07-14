@@ -1,0 +1,9 @@
+import "../../../../runtime/std/str.zorb"
+
+fn main() -> i64 {
+    buf: [32]u8
+    digits: []u8 = buf
+    len: i64 = std.str.from_i64(-42, digits)
+    digits.len = len
+    return std.str.len(cast(string, digits.ptr))
+}

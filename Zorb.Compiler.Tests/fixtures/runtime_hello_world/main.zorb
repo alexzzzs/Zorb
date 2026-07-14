@@ -1,7 +1,0 @@
-import "../../../std/io.zorb"
-import "../../../std/os.zorb"
-
-fn _start() {
-    std.io.print("ok\n")
-    std.os.exit(0)
-}

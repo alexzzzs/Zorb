@@ -1,0 +1,10 @@
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/os.zorb"
+
+fn _start() {
+    msg: []u8
+    msg.ptr = cast(*u8, "stderr ok\n")
+    msg.len = 10
+    std.io.write(2, msg)
+    std.os.exit(0)
+}

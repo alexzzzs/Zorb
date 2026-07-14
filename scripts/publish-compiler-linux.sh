@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT_PATH="$ROOT_DIR/Zorb.Compiler/Zorb.Compiler.csproj"
-BACKEND_DIR="$ROOT_DIR/Zorb.LlvmBackend"
+PROJECT_PATH="$ROOT_DIR/seed/csharp/Zorb.Compiler.csproj"
+BACKEND_DIR="$ROOT_DIR/backend/llvm"
 OUTPUT_DIR="${1:-$ROOT_DIR/artifacts/compiler/linux-x64}"
 VERSION="${VERSION:-}"
 INFORMATIONAL_VERSION="${INFORMATIONAL_VERSION:-}"

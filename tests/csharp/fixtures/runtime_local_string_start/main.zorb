@@ -1,0 +1,8 @@
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/os.zorb"
+
+fn _start() {
+    message: string = "local string from _start\n"
+    std.io.print(message)
+    std.os.exit(0)
+}

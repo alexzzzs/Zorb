@@ -1,0 +1,47 @@
+import "../../../../runtime/std/errors.zorb"
+import "../../../../runtime/std/fs.zorb"
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/mem.zorb"
+
+fn main() -> i64 {
+    if std.fs.exists("missing.txt") {
+        return 1
+    }
+
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(4096) catch |err| {
+        return err
+    }
+
+    std.fs.open_read("missing.txt") catch |err| {
+        if err != error.NotFound {
+            return 2
+        }
+    }
+
+    std.fs.read_all("missing.txt", &heap) catch |err| {
+        if err != error.NotFound {
+            return 3
+        }
+    }
+
+    std.fs.size("missing.txt") catch |err| {
+        if err != error.NotFound {
+            return 4
+        }
+    }
+
+    std.fs.delete("missing.txt") catch |err| {
+        if err != error.NotFound {
+            return 5
+        }
+    }
+
+    std.fs.rename("missing.txt", "other.txt") catch |err| {
+        if err != error.NotFound {
+            return 6
+        }
+    }
+
+    std.io.println("fs errors ok")
+    return 0
+}

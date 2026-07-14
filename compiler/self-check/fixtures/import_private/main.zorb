@@ -1,0 +1,5 @@
+import "lib.zorb" as lib
+
+fn main() -> i64 {
+    return lib.hidden()
+}

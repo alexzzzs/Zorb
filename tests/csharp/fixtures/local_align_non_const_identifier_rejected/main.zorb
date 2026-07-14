@@ -1,0 +1,7 @@
+amount: i64 = 4
+
+fn main() -> i64 {
+    [align(amount)]
+    value: i64 = 42
+    return value
+}

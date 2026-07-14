@@ -1,0 +1,5 @@
+fn main() -> i64 {
+    bytes: [2]u8
+    size: i64 = bytes.len
+    return size
+}

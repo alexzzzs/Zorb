@@ -1,0 +1,10 @@
+import "../../../runtime/std/mem.zorb"
+
+// Regression coverage for a qualified imported method followed by `catch`.
+fn main(allocator: *std.mem.HeapAllocator) -> i64 {
+    new_capacity: i64 = 8
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(i64)) catch |err| {
+        return 1
+    }
+    return 0
+}

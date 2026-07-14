@@ -1,0 +1,6 @@
+import "lib.zorb"
+import "./lib.zorb"
+
+fn main() -> i64 {
+    return value()
+}
