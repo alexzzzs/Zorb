@@ -557,7 +557,8 @@ struct ZBackendIrWhileShape {
     local: ZAstStmt,
     condition_expression: i64,
     body_start: i64,
-    body_count: i64,
+    body_assignment_count: i64,
+    body_control_kind: i64,
     return_expression: i64
 }
 
@@ -575,8 +576,17 @@ fn zbackend_ir_while_shape(ast: *ZAstModule, declaration: ZAstDecl) !ZBackendIrW
         returned.kind != ZAstStmtReturn || returned.expr_index == ZAstNoIndex {
         return error.NotImplemented
     }
+    body_assignment_count: i64 = loop.child_count
+    body_control_kind: i64 = 0
+    last_body_statement: ZAstStmt = ast.stmts[loop.child_start + loop.child_count - 1]
+    if last_body_statement.kind == ZAstStmtContinue {
+        body_assignment_count = body_assignment_count - 1
+        body_control_kind = ZAstStmtContinue
+    } else if last_body_statement.kind == ZAstStmtBreak {
+        return error.NotImplemented
+    }
     zbackend_ir_assignment_sequence_instruction_count(
-        ast, loop.child_start, loop.child_count, local.name
+        ast, loop.child_start, body_assignment_count, local.name
     ) catch |err| { return err }
     if local.type_index == ZAstNoIndex || declaration.return_type_index == ZAstNoIndex ||
         !ZAstText.eql(ast.types[local.type_index].text, ast.types[declaration.return_type_index].text) {
@@ -586,7 +596,8 @@ fn zbackend_ir_while_shape(ast: *ZAstModule, declaration: ZAstDecl) !ZBackendIrW
         local: local,
         condition_expression: loop.expr_index,
         body_start: loop.child_start,
-        body_count: loop.child_count,
+        body_assignment_count: body_assignment_count,
+        body_control_kind: body_control_kind,
         return_expression: returned.expr_index
     }
 }
@@ -605,7 +616,7 @@ fn zbackend_ir_lower_while_function(
     entry_count: i64 = initializer_count + 2
     condition_count: i64 = zbackend_ir_expression_instruction_count(ast, shape.condition_expression, shape.local.name, true) catch |err| { return err }
     body_count: i64 = zbackend_ir_assignment_sequence_instruction_count(
-        ast, shape.body_start, shape.body_count, shape.local.name
+        ast, shape.body_start, shape.body_assignment_count, shape.local.name
     ) catch |err| { return err }
     exit_count: i64 = zbackend_ir_expression_instruction_count(ast, shape.return_expression, shape.local.name, true) catch |err| { return err }
 
@@ -637,7 +648,7 @@ fn zbackend_ir_lower_while_function(
     )
     zbackend_ir_set_local(&body_context, shape.local.name, address_id)
     zbackend_ir_lower_assignment_sequence(
-        &body_context, shape.body_start, shape.body_count, address_id
+        &body_context, shape.body_start, shape.body_assignment_count, address_id
     ) catch |err| { return err }
     if body_context.instruction_count != body_count { return error.InvalidArgument }
 
@@ -657,9 +668,13 @@ fn zbackend_ir_lower_while_function(
     condition_terminator.condition = condition_value
     condition_terminator.true_target = 3
     condition_terminator.false_target = 4
+    body_target: i64 = 2
+    if shape.body_control_kind != 0 && shape.body_control_kind != ZAstStmtContinue {
+        return error.NotImplemented
+    }
     blocks[0] = ZBackendIrBlock{ id: 1, name: "entry", instructions: entry_instructions, instruction_count: entry_count, terminator: zbackend_ir_branch_terminator(2) }
     blocks[1] = ZBackendIrBlock{ id: 2, name: "condition", instructions: condition_instructions, instruction_count: condition_count, terminator: condition_terminator }
-    blocks[2] = ZBackendIrBlock{ id: 3, name: "body", instructions: body_instructions, instruction_count: body_count, terminator: zbackend_ir_branch_terminator(2) }
+    blocks[2] = ZBackendIrBlock{ id: 3, name: "body", instructions: body_instructions, instruction_count: body_count, terminator: zbackend_ir_branch_terminator(body_target) }
     blocks[3] = ZBackendIrBlock{ id: 4, name: "exit", instructions: exit_instructions, instruction_count: exit_count, terminator: zbackend_ir_return_terminator(return_value) }
 
     return ZBackendIrFunction{

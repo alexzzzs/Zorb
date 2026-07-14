@@ -42,6 +42,7 @@ internal static partial class Program
         var backendIrIfFallthroughInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_if_fallthrough.zorb");
         var backendIrWhileInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_while.zorb");
         var backendIrWhileSequenceInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_while_sequence.zorb");
+        var backendIrWhileContinueInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_while_continue.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -94,6 +95,7 @@ internal static partial class Program
             AssertNativeIfFallthroughBackendIr(binaryPath, projectRoot, tempDir, backendIrIfFallthroughInput);
             AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileInput, "while", 1);
             AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileSequenceInput, "while-sequence", 2);
+            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileContinueInput, "while-continue", 1);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });

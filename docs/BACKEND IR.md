@@ -123,3 +123,5 @@ A scalar local initialized before a top-level `while`, reassigned one or more
 times in its body, and returned afterward lowers to `entry`, `condition`, `body`, and `exit`
 blocks. The entry and body use `branch`; the condition uses
 `conditional_branch` to either repeat the body or continue to the exit.
+An explicit `continue` after the body's assignment sequence terminates the body
+with the same branch back to the condition block.
