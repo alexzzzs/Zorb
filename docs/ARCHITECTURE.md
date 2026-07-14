@@ -32,6 +32,9 @@ build the native frontend checker and remains the release frontend until the
 native frontend can emit the backend contract. It is not a competing
 user-facing compiler mode.
 
+The versioned frontend/backend boundary is documented in
+[Backend IR contract](BACKEND%20IR.md).
+
 The transition has three stages:
 
 1. C# stage 0 builds the native Zorb frontend checker.

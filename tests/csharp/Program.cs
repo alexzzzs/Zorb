@@ -42,6 +42,7 @@ internal static partial class Program
         RunNamedTest(failures, "semantic_output", () => RunSemanticDiagnosticOutputTests(fixtureRoot));
         RunNamedTest(failures, "type_checker_state_reset", RunTypeCheckerStateResetTests);
         RunNamedTest(failures, "llvm_writer_state_reset", () => RunLlvmWriterStateResetTests(fixtureRoot));
+        RunNamedTest(failures, "backend_ir_contract", RunBackendIrContractTests);
         RunNamedTest(failures, "llvm_backend_output_modes", () => RunLlvmBackendOutputModeTests(fixtureRoot));
         RunNamedTest(failures, "llvm_backend_regressions", () => RunLlvmBackendRegressionTests(fixtureRoot));
         RunNamedTest(failures, "unknown_type_cascade", RunUnknownTypeCascadeTests);

@@ -9,6 +9,34 @@ using Zorb.Compiler.Utils;
 
 internal static partial class Program
 {
+    private static void RunBackendIrContractTests()
+    {
+        var projectRoot = GetProjectRoot();
+        var schemaPath = Path.Combine(projectRoot, "backend", "llvm", "src", "backend_ir.zig");
+        var fixturePath = Path.Combine(projectRoot, "backend", "llvm", "tests", "scalar.json");
+        var schemaSource = File.ReadAllText(schemaPath, Encoding.UTF8);
+        var versionDeclaration = $"pub const schema_version = {ZigBackendIrWriter.SchemaVersion};";
+        AssertTextContains(schemaSource, versionDeclaration);
+
+        using var fixture = JsonDocument.Parse(File.ReadAllText(fixturePath, Encoding.UTF8));
+        var module = fixture.RootElement;
+        if (module.GetProperty("schema_version").GetUInt32() != ZigBackendIrWriter.SchemaVersion)
+            throw new Exception("The checked-in backend IR fixture schema version does not match the frontend writer.");
+
+        foreach (var requiredProperty in new[]
+        {
+            "schema_version", "module_name", "target", "output_kind", "output_path", "types", "functions"
+        })
+        {
+            if (!module.TryGetProperty(requiredProperty, out _))
+                throw new Exception($"The checked-in backend IR fixture is missing required property '{requiredProperty}'.");
+        }
+
+        var target = module.GetProperty("target");
+        if (!target.TryGetProperty("triple", out var triple) || string.IsNullOrWhiteSpace(triple.GetString()))
+            throw new Exception("The checked-in backend IR fixture must declare a non-empty target triple.");
+    }
+
     private static void RunLlvmWriterStateResetTests(string fixtureRoot)
     {
         var fixture = LoadCheckedFixture(Path.Combine(fixtureRoot, "runtime_hello_world"));
