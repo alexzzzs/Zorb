@@ -89,13 +89,13 @@ The native frontend can emit this contract with
 `zorb-self-check --emit-backend-ir <target-triple> <output-path> <entry.zorb>`.
 Its current supported lowering slice is one or more `i32` or `i64` functions
 sharing the same scalar type and using any number of same-typed parameters.
-Each function either returns a positive integer
-literal or applies an arithmetic, remainder, bitwise, or shift operation to two
-same-typed parameters. Unsupported AST shapes fail explicitly while native
-lowering is expanded incrementally. A function may also directly return a call
-to another same-scalar function. Integer literals, parameters, direct calls,
-and supported binary operations may be nested; lowering emits their values in
-post-order so every instruction references an earlier function-local value.
+Functions may compose integer literals, parameters, direct same-scalar calls,
+unary negation, comparisons, and arithmetic, remainder, bitwise, or shift
+operations. Lowering emits expression values in post-order so every
+instruction references an earlier function-local value. Supported statements
+currently include scalar locals, one reassignment, conditional returns, and a
+single scalar-local `while` shape. Unsupported AST shapes fail explicitly
+while native lowering is expanded incrementally.
 One initialized scalar local before the return is supported through `alloca`,
 `store`, and `load` instructions. That local may be reassigned once before the
 return; both the assignment value and return expression use the same recursive

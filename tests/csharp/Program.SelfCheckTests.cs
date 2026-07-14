@@ -612,10 +612,12 @@ internal static partial class Program
                 blocks[0].GetProperty("terminator").GetProperty("target").GetInt64() != 2 ||
                 blocks[1].GetProperty("name").GetString() != "condition" ||
                 blocks[1].GetProperty("instructions")[1].GetProperty("compare_op").GetString() != "signed_less" ||
+                conditionTerminator.GetProperty("op").GetString() != "conditional_branch" ||
                 conditionTerminator.GetProperty("condition").GetInt64() != 6 ||
                 conditionTerminator.GetProperty("true_target").GetInt64() != 3 ||
                 conditionTerminator.GetProperty("false_target").GetInt64() != 4 ||
                 blocks[2].GetProperty("name").GetString() != "body" ||
+                blocks[2].GetProperty("terminator").GetProperty("op").GetString() != "branch" ||
                 blocks[2].GetProperty("terminator").GetProperty("target").GetInt64() != 2 ||
                 blocks[3].GetProperty("name").GetString() != "exit" ||
                 blocks[3].GetProperty("terminator").GetProperty("op").GetString() != "return_value")
