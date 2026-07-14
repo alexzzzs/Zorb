@@ -1,5 +1,5 @@
 import c stdio.h
-import std/io.zorb
+import ../../../../runtime/std/io.zorb
 import pkg/math.zorb as math
 export error Bad
 export const answer
