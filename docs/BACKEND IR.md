@@ -118,3 +118,8 @@ entry block evaluates the condition and uses `conditional_branch`; the `then`
 and `else` blocks independently lower and return their expressions.
 The same graph shape supports a top-level `if` whose body returns followed by
 a fallthrough return; its false edge targets a `continuation` block.
+
+A scalar local initialized before a top-level `while`, reassigned once in its
+body, and returned afterward lowers to `entry`, `condition`, `body`, and `exit`
+blocks. The entry and body use `branch`; the condition uses
+`conditional_branch` to either repeat the body or continue to the exit.

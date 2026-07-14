@@ -40,6 +40,7 @@ internal static partial class Program
         var backendIrComparisonInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_comparison.zorb");
         var backendIrIfElseInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_if_else.zorb");
         var backendIrIfFallthroughInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_if_fallthrough.zorb");
+        var backendIrWhileInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_while.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -90,6 +91,7 @@ internal static partial class Program
             AssertNativeComparisonBackendIr(binaryPath, projectRoot, tempDir, backendIrComparisonInput);
             AssertNativeIfElseBackendIr(binaryPath, projectRoot, tempDir, backendIrIfElseInput);
             AssertNativeIfFallthroughBackendIr(binaryPath, projectRoot, tempDir, backendIrIfFallthroughInput);
+            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileInput);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
@@ -585,6 +587,53 @@ internal static partial class Program
             !llvm.Contains("then:", StringComparison.Ordinal) ||
             !llvm.Contains("continuation:", StringComparison.Ordinal))
             throw new Exception($"native if fallthrough IR produced unexpected LLVM.\n{llvm}".Trim());
+    }
+
+    private static void AssertNativeWhileBackendIr(
+        string binaryPath,
+        string workingDirectory,
+        string tempDirectory,
+        string inputPath)
+    {
+        var llvmPath = Path.Combine(tempDirectory, "native-while.ll");
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--emit-backend-ir", GetNativeLlvmTriple(), llvmPath, inputPath],
+            workingDirectory,
+            TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
+        if (execution.ExitCode != 0 || !string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"native while backend IR emission failed.\n{execution.StdErr}{execution.StdOut}".Trim());
+        using (var document = System.Text.Json.JsonDocument.Parse(execution.StdOut))
+        {
+            var blocks = document.RootElement.GetProperty("functions")[0].GetProperty("blocks");
+            var conditionTerminator = blocks[1].GetProperty("terminator");
+            if (blocks.GetArrayLength() != 4 ||
+                blocks[0].GetProperty("terminator").GetProperty("op").GetString() != "branch" ||
+                blocks[0].GetProperty("terminator").GetProperty("target").GetInt64() != 2 ||
+                blocks[1].GetProperty("name").GetString() != "condition" ||
+                blocks[1].GetProperty("instructions")[1].GetProperty("compare_op").GetString() != "signed_less" ||
+                conditionTerminator.GetProperty("condition").GetInt64() != 6 ||
+                conditionTerminator.GetProperty("true_target").GetInt64() != 3 ||
+                conditionTerminator.GetProperty("false_target").GetInt64() != 4 ||
+                blocks[2].GetProperty("name").GetString() != "body" ||
+                blocks[2].GetProperty("terminator").GetProperty("target").GetInt64() != 2 ||
+                blocks[3].GetProperty("name").GetString() != "exit" ||
+                blocks[3].GetProperty("terminator").GetProperty("op").GetString() != "return_value")
+                throw new Exception("native backend IR did not lower the while loop block graph and terminators.");
+        }
+        var irPath = Path.Combine(tempDirectory, "native-while.json");
+        File.WriteAllText(irPath, execution.StdOut);
+        var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
+        if (backend.ExitCode != 0 || !File.Exists(llvmPath))
+            throw new Exception($"Zig backend rejected native while IR.\n{backend.StdErr}{backend.StdOut}".Trim());
+        var llvm = File.ReadAllText(llvmPath);
+        if (!llvm.Contains("br label %condition", StringComparison.Ordinal) ||
+            !llvm.Contains("icmp slt i64", StringComparison.Ordinal) ||
+            !llvm.Contains("body:", StringComparison.Ordinal) ||
+            !llvm.Contains("exit:", StringComparison.Ordinal) ||
+            !llvm.Contains("store i64", StringComparison.Ordinal) ||
+            !llvm.Contains("load i64", StringComparison.Ordinal))
+            throw new Exception($"native while IR produced unexpected LLVM.\n{llvm}".Trim());
     }
 
     private static void AssertSelfCheckJsonResult(
