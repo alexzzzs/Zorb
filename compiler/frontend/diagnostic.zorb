@@ -1,5 +1,6 @@
 import "../../runtime/std/io.zorb"
 import "../../runtime/std/str.zorb"
+import "../json.zorb"
 
 export const ZDiagnosticSeverityError: i64 = 1
 export const ZDiagnosticSeverityWarning: i64 = 2
@@ -24,37 +25,11 @@ export struct ZDiagnostic {
 }
 
 export fn ZDiagnostic.write_json_bytes(ptr: *u8, length: i64) {
-    std.io.print("\"")
-    index: i64 = 0
-    while index < length {
-        ch: u8 = ptr[index]
-        if ch == 34 {
-            std.io.print("\\\"")
-        } else if ch == 92 {
-            std.io.print("\\\\")
-        } else if ch == 10 {
-            std.io.print("\\n")
-        } else if ch == 13 {
-            std.io.print("\\r")
-        } else if ch == 9 {
-            std.io.print("\\t")
-        } else if ch < 32 {
-            // Control bytes do not occur in compiler-authored messages. Keep
-            // the stream valid and deterministic if a path contains one.
-            std.io.print("?")
-        } else {
-            byte: [1]u8
-            byte[0] = ch
-            view: []u8 = byte
-            std.io.write(1, view)
-        }
-        index = index + 1
-    }
-    std.io.print("\"")
+    ZJson.write_bytes(ptr, length)
 }
 
 export fn ZDiagnostic.write_json_string(value: string) {
-    ZDiagnostic.write_json_bytes(cast(*u8, value), std.str.len(value))
+    ZJson.write_string(value)
 }
 
 // Rendering is intentionally separate from creation so a differential harness
