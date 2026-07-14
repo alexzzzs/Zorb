@@ -336,13 +336,53 @@ fn zbackend_ir_assignment_targets_local(ast: *ZAstModule, assignment: ZAstStmt, 
     return target.kind == ZAstExprIdentifier && ZAstText.eql(target.name, local_name)
 }
 
+fn zbackend_ir_assignment_sequence_instruction_count(
+    ast: *ZAstModule,
+    statement_start: i64,
+    statement_count: i64,
+    local_name: ZAstText
+) !i64 {
+    count: i64 = 0
+    index: i64 = 0
+    while index < statement_count {
+        assignment: ZAstStmt = ast.stmts[statement_start + index]
+        if !zbackend_ir_assignment_targets_local(ast, assignment, local_name) { return error.NotImplemented }
+        expression_count: i64 = zbackend_ir_expression_instruction_count(
+            ast, assignment.value_expr, local_name, true
+        ) catch |err| { return err }
+        count = count + expression_count + 1
+        index = index + 1
+    }
+    return count
+}
+
+fn zbackend_ir_lower_assignment_sequence(
+    context: *ZBackendIrExpressionLowering,
+    statement_start: i64,
+    statement_count: i64,
+    address_id: i64
+) !i64 {
+    last_store_id: i64 = 0
+    index: i64 = 0
+    while index < statement_count {
+        assignment: ZAstStmt = context.ast.stmts[statement_start + index]
+        if !zbackend_ir_assignment_targets_local(context.ast, assignment, context.local_name) {
+            return error.NotImplemented
+        }
+        assigned_value_id: i64 = zbackend_ir_lower_expression(context, assignment.value_expr) catch |err| { return err }
+        last_store_id = zbackend_ir_append_store(context, address_id, assigned_value_id) catch |err| { return err }
+        index = index + 1
+    }
+    return last_store_id
+}
+
 fn zbackend_ir_body_instruction_count(ast: *ZAstModule, declaration: ZAstDecl) !i64 {
     if declaration.stmt_count == 1 {
         statement: ZAstStmt = ast.stmts[declaration.stmt_start]
         if statement.kind != ZAstStmtReturn { return error.NotImplemented }
         return zbackend_ir_expression_instruction_count(ast, statement.expr_index, ZAstText.empty(), false) catch |err| { return err }
     }
-    if declaration.stmt_count == 2 || declaration.stmt_count == 3 {
+    if declaration.stmt_count >= 2 {
         local: ZAstStmt = ast.stmts[declaration.stmt_start]
         returned: ZAstStmt = ast.stmts[declaration.stmt_start + declaration.stmt_count - 1]
         if local.kind != ZAstStmtVar || local.expr_index == ZAstNoIndex || returned.kind != ZAstStmtReturn {
@@ -351,12 +391,10 @@ fn zbackend_ir_body_instruction_count(ast: *ZAstModule, declaration: ZAstDecl) !
         initializer_count: i64 = zbackend_ir_expression_instruction_count(ast, local.expr_index, ZAstText.empty(), false) catch |err| { return err }
         return_count: i64 = zbackend_ir_expression_instruction_count(ast, returned.expr_index, local.name, true) catch |err| { return err }
         count: i64 = initializer_count + return_count + 2
-        if declaration.stmt_count == 3 {
-            assignment: ZAstStmt = ast.stmts[declaration.stmt_start + 1]
-            if !zbackend_ir_assignment_targets_local(ast, assignment, local.name) { return error.NotImplemented }
-            assignment_count: i64 = zbackend_ir_expression_instruction_count(ast, assignment.value_expr, local.name, true) catch |err| { return err }
-            count = count + assignment_count + 1
-        }
+        assignment_count: i64 = zbackend_ir_assignment_sequence_instruction_count(
+            ast, declaration.stmt_start + 1, declaration.stmt_count - 2, local.name
+        ) catch |err| { return err }
+        count = count + assignment_count
         return count
     }
     return error.NotImplemented
@@ -387,12 +425,9 @@ fn zbackend_ir_lower_body(context: *ZBackendIrExpressionLowering) !i64 {
 
     zbackend_ir_set_local(context, local.name, address_id)
 
-    if context.declaration.stmt_count == 3 {
-        assignment: ZAstStmt = context.ast.stmts[context.declaration.stmt_start + 1]
-        if !zbackend_ir_assignment_targets_local(context.ast, assignment, local.name) { return error.NotImplemented }
-        assigned_value_id: i64 = zbackend_ir_lower_expression(context, assignment.value_expr) catch |err| { return err }
-        zbackend_ir_append_store(context, address_id, assigned_value_id) catch |err| { return err }
-    }
+    zbackend_ir_lower_assignment_sequence(
+        context, context.declaration.stmt_start + 1, context.declaration.stmt_count - 2, address_id
+    ) catch |err| { return err }
     return zbackend_ir_lower_expression(context, returned.expr_index) catch |err| { return err }
 }
 
@@ -521,25 +556,28 @@ fn zbackend_ir_lower_conditional_return_function(
 struct ZBackendIrWhileShape {
     local: ZAstStmt,
     condition_expression: i64,
-    assignment_expression: i64,
+    body_start: i64,
+    body_count: i64,
     return_expression: i64
 }
 
 fn zbackend_ir_while_shape(ast: *ZAstModule, declaration: ZAstDecl) !ZBackendIrWhileShape {
-    if declaration.stmt_count != 4 { return error.NotImplemented }
+    if declaration.stmt_count < 4 { return error.NotImplemented }
     local: ZAstStmt = ast.stmts[declaration.stmt_start]
     loop: ZAstStmt = ast.stmts[declaration.stmt_start + 1]
     if local.kind != ZAstStmtVar || local.expr_index == ZAstNoIndex ||
-        loop.kind != ZAstStmtWhile || loop.expr_index == ZAstNoIndex || loop.child_count != 1 {
+        loop.kind != ZAstStmtWhile || loop.expr_index == ZAstNoIndex || loop.child_count < 1 {
         return error.NotImplemented
     }
-    assignment: ZAstStmt = ast.stmts[loop.child_start]
     return_index: i64 = loop.child_start + loop.child_count
     returned: ZAstStmt = ast.stmts[return_index]
-    if !zbackend_ir_assignment_targets_local(ast, assignment, local.name) ||
+    if return_index != declaration.stmt_start + declaration.stmt_count - 1 ||
         returned.kind != ZAstStmtReturn || returned.expr_index == ZAstNoIndex {
         return error.NotImplemented
     }
+    zbackend_ir_assignment_sequence_instruction_count(
+        ast, loop.child_start, loop.child_count, local.name
+    ) catch |err| { return err }
     if local.type_index == ZAstNoIndex || declaration.return_type_index == ZAstNoIndex ||
         !ZAstText.eql(ast.types[local.type_index].text, ast.types[declaration.return_type_index].text) {
         return error.NotImplemented
@@ -547,7 +585,8 @@ fn zbackend_ir_while_shape(ast: *ZAstModule, declaration: ZAstDecl) !ZBackendIrW
     return ZBackendIrWhileShape{
         local: local,
         condition_expression: loop.expr_index,
-        assignment_expression: assignment.value_expr,
+        body_start: loop.child_start,
+        body_count: loop.child_count,
         return_expression: returned.expr_index
     }
 }
@@ -565,8 +604,9 @@ fn zbackend_ir_lower_while_function(
     initializer_count: i64 = zbackend_ir_expression_instruction_count(ast, shape.local.expr_index, ZAstText.empty(), false) catch |err| { return err }
     entry_count: i64 = initializer_count + 2
     condition_count: i64 = zbackend_ir_expression_instruction_count(ast, shape.condition_expression, shape.local.name, true) catch |err| { return err }
-    assignment_count: i64 = zbackend_ir_expression_instruction_count(ast, shape.assignment_expression, shape.local.name, true) catch |err| { return err }
-    body_count: i64 = assignment_count + 1
+    body_count: i64 = zbackend_ir_assignment_sequence_instruction_count(
+        ast, shape.body_start, shape.body_count, shape.local.name
+    ) catch |err| { return err }
     exit_count: i64 = zbackend_ir_expression_instruction_count(ast, shape.return_expression, shape.local.name, true) catch |err| { return err }
 
     entry_instructions: *ZBackendIrInstruction = zbackend_ir_allocate_instructions(allocator, entry_count) catch |err| { return err }
@@ -596,8 +636,9 @@ fn zbackend_ir_lower_while_function(
         allocator, ast, declaration, body_instructions, body_count, condition_context.next_value_id, bool_type_id
     )
     zbackend_ir_set_local(&body_context, shape.local.name, address_id)
-    assigned_value_id: i64 = zbackend_ir_lower_expression(&body_context, shape.assignment_expression) catch |err| { return err }
-    zbackend_ir_append_store(&body_context, address_id, assigned_value_id) catch |err| { return err }
+    zbackend_ir_lower_assignment_sequence(
+        &body_context, shape.body_start, shape.body_count, address_id
+    ) catch |err| { return err }
     if body_context.instruction_count != body_count { return error.InvalidArgument }
 
     exit_instructions: *ZBackendIrInstruction = zbackend_ir_allocate_instructions(allocator, exit_count) catch |err| { return err }
@@ -641,7 +682,7 @@ fn zbackend_ir_lower_function(
     scalar_name: string,
     bool_type_id: i64
 ) !ZBackendIrFunction {
-    if declaration.return_is_error_union || (declaration.stmt_count != 1 && declaration.stmt_count != 2 && declaration.stmt_count != 3 && declaration.stmt_count != 4) {
+    if declaration.return_is_error_union || declaration.stmt_count < 1 {
         return error.NotImplemented
     }
     if declaration.return_type_index == ZAstNoIndex { return error.NotImplemented }
@@ -681,7 +722,7 @@ fn zbackend_ir_lower_function(
             allocator, ast, declaration, function_id, function_name, parameters, bool_type_id, shape
         ) catch |err| { return err }
     }
-    if declaration.stmt_count == 4 && first_statement.kind == ZAstStmtVar &&
+    if declaration.stmt_count >= 4 && first_statement.kind == ZAstStmtVar &&
         ast.stmts[declaration.stmt_start + 1].kind == ZAstStmtWhile {
         shape: ZBackendIrWhileShape = zbackend_ir_while_shape(ast, declaration) catch |err| { return err }
         return zbackend_ir_lower_while_function(

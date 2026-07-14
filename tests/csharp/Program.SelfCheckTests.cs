@@ -41,6 +41,7 @@ internal static partial class Program
         var backendIrIfElseInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_if_else.zorb");
         var backendIrIfFallthroughInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_if_fallthrough.zorb");
         var backendIrWhileInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_while.zorb");
+        var backendIrWhileSequenceInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_while_sequence.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -91,7 +92,8 @@ internal static partial class Program
             AssertNativeComparisonBackendIr(binaryPath, projectRoot, tempDir, backendIrComparisonInput);
             AssertNativeIfElseBackendIr(binaryPath, projectRoot, tempDir, backendIrIfElseInput);
             AssertNativeIfFallthroughBackendIr(binaryPath, projectRoot, tempDir, backendIrIfFallthroughInput);
-            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileInput);
+            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileInput, "while", 1);
+            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileSequenceInput, "while-sequence", 2);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
@@ -593,9 +595,11 @@ internal static partial class Program
         string binaryPath,
         string workingDirectory,
         string tempDirectory,
-        string inputPath)
+        string inputPath,
+        string artifactStem,
+        int expectedBodyStoreCount)
     {
-        var llvmPath = Path.Combine(tempDirectory, "native-while.ll");
+        var llvmPath = Path.Combine(tempDirectory, $"native-{artifactStem}.ll");
         var execution = RunProcessWithTimeoutArgs(
             binaryPath,
             ["--emit-backend-ir", GetNativeLlvmTriple(), llvmPath, inputPath],
@@ -607,6 +611,8 @@ internal static partial class Program
         {
             var blocks = document.RootElement.GetProperty("functions")[0].GetProperty("blocks");
             var conditionTerminator = blocks[1].GetProperty("terminator");
+            var bodyStoreCount = blocks[2].GetProperty("instructions").EnumerateArray()
+                .Count(instruction => instruction.GetProperty("op").GetString() == "store");
             if (blocks.GetArrayLength() != 4 ||
                 blocks[0].GetProperty("terminator").GetProperty("op").GetString() != "branch" ||
                 blocks[0].GetProperty("terminator").GetProperty("target").GetInt64() != 2 ||
@@ -617,13 +623,14 @@ internal static partial class Program
                 conditionTerminator.GetProperty("true_target").GetInt64() != 3 ||
                 conditionTerminator.GetProperty("false_target").GetInt64() != 4 ||
                 blocks[2].GetProperty("name").GetString() != "body" ||
+                bodyStoreCount != expectedBodyStoreCount ||
                 blocks[2].GetProperty("terminator").GetProperty("op").GetString() != "branch" ||
                 blocks[2].GetProperty("terminator").GetProperty("target").GetInt64() != 2 ||
                 blocks[3].GetProperty("name").GetString() != "exit" ||
                 blocks[3].GetProperty("terminator").GetProperty("op").GetString() != "return_value")
                 throw new Exception("native backend IR did not lower the while loop block graph and terminators.");
         }
-        var irPath = Path.Combine(tempDirectory, "native-while.json");
+        var irPath = Path.Combine(tempDirectory, $"native-{artifactStem}.json");
         File.WriteAllText(irPath, execution.StdOut);
         var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
         if (backend.ExitCode != 0 || !File.Exists(llvmPath))
