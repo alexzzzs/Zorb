@@ -53,7 +53,32 @@ fn zbackend_ir_write_instructions(instructions: *ZBackendIrInstruction, count: i
         if instruction.op == "integer_constant" {
             std.io.print(",\"integer\":")
             std.io.print_i64(instruction.integer)
+        } else if instruction.op == "binary" {
+            std.io.print(",\"binary_op\":")
+            ZJson.write_string(instruction.binary_op)
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+            std.io.print(",\"rhs\":")
+            std.io.print_i64(instruction.rhs)
         }
+        std.io.print("}")
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+fn zbackend_ir_write_parameters(parameters: *ZBackendIrParameter, count: i64) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < count {
+        zbackend_ir_write_separator(index)
+        parameter: ZBackendIrParameter = parameters[index]
+        std.io.print("{\"id\":")
+        std.io.print_i64(parameter.id)
+        std.io.print(",\"name\":")
+        ZJson.write_string(parameter.name)
+        std.io.print(",\"type\":")
+        std.io.print_i64(parameter.type_id)
         std.io.print("}")
         index = index + 1
     }
@@ -98,7 +123,9 @@ fn zbackend_ir_write_functions(functions: *ZBackendIrFunction, count: i64) {
         ZJson.write_string(function.linkage)
         std.io.print(",\"return_type\":")
         std.io.print_i64(function.return_type)
-        std.io.print(",\"parameters\":[],\"blocks\":")
+        std.io.print(",\"parameters\":")
+        zbackend_ir_write_parameters(function.parameters, function.parameter_count)
+        std.io.print(",\"blocks\":")
         zbackend_ir_write_blocks(function.blocks, function.block_count)
         std.io.print("}")
         index = index + 1

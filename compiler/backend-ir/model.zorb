@@ -26,7 +26,10 @@ export struct ZBackendIrInstruction {
     id: i64,
     op: string,
     type_id: i64,
-    integer: i64
+    integer: i64,
+    binary_op: string,
+    lhs: i64,
+    rhs: i64
 }
 
 export struct ZBackendIrTerminator {
@@ -42,11 +45,19 @@ export struct ZBackendIrBlock {
     terminator: ZBackendIrTerminator
 }
 
+export struct ZBackendIrParameter {
+    id: i64,
+    name: string,
+    type_id: i64
+}
+
 export struct ZBackendIrFunction {
     id: i64,
     name: string,
     linkage: string,
     return_type: i64,
+    parameters: *ZBackendIrParameter,
+    parameter_count: i64,
     blocks: *ZBackendIrBlock,
     block_count: i64
 }

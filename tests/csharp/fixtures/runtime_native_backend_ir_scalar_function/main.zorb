@@ -7,7 +7,7 @@ fn _start() {
         ZBackendIrType{ id: 1, kind: "scalar", scalar: "i32" }
     }
     instructions_storage: [1]ZBackendIrInstruction = [1]ZBackendIrInstruction{
-        ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: 42 }
+        ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: 42, binary_op: "", lhs: 0, rhs: 0 }
     }
     terminator: ZBackendIrTerminator = ZBackendIrTerminator{ op: "return_value", value: 1 }
     blocks_storage: [1]ZBackendIrBlock = [1]ZBackendIrBlock{
@@ -15,7 +15,7 @@ fn _start() {
     }
     blocks: []ZBackendIrBlock = blocks_storage
     functions_storage: [1]ZBackendIrFunction = [1]ZBackendIrFunction{
-        ZBackendIrFunction{ id: 1, name: "answer", linkage: "external", return_type: 1, blocks: blocks_storage, block_count: 1 }
+        ZBackendIrFunction{ id: 1, name: "answer", linkage: "external", return_type: 1, parameters: cast(*ZBackendIrParameter, 0), parameter_count: 0, blocks: blocks_storage, block_count: 1 }
     }
 
     target: ZBackendIrTarget = ZBackendIrTarget.init("x86_64-pc-linux-gnu")

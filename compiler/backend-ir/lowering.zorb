@@ -1,6 +1,7 @@
 import "../../runtime/std/errors.zorb"
 import "../../runtime/std/mem.zorb"
 import "../ast.zorb"
+import "../token.zorb"
 import "model.zorb"
 
 const ZBACKEND_IR_MAX_I64: i64 = 9223372036854775807
@@ -50,6 +51,16 @@ fn zbackend_ir_find_single_function(module: *ZAstModule) !ZAstDecl {
     return function
 }
 
+fn zbackend_ir_parameter_id(ast: *ZAstModule, declaration: ZAstDecl, name: ZAstText) !i64 {
+    index: i64 = 0
+    while declaration.param_count > index {
+        parameter: ZAstParam = ast.params[declaration.param_start + index]
+        if ZAstText.eql(parameter.name, name) { return index + 1 }
+        index = index + 1
+    }
+    return error.NotImplemented
+}
+
 // This first lowering slice is intentionally narrow but real: it consumes the
 // checked native AST and produces the same model accepted by the Zig backend.
 // Later slices can add parameters and expression forms without coupling AST
@@ -63,7 +74,7 @@ export fn ZBackendIrLowering.lower_scalar_return_module(
     output_path: string
 ) !ZBackendIrModule {
     declaration: ZAstDecl = zbackend_ir_find_single_function(ast) catch |err| { return err }
-    if declaration.param_count != 0 || declaration.return_is_error_union || declaration.stmt_count != 1 {
+    if declaration.return_is_error_union || declaration.stmt_count != 1 {
         return error.NotImplemented
     }
     if declaration.return_type_index == ZAstNoIndex { return error.NotImplemented }
@@ -81,9 +92,6 @@ export fn ZBackendIrLowering.lower_scalar_return_module(
     if statement.kind != ZAstStmtReturn || statement.expr_index == ZAstNoIndex {
         return error.NotImplemented
     }
-    expression: ZAstExpr = ast.exprs[statement.expr_index]
-    if expression.kind != ZAstExprInteger { return error.NotImplemented }
-    integer: i64 = zbackend_ir_parse_positive_integer(expression.literal) catch |err| { return err }
     function_name: string = zbackend_ir_copy_text(allocator, declaration.name) catch |err| { return err }
 
     types_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrType)) catch |err| {
@@ -92,11 +100,49 @@ export fn ZBackendIrLowering.lower_scalar_return_module(
     types: *ZBackendIrType = cast(*ZBackendIrType, types_raw)
     types[0] = ZBackendIrType{ id: 1, kind: "scalar", scalar: scalar_name }
 
+    parameters: *ZBackendIrParameter = cast(*ZBackendIrParameter, 0)
+    if declaration.param_count > 0 {
+        if declaration.param_count != 2 { return error.NotImplemented }
+        parameters_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, declaration.param_count * Builtin.sizeof(ZBackendIrParameter)) catch |err| {
+            return error.OutOfMemory
+        }
+        parameters = cast(*ZBackendIrParameter, parameters_raw)
+        parameter_index: i64 = 0
+        while declaration.param_count > parameter_index {
+            ast_parameter: ZAstParam = ast.params[declaration.param_start + parameter_index]
+            if ast_parameter.type_index == ZAstNoIndex || !ZAstText.eql(ast.types[ast_parameter.type_index].text, return_type) {
+                return error.NotImplemented
+            }
+            parameter_name: string = zbackend_ir_copy_text(allocator, ast_parameter.name) catch |err| { return err }
+            parameters[parameter_index] = ZBackendIrParameter{ id: parameter_index + 1, name: parameter_name, type_id: 1 }
+            parameter_index = parameter_index + 1
+        }
+    }
+
+    expression: ZAstExpr = ast.exprs[statement.expr_index]
+    instruction: ZBackendIrInstruction
+    result_id: i64 = 1
+    if declaration.param_count == 0 && expression.kind == ZAstExprInteger {
+        integer: i64 = zbackend_ir_parse_positive_integer(expression.literal) catch |err| { return err }
+        instruction = ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: integer, binary_op: "", lhs: 0, rhs: 0 }
+    } else if declaration.param_count == 2 && expression.kind == ZAstExprBinary && expression.op == ZTokenPlus {
+        if expression.left == ZAstNoIndex || expression.right == ZAstNoIndex { return error.NotImplemented }
+        left: ZAstExpr = ast.exprs[expression.left]
+        right: ZAstExpr = ast.exprs[expression.right]
+        if left.kind != ZAstExprIdentifier || right.kind != ZAstExprIdentifier { return error.NotImplemented }
+        lhs: i64 = zbackend_ir_parameter_id(ast, declaration, left.name) catch |err| { return err }
+        rhs: i64 = zbackend_ir_parameter_id(ast, declaration, right.name) catch |err| { return err }
+        result_id = 3
+        instruction = ZBackendIrInstruction{ id: result_id, op: "binary", type_id: 1, integer: 0, binary_op: "add", lhs: lhs, rhs: rhs }
+    } else {
+        return error.NotImplemented
+    }
+
     instructions_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrInstruction)) catch |err| {
         return error.OutOfMemory
     }
     instructions: *ZBackendIrInstruction = cast(*ZBackendIrInstruction, instructions_raw)
-    instructions[0] = ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: integer }
+    instructions[0] = instruction
 
     blocks_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrBlock)) catch |err| {
         return error.OutOfMemory
@@ -107,7 +153,7 @@ export fn ZBackendIrLowering.lower_scalar_return_module(
         name: "entry",
         instructions: instructions,
         instruction_count: 1,
-        terminator: ZBackendIrTerminator{ op: "return_value", value: 1 }
+        terminator: ZBackendIrTerminator{ op: "return_value", value: result_id }
     }
 
     functions_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrFunction)) catch |err| {
@@ -119,6 +165,8 @@ export fn ZBackendIrLowering.lower_scalar_return_module(
         name: function_name,
         linkage: "external",
         return_type: 1,
+        parameters: parameters,
+        parameter_count: declaration.param_count,
         blocks: blocks,
         block_count: 1
     }
