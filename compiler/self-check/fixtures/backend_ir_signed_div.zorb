@@ -1,0 +1,3 @@
+fn divide(lhs: i64, rhs: i64) -> i64 {
+    return lhs / rhs
+}

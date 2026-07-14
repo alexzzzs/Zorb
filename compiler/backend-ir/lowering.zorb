@@ -61,6 +61,20 @@ fn zbackend_ir_parameter_id(ast: *ZAstModule, declaration: ZAstDecl, name: ZAstT
     return error.NotImplemented
 }
 
+fn zbackend_ir_binary_op(token: i64) !string {
+    if token == ZTokenPlus { return "add" }
+    if token == ZTokenMinus { return "sub" }
+    if token == ZTokenStar { return "mul" }
+    if token == ZTokenSlash { return "signed_div" }
+    if token == ZTokenPercent { return "signed_rem" }
+    if token == ZTokenAmp { return "bit_and" }
+    if token == ZTokenPipe { return "bit_or" }
+    if token == ZTokenCaret { return "bit_xor" }
+    if token == ZTokenLShift { return "shift_left" }
+    if token == ZTokenRShift { return "arithmetic_shift_right" }
+    return error.NotImplemented
+}
+
 // This first lowering slice is intentionally narrow but real: it consumes the
 // checked native AST and produces the same model accepted by the Zig backend.
 // Later slices can add parameters and expression forms without coupling AST
@@ -125,15 +139,16 @@ export fn ZBackendIrLowering.lower_scalar_return_module(
     if declaration.param_count == 0 && expression.kind == ZAstExprInteger {
         integer: i64 = zbackend_ir_parse_positive_integer(expression.literal) catch |err| { return err }
         instruction = ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: integer, binary_op: "", lhs: 0, rhs: 0 }
-    } else if declaration.param_count == 2 && expression.kind == ZAstExprBinary && expression.op == ZTokenPlus {
+    } else if declaration.param_count == 2 && expression.kind == ZAstExprBinary {
         if expression.left == ZAstNoIndex || expression.right == ZAstNoIndex { return error.NotImplemented }
         left: ZAstExpr = ast.exprs[expression.left]
         right: ZAstExpr = ast.exprs[expression.right]
         if left.kind != ZAstExprIdentifier || right.kind != ZAstExprIdentifier { return error.NotImplemented }
         lhs: i64 = zbackend_ir_parameter_id(ast, declaration, left.name) catch |err| { return err }
         rhs: i64 = zbackend_ir_parameter_id(ast, declaration, right.name) catch |err| { return err }
+        binary_op: string = zbackend_ir_binary_op(expression.op) catch |err| { return err }
         result_id = 3
-        instruction = ZBackendIrInstruction{ id: result_id, op: "binary", type_id: 1, integer: 0, binary_op: "add", lhs: lhs, rhs: rhs }
+        instruction = ZBackendIrInstruction{ id: result_id, op: "binary", type_id: 1, integer: 0, binary_op: binary_op, lhs: lhs, rhs: rhs }
     } else {
         return error.NotImplemented
     }

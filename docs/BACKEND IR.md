@@ -88,6 +88,6 @@ LLVM.
 The native frontend can emit this contract with
 `zorb-self-check --emit-backend-ir <target-triple> <output-path> <entry.zorb>`.
 Its current supported lowering slice is a single `i32` or `i64` function that
-either returns a positive integer literal or adds two same-typed parameters.
-Unsupported AST shapes fail explicitly while native lowering is expanded
-incrementally.
+either returns a positive integer literal or applies an arithmetic, remainder,
+bitwise, or shift operation to two same-typed parameters. Unsupported AST
+shapes fail explicitly while native lowering is expanded incrementally.

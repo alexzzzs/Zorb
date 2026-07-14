@@ -29,6 +29,7 @@ internal static partial class Program
         var invalidInput = Path.Combine(fixtureRoot, "parse_parameter_missing_colon", "main.zorb");
         var backendIrInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_scalar.zorb");
         var backendIrAddInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_add.zorb");
+        var backendIrSignedDivInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_signed_div.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -68,7 +69,7 @@ internal static partial class Program
             AssertSelfCheckJsonResult(binaryPath, projectRoot, invalidInput, 1, "diagnostic", null, "parse.invalid-syntax");
             AssertSelfCheckJsonStream(binaryPath, projectRoot, "--dump-tokens", validInput, "token");
             AssertSelfCheckJsonStream(binaryPath, projectRoot, "--dump-ast", validInput, "ast-module");
-            AssertNativeBackendIr(binaryPath, projectRoot, tempDir, backendIrInput, backendIrAddInput);
+            AssertNativeBackendIr(binaryPath, projectRoot, tempDir, backendIrInput, backendIrAddInput, backendIrSignedDivInput);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
@@ -79,7 +80,8 @@ internal static partial class Program
         string workingDirectory,
         string tempDirectory,
         string inputPath,
-        string addInputPath)
+        string addInputPath,
+        string signedDivInputPath)
     {
         var llvmPath = Path.Combine(tempDirectory, "native-scalar.ll");
         var execution = RunProcessWithTimeoutArgs(
@@ -114,35 +116,65 @@ internal static partial class Program
             !llvm.Contains("ret i32 42", StringComparison.Ordinal))
             throw new Exception($"native frontend IR produced unexpected LLVM.\n{llvm}".Trim());
 
-        var addLlvmPath = Path.Combine(tempDirectory, "native-add.ll");
-        var addExecution = RunProcessWithTimeoutArgs(
+        AssertNativeBinaryBackendIr(
             binaryPath,
-            ["--emit-backend-ir", GetNativeLlvmTriple(), addLlvmPath, addInputPath],
+            workingDirectory,
+            tempDirectory,
+            addInputPath,
+            "add",
+            "add",
+            "define i32 @add(i32 %lhs, i32 %rhs)",
+            "add i32 %lhs, %rhs");
+        AssertNativeBinaryBackendIr(
+            binaryPath,
+            workingDirectory,
+            tempDirectory,
+            signedDivInputPath,
+            "divide",
+            "signed_div",
+            "define i64 @divide(i64 %lhs, i64 %rhs)",
+            "sdiv i64 %lhs, %rhs");
+    }
+
+    private static void AssertNativeBinaryBackendIr(
+        string binaryPath,
+        string workingDirectory,
+        string tempDirectory,
+        string inputPath,
+        string functionName,
+        string backendOperation,
+        string expectedDefinition,
+        string expectedInstruction)
+    {
+        var llvmPath = Path.Combine(tempDirectory, $"native-{functionName}.ll");
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--emit-backend-ir", GetNativeLlvmTriple(), llvmPath, inputPath],
             workingDirectory,
             TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
-        if (addExecution.ExitCode != 0 || !string.IsNullOrWhiteSpace(addExecution.StdErr))
-            throw new Exception($"native add backend IR emission failed.\n{addExecution.StdErr}{addExecution.StdOut}".Trim());
-        using (var addDocument = System.Text.Json.JsonDocument.Parse(addExecution.StdOut))
+        if (execution.ExitCode != 0 || !string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"native {functionName} backend IR emission failed.\n{execution.StdErr}{execution.StdOut}".Trim());
+        using (var document = System.Text.Json.JsonDocument.Parse(execution.StdOut))
         {
-            var function = addDocument.RootElement.GetProperty("functions")[0];
+            var function = document.RootElement.GetProperty("functions")[0];
             if (function.GetProperty("parameters").GetArrayLength() != 2)
-                throw new Exception("native add backend IR did not emit both parameters.");
+                throw new Exception($"native {functionName} backend IR did not emit both parameters.");
             var instruction = function.GetProperty("blocks")[0].GetProperty("instructions")[0];
             if (instruction.GetProperty("op").GetString() != "binary" ||
-                instruction.GetProperty("binary_op").GetString() != "add" ||
+                instruction.GetProperty("binary_op").GetString() != backendOperation ||
                 instruction.GetProperty("lhs").GetInt64() != 1 ||
                 instruction.GetProperty("rhs").GetInt64() != 2)
-                throw new Exception("native add backend IR did not lower the parameter addition.");
+                throw new Exception($"native {functionName} backend IR emitted the wrong binary instruction.");
         }
-        var addIrPath = Path.Combine(tempDirectory, "native-add.json");
-        File.WriteAllText(addIrPath, addExecution.StdOut);
-        var addBackend = EmitBackendArtifact(GetLlvmBackendPath(), addIrPath, tempDirectory);
-        if (addBackend.ExitCode != 0 || !File.Exists(addLlvmPath))
-            throw new Exception($"Zig backend rejected native add IR.\n{addBackend.StdErr}{addBackend.StdOut}".Trim());
-        var addLlvm = File.ReadAllText(addLlvmPath);
-        if (!addLlvm.Contains("define i32 @add(i32 %lhs, i32 %rhs)", StringComparison.Ordinal) ||
-            !addLlvm.Contains("add i32 %lhs, %rhs", StringComparison.Ordinal))
-            throw new Exception($"native add IR produced unexpected LLVM.\n{addLlvm}".Trim());
+        var irPath = Path.Combine(tempDirectory, $"native-{functionName}.json");
+        File.WriteAllText(irPath, execution.StdOut);
+        var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
+        if (backend.ExitCode != 0 || !File.Exists(llvmPath))
+            throw new Exception($"Zig backend rejected native {functionName} IR.\n{backend.StdErr}{backend.StdOut}".Trim());
+        var llvm = File.ReadAllText(llvmPath);
+        if (!llvm.Contains(expectedDefinition, StringComparison.Ordinal) ||
+            !llvm.Contains(expectedInstruction, StringComparison.Ordinal))
+            throw new Exception($"native {functionName} IR produced unexpected LLVM.\n{llvm}".Trim());
     }
 
     private static void AssertSelfCheckJsonResult(
