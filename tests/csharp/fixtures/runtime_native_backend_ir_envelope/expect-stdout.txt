@@ -1,0 +1,1 @@
+{"schema_version":2,"module_name":"native-envelope","target":{"triple":"x86_64-pc-linux-gnu","cpu":"generic","features":"","optimize":"O0"},"output_kind":"llvm_ir","output_path":"out.ll","types":[],"globals":[],"functions":[]}

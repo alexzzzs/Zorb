@@ -1,0 +1,10 @@
+import "../../../../runtime/std/os.zorb"
+import "../../../../compiler/backend-ir/model.zorb"
+import "../../../../compiler/backend-ir/serialization.zorb"
+
+fn _start() {
+    target: ZBackendIrTarget = ZBackendIrTarget.init("x86_64-pc-linux-gnu")
+    module: ZBackendIrModule = ZBackendIrModule.init("native-envelope", target, "llvm_ir", "out.ll")
+    ZBackendIrSerialization.write_empty_module(module)
+    std.os.exit(0)
+}

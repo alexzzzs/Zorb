@@ -1,0 +1,36 @@
+export const ZBackendIrSchemaVersion: i64 = 2
+
+export struct ZBackendIrTarget {
+    triple: string,
+    cpu: string,
+    features: string,
+    optimize: string
+}
+
+export fn ZBackendIrTarget.init(triple: string) -> ZBackendIrTarget {
+    return ZBackendIrTarget{
+        triple: triple,
+        cpu: "generic",
+        features: "",
+        optimize: "O0"
+    }
+}
+
+// The first native producer models the stable module envelope. Type, global,
+// and function collections are introduced as their lowering becomes native;
+// until then serialization emits those collections as explicitly empty.
+export struct ZBackendIrModule {
+    module_name: string,
+    target: ZBackendIrTarget,
+    output_kind: string,
+    output_path: string
+}
+
+export fn ZBackendIrModule.init(module_name: string, target: ZBackendIrTarget, output_kind: string, output_path: string) -> ZBackendIrModule {
+    return ZBackendIrModule{
+        module_name: module_name,
+        target: target,
+        output_kind: output_kind,
+        output_path: output_path
+    }
+}

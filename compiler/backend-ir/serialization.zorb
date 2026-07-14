@@ -1,0 +1,31 @@
+import "../../runtime/std/io.zorb"
+import "../json.zorb"
+import "model.zorb"
+
+export struct ZBackendIrSerialization {}
+
+fn zbackend_ir_write_target(target: ZBackendIrTarget) {
+    std.io.print("{\"triple\":")
+    ZJson.write_string(target.triple)
+    std.io.print(",\"cpu\":")
+    ZJson.write_string(target.cpu)
+    std.io.print(",\"features\":")
+    ZJson.write_string(target.features)
+    std.io.print(",\"optimize\":")
+    ZJson.write_string(target.optimize)
+    std.io.print("}")
+}
+
+export fn ZBackendIrSerialization.write_empty_module(module: ZBackendIrModule) {
+    std.io.print("{\"schema_version\":")
+    std.io.print_i64(ZBackendIrSchemaVersion)
+    std.io.print(",\"module_name\":")
+    ZJson.write_string(module.module_name)
+    std.io.print(",\"target\":")
+    zbackend_ir_write_target(module.target)
+    std.io.print(",\"output_kind\":")
+    ZJson.write_string(module.output_kind)
+    std.io.print(",\"output_path\":")
+    ZJson.write_string(module.output_path)
+    std.io.print(",\"types\":[],\"globals\":[],\"functions\":[]}\n")
+}
