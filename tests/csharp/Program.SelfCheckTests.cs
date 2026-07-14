@@ -27,6 +27,7 @@ internal static partial class Program
         var cycleInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "import_cycle", "main.zorb");
         var missingImportInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "import_missing", "main.zorb");
         var invalidInput = Path.Combine(fixtureRoot, "parse_parameter_missing_colon", "main.zorb");
+        var backendIrInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_scalar.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -66,9 +67,50 @@ internal static partial class Program
             AssertSelfCheckJsonResult(binaryPath, projectRoot, invalidInput, 1, "diagnostic", null, "parse.invalid-syntax");
             AssertSelfCheckJsonStream(binaryPath, projectRoot, "--dump-tokens", validInput, "token");
             AssertSelfCheckJsonStream(binaryPath, projectRoot, "--dump-ast", validInput, "ast-module");
+            AssertNativeBackendIr(binaryPath, projectRoot, tempDir, backendIrInput);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
+    }
+
+    private static void AssertNativeBackendIr(
+        string binaryPath,
+        string workingDirectory,
+        string tempDirectory,
+        string inputPath)
+    {
+        var llvmPath = Path.Combine(tempDirectory, "native-scalar.ll");
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--emit-backend-ir", GetNativeLlvmTriple(), llvmPath, inputPath],
+            workingDirectory,
+            TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
+        if (execution.ExitCode != 0 || !string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"native backend IR emission failed.\n{execution.StdErr}{execution.StdOut}".Trim());
+
+        using (var document = System.Text.Json.JsonDocument.Parse(execution.StdOut))
+        {
+            var root = document.RootElement;
+            if (root.GetProperty("schema_version").GetInt32() != 2)
+                throw new Exception("native backend IR emitted the wrong schema version.");
+            var function = root.GetProperty("functions")[0];
+            if (function.GetProperty("name").GetString() != "answer")
+                throw new Exception("native backend IR did not retain the source function name.");
+            var instruction = function.GetProperty("blocks")[0].GetProperty("instructions")[0];
+            if (instruction.GetProperty("op").GetString() != "integer_constant" ||
+                instruction.GetProperty("integer").GetInt64() != 42)
+                throw new Exception("native backend IR did not lower the integer return expression.");
+        }
+
+        var irPath = Path.Combine(tempDirectory, "native-scalar.json");
+        File.WriteAllText(irPath, execution.StdOut);
+        var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
+        if (backend.ExitCode != 0 || !File.Exists(llvmPath))
+            throw new Exception($"Zig backend rejected native frontend IR.\n{backend.StdErr}{backend.StdOut}".Trim());
+        var llvm = File.ReadAllText(llvmPath);
+        if (!llvm.Contains("define i32 @answer()", StringComparison.Ordinal) ||
+            !llvm.Contains("ret i32 42", StringComparison.Ordinal))
+            throw new Exception($"native frontend IR produced unexpected LLVM.\n{llvm}".Trim());
     }
 
     private static void AssertSelfCheckJsonResult(

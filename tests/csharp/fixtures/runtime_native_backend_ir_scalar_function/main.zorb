@@ -9,20 +9,26 @@ fn _start() {
     instructions_storage: [1]ZBackendIrInstruction = [1]ZBackendIrInstruction{
         ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: 42 }
     }
-    instructions: []ZBackendIrInstruction = instructions_storage
     terminator: ZBackendIrTerminator = ZBackendIrTerminator{ op: "return_value", value: 1 }
     blocks_storage: [1]ZBackendIrBlock = [1]ZBackendIrBlock{
-        ZBackendIrBlock{ id: 1, name: "entry", instructions: instructions, terminator: terminator }
+        ZBackendIrBlock{ id: 1, name: "entry", instructions: instructions_storage, instruction_count: 1, terminator: terminator }
     }
     blocks: []ZBackendIrBlock = blocks_storage
     functions_storage: [1]ZBackendIrFunction = [1]ZBackendIrFunction{
-        ZBackendIrFunction{ id: 1, name: "answer", linkage: "external", return_type: 1, blocks: blocks }
+        ZBackendIrFunction{ id: 1, name: "answer", linkage: "external", return_type: 1, blocks: blocks_storage, block_count: 1 }
     }
 
     target: ZBackendIrTarget = ZBackendIrTarget.init("x86_64-pc-linux-gnu")
-    module: ZBackendIrModule = ZBackendIrModule.init("native-scalar", target, "llvm_ir", "out.ll")
-    module.types = types_storage
-    module.functions = functions_storage
+    module: ZBackendIrModule = ZBackendIrModule{
+        module_name: "native-scalar",
+        target: target,
+        output_kind: "llvm_ir",
+        output_path: "out.ll",
+        types: types_storage,
+        type_count: 1,
+        functions: functions_storage,
+        function_count: 1
+    }
     ZBackendIrSerialization.write_module(module)
     std.os.exit(0)
 }

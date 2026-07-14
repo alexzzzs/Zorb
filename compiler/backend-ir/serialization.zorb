@@ -20,10 +20,10 @@ fn zbackend_ir_write_target(target: ZBackendIrTarget) {
     std.io.print("}")
 }
 
-fn zbackend_ir_write_types(types: []ZBackendIrType) {
+fn zbackend_ir_write_types(types: *ZBackendIrType, count: i64) {
     std.io.print("[")
     index: i64 = 0
-    while index < types.len {
+    while index < count {
         zbackend_ir_write_separator(index)
         item: ZBackendIrType = types[index]
         std.io.print("{\"id\":")
@@ -38,10 +38,10 @@ fn zbackend_ir_write_types(types: []ZBackendIrType) {
     std.io.print("]")
 }
 
-fn zbackend_ir_write_instructions(instructions: []ZBackendIrInstruction) {
+fn zbackend_ir_write_instructions(instructions: *ZBackendIrInstruction, count: i64) {
     std.io.print("[")
     index: i64 = 0
-    while index < instructions.len {
+    while index < count {
         zbackend_ir_write_separator(index)
         instruction: ZBackendIrInstruction = instructions[index]
         std.io.print("{\"id\":")
@@ -60,10 +60,10 @@ fn zbackend_ir_write_instructions(instructions: []ZBackendIrInstruction) {
     std.io.print("]")
 }
 
-fn zbackend_ir_write_blocks(blocks: []ZBackendIrBlock) {
+fn zbackend_ir_write_blocks(blocks: *ZBackendIrBlock, count: i64) {
     std.io.print("[")
     index: i64 = 0
-    while index < blocks.len {
+    while index < count {
         zbackend_ir_write_separator(index)
         block: ZBackendIrBlock = blocks[index]
         std.io.print("{\"id\":")
@@ -71,7 +71,7 @@ fn zbackend_ir_write_blocks(blocks: []ZBackendIrBlock) {
         std.io.print(",\"name\":")
         ZJson.write_string(block.name)
         std.io.print(",\"instructions\":")
-        zbackend_ir_write_instructions(block.instructions)
+        zbackend_ir_write_instructions(block.instructions, block.instruction_count)
         std.io.print(",\"terminator\":{\"op\":")
         ZJson.write_string(block.terminator.op)
         if block.terminator.op == "return_value" {
@@ -84,10 +84,10 @@ fn zbackend_ir_write_blocks(blocks: []ZBackendIrBlock) {
     std.io.print("]")
 }
 
-fn zbackend_ir_write_functions(functions: []ZBackendIrFunction) {
+fn zbackend_ir_write_functions(functions: *ZBackendIrFunction, count: i64) {
     std.io.print("[")
     index: i64 = 0
-    while index < functions.len {
+    while index < count {
         zbackend_ir_write_separator(index)
         function: ZBackendIrFunction = functions[index]
         std.io.print("{\"id\":")
@@ -99,7 +99,7 @@ fn zbackend_ir_write_functions(functions: []ZBackendIrFunction) {
         std.io.print(",\"return_type\":")
         std.io.print_i64(function.return_type)
         std.io.print(",\"parameters\":[],\"blocks\":")
-        zbackend_ir_write_blocks(function.blocks)
+        zbackend_ir_write_blocks(function.blocks, function.block_count)
         std.io.print("}")
         index = index + 1
     }
@@ -118,9 +118,9 @@ export fn ZBackendIrSerialization.write_module(module: ZBackendIrModule) {
     std.io.print(",\"output_path\":")
     ZJson.write_string(module.output_path)
     std.io.print(",\"types\":")
-    zbackend_ir_write_types(module.types)
+    zbackend_ir_write_types(module.types, module.type_count)
     std.io.print(",\"globals\":[],\"functions\":")
-    zbackend_ir_write_functions(module.functions)
+    zbackend_ir_write_functions(module.functions, module.function_count)
     std.io.print("}\n")
 }
 

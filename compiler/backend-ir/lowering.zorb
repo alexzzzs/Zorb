@@ -1,0 +1,136 @@
+import "../../runtime/std/errors.zorb"
+import "../../runtime/std/mem.zorb"
+import "../ast.zorb"
+import "model.zorb"
+
+const ZBACKEND_IR_MAX_I64: i64 = 9223372036854775807
+
+fn zbackend_ir_copy_text(allocator: *std.mem.HeapAllocator, text: ZAstText) !string {
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, text.len + 1) catch |err| {
+        return error.OutOfMemory
+    }
+    index: i64 = 0
+    while text.len > index {
+        raw[index] = text.ptr[index]
+        index = index + 1
+    }
+    raw[text.len] = 0
+    return cast(string, raw)
+}
+
+fn zbackend_ir_parse_positive_integer(text: ZAstText) !i64 {
+    if text.len == 0 { return error.InvalidArgument }
+    value: i64 = 0
+    index: i64 = 0
+    while text.len > index {
+        byte: i64 = cast(i64, text.ptr[index])
+        if byte < 48 || byte > 57 { return error.InvalidArgument }
+        digit: i64 = byte - 48
+        if (value > (ZBACKEND_IR_MAX_I64 - digit) / 10) { return error.Overflow }
+        value = value * 10 + digit
+        index = index + 1
+    }
+    return value
+}
+
+fn zbackend_ir_find_single_function(module: *ZAstModule) !ZAstDecl {
+    function: ZAstDecl
+    found: bool = false
+    index: i64 = 0
+    while index < module.len {
+        declaration: ZAstDecl = module.decls[index]
+        if declaration.kind == ZAstDeclFunction && !declaration.is_imported {
+            if found { return error.NotImplemented }
+            function = declaration
+            found = true
+        }
+        index = index + 1
+    }
+    if !found { return error.NotImplemented }
+    return function
+}
+
+// This first lowering slice is intentionally narrow but real: it consumes the
+// checked native AST and produces the same model accepted by the Zig backend.
+// Later slices can add parameters and expression forms without coupling AST
+// traversal to JSON serialization.
+export fn ZBackendIrLowering.lower_scalar_return_module(
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    module_name: string,
+    target: ZBackendIrTarget,
+    output_kind: string,
+    output_path: string
+) !ZBackendIrModule {
+    declaration: ZAstDecl = zbackend_ir_find_single_function(ast) catch |err| { return err }
+    if declaration.param_count != 0 || declaration.return_is_error_union || declaration.stmt_count != 1 {
+        return error.NotImplemented
+    }
+    if declaration.return_type_index == ZAstNoIndex { return error.NotImplemented }
+    return_type: ZAstText = ast.types[declaration.return_type_index].text
+    scalar_name: string = ""
+    if ZAstText.eql_string(return_type, "i32") {
+        scalar_name = "i32"
+    } else if ZAstText.eql_string(return_type, "i64") {
+        scalar_name = "i64"
+    } else {
+        return error.NotImplemented
+    }
+
+    statement: ZAstStmt = ast.stmts[declaration.stmt_start]
+    if statement.kind != ZAstStmtReturn || statement.expr_index == ZAstNoIndex {
+        return error.NotImplemented
+    }
+    expression: ZAstExpr = ast.exprs[statement.expr_index]
+    if expression.kind != ZAstExprInteger { return error.NotImplemented }
+    integer: i64 = zbackend_ir_parse_positive_integer(expression.literal) catch |err| { return err }
+    function_name: string = zbackend_ir_copy_text(allocator, declaration.name) catch |err| { return err }
+
+    types_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrType)) catch |err| {
+        return error.OutOfMemory
+    }
+    types: *ZBackendIrType = cast(*ZBackendIrType, types_raw)
+    types[0] = ZBackendIrType{ id: 1, kind: "scalar", scalar: scalar_name }
+
+    instructions_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrInstruction)) catch |err| {
+        return error.OutOfMemory
+    }
+    instructions: *ZBackendIrInstruction = cast(*ZBackendIrInstruction, instructions_raw)
+    instructions[0] = ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: integer }
+
+    blocks_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrBlock)) catch |err| {
+        return error.OutOfMemory
+    }
+    blocks: *ZBackendIrBlock = cast(*ZBackendIrBlock, blocks_raw)
+    blocks[0] = ZBackendIrBlock{
+        id: 1,
+        name: "entry",
+        instructions: instructions,
+        instruction_count: 1,
+        terminator: ZBackendIrTerminator{ op: "return_value", value: 1 }
+    }
+
+    functions_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrFunction)) catch |err| {
+        return error.OutOfMemory
+    }
+    functions: *ZBackendIrFunction = cast(*ZBackendIrFunction, functions_raw)
+    functions[0] = ZBackendIrFunction{
+        id: 1,
+        name: function_name,
+        linkage: "external",
+        return_type: 1,
+        blocks: blocks,
+        block_count: 1
+    }
+
+    return ZBackendIrModule{
+        module_name: module_name,
+        target: target,
+        output_kind: output_kind,
+        output_path: output_path,
+        types: types,
+        type_count: 1,
+        functions: functions,
+        function_count: 1
+    }
+}

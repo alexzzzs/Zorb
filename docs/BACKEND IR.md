@@ -84,3 +84,9 @@ with different semantics.
 [`backend/llvm/tests/scalar.json`](../backend/llvm/tests/scalar.json) is the
 minimal executable example. The backend validates it before lowering it to
 LLVM.
+
+The native frontend can emit this contract with
+`zorb-self-check --emit-backend-ir <target-triple> <output-path> <entry.zorb>`.
+Its first supported lowering slice is a single, parameterless `i32` or `i64`
+function returning a positive integer literal. Unsupported AST shapes fail
+explicitly while native lowering is expanded incrementally.

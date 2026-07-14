@@ -37,7 +37,8 @@ export struct ZBackendIrTerminator {
 export struct ZBackendIrBlock {
     id: i64,
     name: string,
-    instructions: []ZBackendIrInstruction,
+    instructions: *ZBackendIrInstruction,
+    instruction_count: i64,
     terminator: ZBackendIrTerminator
 }
 
@@ -46,7 +47,8 @@ export struct ZBackendIrFunction {
     name: string,
     linkage: string,
     return_type: i64,
-    blocks: []ZBackendIrBlock
+    blocks: *ZBackendIrBlock,
+    block_count: i64
 }
 
 export struct ZBackendIrModule {
@@ -54,23 +56,8 @@ export struct ZBackendIrModule {
     target: ZBackendIrTarget,
     output_kind: string,
     output_path: string,
-    types: []ZBackendIrType,
-    functions: []ZBackendIrFunction
-}
-
-export fn ZBackendIrModule.init(module_name: string, target: ZBackendIrTarget, output_kind: string, output_path: string) -> ZBackendIrModule {
-    types: []ZBackendIrType
-    types.ptr = cast(*ZBackendIrType, 0)
-    types.len = 0
-    functions: []ZBackendIrFunction
-    functions.ptr = cast(*ZBackendIrFunction, 0)
-    functions.len = 0
-    return ZBackendIrModule{
-        module_name: module_name,
-        target: target,
-        output_kind: output_kind,
-        output_path: output_path,
-        types: types,
-        functions: functions
-    }
+    types: *ZBackendIrType,
+    type_count: i64,
+    functions: *ZBackendIrFunction,
+    function_count: i64
 }

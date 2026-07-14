@@ -64,6 +64,13 @@ export fn ZFrontendSession.set_serialization_mode(self: *ZFrontendSession, mode:
     }
 }
 
+// Lowering starts only after a successful graph check. The first retained
+// source is always the entry file; imported modules follow it in discovery
+// order and remain available through the session for later lowering slices.
+export fn ZFrontendSession.entry_module(self: *ZFrontendSession) -> *ZAstModule {
+    return self.sources.files[0].module
+}
+
 fn zsession_phase_name(phase: i64) -> string {
     if phase == ZFrontendPhaseLexical { return "lexical" }
     if phase == ZFrontendPhaseParse { return "parse" }
