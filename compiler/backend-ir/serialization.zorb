@@ -4,6 +4,10 @@ import "model.zorb"
 
 export struct ZBackendIrSerialization {}
 
+fn zbackend_ir_write_separator(index: i64) {
+    if index > 0 { std.io.print(",") }
+}
+
 fn zbackend_ir_write_target(target: ZBackendIrTarget) {
     std.io.print("{\"triple\":")
     ZJson.write_string(target.triple)
@@ -16,7 +20,93 @@ fn zbackend_ir_write_target(target: ZBackendIrTarget) {
     std.io.print("}")
 }
 
-export fn ZBackendIrSerialization.write_empty_module(module: ZBackendIrModule) {
+fn zbackend_ir_write_types(types: []ZBackendIrType) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < types.len {
+        zbackend_ir_write_separator(index)
+        item: ZBackendIrType = types[index]
+        std.io.print("{\"id\":")
+        std.io.print_i64(item.id)
+        std.io.print(",\"kind\":")
+        ZJson.write_string(item.kind)
+        std.io.print(",\"scalar\":")
+        ZJson.write_string(item.scalar)
+        std.io.print("}")
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+fn zbackend_ir_write_instructions(instructions: []ZBackendIrInstruction) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < instructions.len {
+        zbackend_ir_write_separator(index)
+        instruction: ZBackendIrInstruction = instructions[index]
+        std.io.print("{\"id\":")
+        std.io.print_i64(instruction.id)
+        std.io.print(",\"op\":")
+        ZJson.write_string(instruction.op)
+        std.io.print(",\"type\":")
+        std.io.print_i64(instruction.type_id)
+        if instruction.op == "integer_constant" {
+            std.io.print(",\"integer\":")
+            std.io.print_i64(instruction.integer)
+        }
+        std.io.print("}")
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+fn zbackend_ir_write_blocks(blocks: []ZBackendIrBlock) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < blocks.len {
+        zbackend_ir_write_separator(index)
+        block: ZBackendIrBlock = blocks[index]
+        std.io.print("{\"id\":")
+        std.io.print_i64(block.id)
+        std.io.print(",\"name\":")
+        ZJson.write_string(block.name)
+        std.io.print(",\"instructions\":")
+        zbackend_ir_write_instructions(block.instructions)
+        std.io.print(",\"terminator\":{\"op\":")
+        ZJson.write_string(block.terminator.op)
+        if block.terminator.op == "return_value" {
+            std.io.print(",\"value\":")
+            std.io.print_i64(block.terminator.value)
+        }
+        std.io.print("}}")
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+fn zbackend_ir_write_functions(functions: []ZBackendIrFunction) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < functions.len {
+        zbackend_ir_write_separator(index)
+        function: ZBackendIrFunction = functions[index]
+        std.io.print("{\"id\":")
+        std.io.print_i64(function.id)
+        std.io.print(",\"name\":")
+        ZJson.write_string(function.name)
+        std.io.print(",\"linkage\":")
+        ZJson.write_string(function.linkage)
+        std.io.print(",\"return_type\":")
+        std.io.print_i64(function.return_type)
+        std.io.print(",\"parameters\":[],\"blocks\":")
+        zbackend_ir_write_blocks(function.blocks)
+        std.io.print("}")
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+export fn ZBackendIrSerialization.write_module(module: ZBackendIrModule) {
     std.io.print("{\"schema_version\":")
     std.io.print_i64(ZBackendIrSchemaVersion)
     std.io.print(",\"module_name\":")
@@ -27,5 +117,13 @@ export fn ZBackendIrSerialization.write_empty_module(module: ZBackendIrModule) {
     ZJson.write_string(module.output_kind)
     std.io.print(",\"output_path\":")
     ZJson.write_string(module.output_path)
-    std.io.print(",\"types\":[],\"globals\":[],\"functions\":[]}\n")
+    std.io.print(",\"types\":")
+    zbackend_ir_write_types(module.types)
+    std.io.print(",\"globals\":[],\"functions\":")
+    zbackend_ir_write_functions(module.functions)
+    std.io.print("}\n")
+}
+
+export fn ZBackendIrSerialization.write_empty_module(module: ZBackendIrModule) {
+    ZBackendIrSerialization.write_module(module)
 }

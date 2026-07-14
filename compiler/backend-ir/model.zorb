@@ -16,21 +16,61 @@ export fn ZBackendIrTarget.init(triple: string) -> ZBackendIrTarget {
     }
 }
 
-// The first native producer models the stable module envelope. Type, global,
-// and function collections are introduced as their lowering becomes native;
-// until then serialization emits those collections as explicitly empty.
+export struct ZBackendIrType {
+    id: i64,
+    kind: string,
+    scalar: string
+}
+
+export struct ZBackendIrInstruction {
+    id: i64,
+    op: string,
+    type_id: i64,
+    integer: i64
+}
+
+export struct ZBackendIrTerminator {
+    op: string,
+    value: i64
+}
+
+export struct ZBackendIrBlock {
+    id: i64,
+    name: string,
+    instructions: []ZBackendIrInstruction,
+    terminator: ZBackendIrTerminator
+}
+
+export struct ZBackendIrFunction {
+    id: i64,
+    name: string,
+    linkage: string,
+    return_type: i64,
+    blocks: []ZBackendIrBlock
+}
+
 export struct ZBackendIrModule {
     module_name: string,
     target: ZBackendIrTarget,
     output_kind: string,
-    output_path: string
+    output_path: string,
+    types: []ZBackendIrType,
+    functions: []ZBackendIrFunction
 }
 
 export fn ZBackendIrModule.init(module_name: string, target: ZBackendIrTarget, output_kind: string, output_path: string) -> ZBackendIrModule {
+    types: []ZBackendIrType
+    types.ptr = cast(*ZBackendIrType, 0)
+    types.len = 0
+    functions: []ZBackendIrFunction
+    functions.ptr = cast(*ZBackendIrFunction, 0)
+    functions.len = 0
     return ZBackendIrModule{
         module_name: module_name,
         target: target,
         output_kind: output_kind,
-        output_path: output_path
+        output_path: output_path,
+        types: types,
+        functions: functions
     }
 }
