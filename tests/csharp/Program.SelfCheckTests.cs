@@ -43,6 +43,7 @@ internal static partial class Program
         var backendIrWhileInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_while.zorb");
         var backendIrWhileSequenceInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_while_sequence.zorb");
         var backendIrWhileContinueInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_while_continue.zorb");
+        var backendIrWhileBreakInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_while_break.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -93,9 +94,10 @@ internal static partial class Program
             AssertNativeComparisonBackendIr(binaryPath, projectRoot, tempDir, backendIrComparisonInput);
             AssertNativeIfElseBackendIr(binaryPath, projectRoot, tempDir, backendIrIfElseInput);
             AssertNativeIfFallthroughBackendIr(binaryPath, projectRoot, tempDir, backendIrIfFallthroughInput);
-            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileInput, "while", 1);
-            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileSequenceInput, "while-sequence", 2);
-            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileContinueInput, "while-continue", 1);
+            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileInput, "while", 1, 2);
+            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileSequenceInput, "while-sequence", 2, 2);
+            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileContinueInput, "while-continue", 1, 2);
+            AssertNativeWhileBackendIr(binaryPath, projectRoot, tempDir, backendIrWhileBreakInput, "while-break", 1, 4);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
@@ -599,7 +601,8 @@ internal static partial class Program
         string tempDirectory,
         string inputPath,
         string artifactStem,
-        int expectedBodyStoreCount)
+        int expectedBodyStoreCount,
+        int expectedBodyTarget)
     {
         var llvmPath = Path.Combine(tempDirectory, $"native-{artifactStem}.ll");
         var execution = RunProcessWithTimeoutArgs(
@@ -627,7 +630,7 @@ internal static partial class Program
                 blocks[2].GetProperty("name").GetString() != "body" ||
                 bodyStoreCount != expectedBodyStoreCount ||
                 blocks[2].GetProperty("terminator").GetProperty("op").GetString() != "branch" ||
-                blocks[2].GetProperty("terminator").GetProperty("target").GetInt64() != 2 ||
+                blocks[2].GetProperty("terminator").GetProperty("target").GetInt64() != expectedBodyTarget ||
                 blocks[3].GetProperty("name").GetString() != "exit" ||
                 blocks[3].GetProperty("terminator").GetProperty("op").GetString() != "return_value")
                 throw new Exception("native backend IR did not lower the while loop block graph and terminators.");
@@ -638,7 +641,9 @@ internal static partial class Program
         if (backend.ExitCode != 0 || !File.Exists(llvmPath))
             throw new Exception($"Zig backend rejected native while IR.\n{backend.StdErr}{backend.StdOut}".Trim());
         var llvm = File.ReadAllText(llvmPath);
+        var expectedBodyBranch = expectedBodyTarget == 4 ? "br label %exit" : "br label %condition";
         if (!llvm.Contains("br label %condition", StringComparison.Ordinal) ||
+            !llvm.Contains(expectedBodyBranch, StringComparison.Ordinal) ||
             !llvm.Contains("icmp slt i64", StringComparison.Ordinal) ||
             !llvm.Contains("body:", StringComparison.Ordinal) ||
             !llvm.Contains("exit:", StringComparison.Ordinal) ||

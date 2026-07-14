@@ -583,7 +583,8 @@ fn zbackend_ir_while_shape(ast: *ZAstModule, declaration: ZAstDecl) !ZBackendIrW
         body_assignment_count = body_assignment_count - 1
         body_control_kind = ZAstStmtContinue
     } else if last_body_statement.kind == ZAstStmtBreak {
-        return error.NotImplemented
+        body_assignment_count = body_assignment_count - 1
+        body_control_kind = ZAstStmtBreak
     }
     zbackend_ir_assignment_sequence_instruction_count(
         ast, loop.child_start, body_assignment_count, local.name
@@ -669,7 +670,9 @@ fn zbackend_ir_lower_while_function(
     condition_terminator.true_target = 3
     condition_terminator.false_target = 4
     body_target: i64 = 2
-    if shape.body_control_kind != 0 && shape.body_control_kind != ZAstStmtContinue {
+    if shape.body_control_kind == ZAstStmtBreak {
+        body_target = 4
+    } else if shape.body_control_kind != 0 && shape.body_control_kind != ZAstStmtContinue {
         return error.NotImplemented
     }
     blocks[0] = ZBackendIrBlock{ id: 1, name: "entry", instructions: entry_instructions, instruction_count: entry_count, terminator: zbackend_ir_branch_terminator(2) }

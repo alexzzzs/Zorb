@@ -1,0 +1,8 @@
+fn count_once(limit: i64) -> i64 {
+    value: i64 = 0
+    while value < limit {
+        value = value + 1
+        break
+    }
+    return value
+}

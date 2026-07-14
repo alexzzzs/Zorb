@@ -125,3 +125,4 @@ blocks. The entry and body use `branch`; the condition uses
 `conditional_branch` to either repeat the body or continue to the exit.
 An explicit `continue` after the body's assignment sequence terminates the body
 with the same branch back to the condition block.
+An explicit `break` instead terminates the body with a branch to the exit block.
