@@ -30,6 +30,7 @@ internal static partial class Program
         var backendIrInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_scalar.zorb");
         var backendIrAddInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_add.zorb");
         var backendIrSignedDivInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_signed_div.zorb");
+        var backendIrMultipleFunctionsInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_multiple_functions.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -70,6 +71,7 @@ internal static partial class Program
             AssertSelfCheckJsonStream(binaryPath, projectRoot, "--dump-tokens", validInput, "token");
             AssertSelfCheckJsonStream(binaryPath, projectRoot, "--dump-ast", validInput, "ast-module");
             AssertNativeBackendIr(binaryPath, projectRoot, tempDir, backendIrInput, backendIrAddInput, backendIrSignedDivInput);
+            AssertNativeMultipleFunctionsBackendIr(binaryPath, projectRoot, tempDir, backendIrMultipleFunctionsInput);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
@@ -175,6 +177,42 @@ internal static partial class Program
         if (!llvm.Contains(expectedDefinition, StringComparison.Ordinal) ||
             !llvm.Contains(expectedInstruction, StringComparison.Ordinal))
             throw new Exception($"native {functionName} IR produced unexpected LLVM.\n{llvm}".Trim());
+    }
+
+    private static void AssertNativeMultipleFunctionsBackendIr(
+        string binaryPath,
+        string workingDirectory,
+        string tempDirectory,
+        string inputPath)
+    {
+        var llvmPath = Path.Combine(tempDirectory, "native-multiple.ll");
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--emit-backend-ir", GetNativeLlvmTriple(), llvmPath, inputPath],
+            workingDirectory,
+            TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
+        if (execution.ExitCode != 0 || !string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"native multiple-function backend IR emission failed.\n{execution.StdErr}{execution.StdOut}".Trim());
+        using (var document = System.Text.Json.JsonDocument.Parse(execution.StdOut))
+        {
+            var functions = document.RootElement.GetProperty("functions");
+            if (functions.GetArrayLength() != 2 ||
+                functions[0].GetProperty("id").GetInt64() != 1 ||
+                functions[0].GetProperty("name").GetString() != "add" ||
+                functions[1].GetProperty("id").GetInt64() != 2 ||
+                functions[1].GetProperty("name").GetString() != "multiply")
+                throw new Exception("native backend IR did not preserve both source functions and their IDs.");
+        }
+        var irPath = Path.Combine(tempDirectory, "native-multiple.json");
+        File.WriteAllText(irPath, execution.StdOut);
+        var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
+        if (backend.ExitCode != 0 || !File.Exists(llvmPath))
+            throw new Exception($"Zig backend rejected native multiple-function IR.\n{backend.StdErr}{backend.StdOut}".Trim());
+        var llvm = File.ReadAllText(llvmPath);
+        if (!llvm.Contains("define i32 @add(i32 %lhs, i32 %rhs)", StringComparison.Ordinal) ||
+            !llvm.Contains("define i32 @multiply(i32 %lhs, i32 %rhs)", StringComparison.Ordinal) ||
+            !llvm.Contains("mul i32 %lhs, %rhs", StringComparison.Ordinal))
+            throw new Exception($"native multiple-function IR produced unexpected LLVM.\n{llvm}".Trim());
     }
 
     private static void AssertSelfCheckJsonResult(

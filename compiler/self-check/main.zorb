@@ -39,7 +39,7 @@ fn zself_emit_backend_ir(target_triple: string, output_path: string, entry: stri
     }
 
     target: ZBackendIrTarget = ZBackendIrTarget.init(target_triple)
-    module: ZBackendIrModule = ZBackendIrLowering.lower_scalar_return_module(
+    module: ZBackendIrModule = ZBackendIrLowering.lower_module(
         &session.heap,
         ZFrontendSession.entry_module(&session),
         entry,

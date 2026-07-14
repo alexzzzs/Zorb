@@ -34,21 +34,27 @@ fn zbackend_ir_parse_positive_integer(text: ZAstText) !i64 {
     return value
 }
 
-fn zbackend_ir_find_single_function(module: *ZAstModule) !ZAstDecl {
-    function: ZAstDecl
-    found: bool = false
+fn zbackend_ir_function_count(module: *ZAstModule) -> i64 {
+    count: i64 = 0
     index: i64 = 0
     while index < module.len {
         declaration: ZAstDecl = module.decls[index]
         if declaration.kind == ZAstDeclFunction && !declaration.is_imported {
-            if found { return error.NotImplemented }
-            function = declaration
-            found = true
+            count = count + 1
         }
         index = index + 1
     }
-    if !found { return error.NotImplemented }
-    return function
+    return count
+}
+
+fn zbackend_ir_first_function(module: *ZAstModule) !ZAstDecl {
+    index: i64 = 0
+    while index < module.len {
+        declaration: ZAstDecl = module.decls[index]
+        if declaration.kind == ZAstDeclFunction && !declaration.is_imported { return declaration }
+        index = index + 1
+    }
+    return error.NotImplemented
 }
 
 fn zbackend_ir_parameter_id(ast: *ZAstModule, declaration: ZAstDecl, name: ZAstText) !i64 {
@@ -75,44 +81,25 @@ fn zbackend_ir_binary_op(token: i64) !string {
     return error.NotImplemented
 }
 
-// This first lowering slice is intentionally narrow but real: it consumes the
-// checked native AST and produces the same model accepted by the Zig backend.
-// Later slices can add parameters and expression forms without coupling AST
-// traversal to JSON serialization.
-export fn ZBackendIrLowering.lower_scalar_return_module(
+fn zbackend_ir_lower_function(
     allocator: *std.mem.HeapAllocator,
     ast: *ZAstModule,
-    module_name: string,
-    target: ZBackendIrTarget,
-    output_kind: string,
-    output_path: string
-) !ZBackendIrModule {
-    declaration: ZAstDecl = zbackend_ir_find_single_function(ast) catch |err| { return err }
+    declaration: ZAstDecl,
+    function_id: i64,
+    scalar_name: string
+) !ZBackendIrFunction {
     if declaration.return_is_error_union || declaration.stmt_count != 1 {
         return error.NotImplemented
     }
     if declaration.return_type_index == ZAstNoIndex { return error.NotImplemented }
     return_type: ZAstText = ast.types[declaration.return_type_index].text
-    scalar_name: string = ""
-    if ZAstText.eql_string(return_type, "i32") {
-        scalar_name = "i32"
-    } else if ZAstText.eql_string(return_type, "i64") {
-        scalar_name = "i64"
-    } else {
-        return error.NotImplemented
-    }
+    if !ZAstText.eql_string(return_type, scalar_name) { return error.NotImplemented }
 
     statement: ZAstStmt = ast.stmts[declaration.stmt_start]
     if statement.kind != ZAstStmtReturn || statement.expr_index == ZAstNoIndex {
         return error.NotImplemented
     }
     function_name: string = zbackend_ir_copy_text(allocator, declaration.name) catch |err| { return err }
-
-    types_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrType)) catch |err| {
-        return error.OutOfMemory
-    }
-    types: *ZBackendIrType = cast(*ZBackendIrType, types_raw)
-    types[0] = ZBackendIrType{ id: 1, kind: "scalar", scalar: scalar_name }
 
     parameters: *ZBackendIrParameter = cast(*ZBackendIrParameter, 0)
     if declaration.param_count > 0 {
@@ -147,7 +134,7 @@ export fn ZBackendIrLowering.lower_scalar_return_module(
         lhs: i64 = zbackend_ir_parameter_id(ast, declaration, left.name) catch |err| { return err }
         rhs: i64 = zbackend_ir_parameter_id(ast, declaration, right.name) catch |err| { return err }
         binary_op: string = zbackend_ir_binary_op(expression.op) catch |err| { return err }
-        result_id = 3
+        result_id = declaration.param_count + 1
         instruction = ZBackendIrInstruction{ id: result_id, op: "binary", type_id: 1, integer: 0, binary_op: binary_op, lhs: lhs, rhs: rhs }
     } else {
         return error.NotImplemented
@@ -171,12 +158,8 @@ export fn ZBackendIrLowering.lower_scalar_return_module(
         terminator: ZBackendIrTerminator{ op: "return_value", value: result_id }
     }
 
-    functions_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrFunction)) catch |err| {
-        return error.OutOfMemory
-    }
-    functions: *ZBackendIrFunction = cast(*ZBackendIrFunction, functions_raw)
-    functions[0] = ZBackendIrFunction{
-        id: 1,
+    return ZBackendIrFunction{
+        id: function_id,
         name: function_name,
         linkage: "external",
         return_type: 1,
@@ -184,6 +167,59 @@ export fn ZBackendIrLowering.lower_scalar_return_module(
         parameter_count: declaration.param_count,
         blocks: blocks,
         block_count: 1
+    }
+}
+
+// Lowering consumes the checked native AST and produces the same model accepted
+// by the Zig backend. Types are interned module-wide; this slice supports one
+// shared signed scalar type while function and expression coverage grows.
+export fn ZBackendIrLowering.lower_module(
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    module_name: string,
+    target: ZBackendIrTarget,
+    output_kind: string,
+    output_path: string
+) !ZBackendIrModule {
+    function_count: i64 = zbackend_ir_function_count(ast)
+    if function_count == 0 { return error.NotImplemented }
+    first: ZAstDecl = zbackend_ir_first_function(ast) catch |err| { return err }
+    if first.return_type_index == ZAstNoIndex { return error.NotImplemented }
+    first_return_type: ZAstText = ast.types[first.return_type_index].text
+    scalar_name: string = ""
+    if ZAstText.eql_string(first_return_type, "i32") {
+        scalar_name = "i32"
+    } else if ZAstText.eql_string(first_return_type, "i64") {
+        scalar_name = "i64"
+    } else {
+        return error.NotImplemented
+    }
+
+    types_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrType)) catch |err| {
+        return error.OutOfMemory
+    }
+    types: *ZBackendIrType = cast(*ZBackendIrType, types_raw)
+    types[0] = ZBackendIrType{ id: 1, kind: "scalar", scalar: scalar_name }
+
+    functions_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, function_count * Builtin.sizeof(ZBackendIrFunction)) catch |err| {
+        return error.OutOfMemory
+    }
+    functions: *ZBackendIrFunction = cast(*ZBackendIrFunction, functions_raw)
+    declaration_index: i64 = 0
+    function_index: i64 = 0
+    while declaration_index < ast.len {
+        declaration: ZAstDecl = ast.decls[declaration_index]
+        if declaration.kind == ZAstDeclFunction && !declaration.is_imported {
+            functions[function_index] = zbackend_ir_lower_function(
+                allocator,
+                ast,
+                declaration,
+                function_index + 1,
+                scalar_name
+            ) catch |err| { return err }
+            function_index = function_index + 1
+        }
+        declaration_index = declaration_index + 1
     }
 
     return ZBackendIrModule{
@@ -194,6 +230,6 @@ export fn ZBackendIrLowering.lower_scalar_return_module(
         types: types,
         type_count: 1,
         functions: functions,
-        function_count: 1
+        function_count: function_count
     }
 }
