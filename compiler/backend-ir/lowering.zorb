@@ -102,7 +102,10 @@ struct ZBackendIrExpressionLowering {
     instructions: *ZBackendIrInstruction,
     instruction_capacity: i64,
     instruction_count: i64,
-    next_value_id: i64
+    next_value_id: i64,
+    local_name: ZAstText,
+    local_address: i64,
+    has_local: bool
 }
 
 fn zbackend_ir_new_instruction(id: i64, op: string) -> ZBackendIrInstruction {
@@ -120,14 +123,17 @@ fn zbackend_ir_new_instruction(id: i64, op: string) -> ZBackendIrInstruction {
     }
 }
 
-fn zbackend_ir_expression_instruction_count(ast: *ZAstModule, expression_index: i64) !i64 {
+fn zbackend_ir_expression_instruction_count(ast: *ZAstModule, expression_index: i64, local_name: ZAstText, has_local: bool) !i64 {
     if expression_index == ZAstNoIndex { return error.NotImplemented }
     expression: ZAstExpr = ast.exprs[expression_index]
-    if expression.kind == ZAstExprIdentifier { return 0 }
+    if expression.kind == ZAstExprIdentifier {
+        if has_local && ZAstText.eql(expression.name, local_name) { return 1 }
+        return 0
+    }
     if expression.kind == ZAstExprInteger { return 1 }
     if expression.kind == ZAstExprBinary {
-        left_count: i64 = zbackend_ir_expression_instruction_count(ast, expression.left) catch |err| { return err }
-        right_count: i64 = zbackend_ir_expression_instruction_count(ast, expression.right) catch |err| { return err }
+        left_count: i64 = zbackend_ir_expression_instruction_count(ast, expression.left, local_name, has_local) catch |err| { return err }
+        right_count: i64 = zbackend_ir_expression_instruction_count(ast, expression.right, local_name, has_local) catch |err| { return err }
         return left_count + right_count + 1
     }
     if expression.kind == ZAstExprCall && expression.name.len > 0 {
@@ -136,7 +142,9 @@ fn zbackend_ir_expression_instruction_count(ast: *ZAstModule, expression_index: 
         while expression.arg_count > argument_index {
             argument_count: i64 = zbackend_ir_expression_instruction_count(
                 ast,
-                ast.expr_args[expression.arg_start + argument_index]
+                ast.expr_args[expression.arg_start + argument_index],
+                local_name,
+                has_local
             ) catch |err| { return err }
             count = count + argument_count
             argument_index = argument_index + 1
@@ -157,6 +165,13 @@ fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, expressi
     if expression_index == ZAstNoIndex { return error.NotImplemented }
     expression: ZAstExpr = context.ast.exprs[expression_index]
     if expression.kind == ZAstExprIdentifier {
+        if context.has_local && ZAstText.eql(expression.name, context.local_name) {
+            id: i64 = context.next_value_id
+            context.next_value_id = context.next_value_id + 1
+            instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "load")
+            instruction.lhs = context.local_address
+            return zbackend_ir_append_instruction(context, instruction) catch |err| { return err }
+        }
         return zbackend_ir_parameter_id(context.ast, context.declaration, expression.name) catch |err| { return err }
     }
     if expression.kind == ZAstExprInteger {
@@ -208,6 +223,59 @@ fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, expressi
     return error.NotImplemented
 }
 
+fn zbackend_ir_body_instruction_count(ast: *ZAstModule, declaration: ZAstDecl) !i64 {
+    if declaration.stmt_count == 1 {
+        statement: ZAstStmt = ast.stmts[declaration.stmt_start]
+        if statement.kind != ZAstStmtReturn { return error.NotImplemented }
+        return zbackend_ir_expression_instruction_count(ast, statement.expr_index, ZAstText.empty(), false) catch |err| { return err }
+    }
+    if declaration.stmt_count == 2 {
+        local: ZAstStmt = ast.stmts[declaration.stmt_start]
+        returned: ZAstStmt = ast.stmts[declaration.stmt_start + 1]
+        if local.kind != ZAstStmtVar || local.expr_index == ZAstNoIndex || returned.kind != ZAstStmtReturn {
+            return error.NotImplemented
+        }
+        initializer_count: i64 = zbackend_ir_expression_instruction_count(ast, local.expr_index, ZAstText.empty(), false) catch |err| { return err }
+        return_count: i64 = zbackend_ir_expression_instruction_count(ast, returned.expr_index, local.name, true) catch |err| { return err }
+        return initializer_count + return_count + 2
+    }
+    return error.NotImplemented
+}
+
+fn zbackend_ir_lower_body(context: *ZBackendIrExpressionLowering) !i64 {
+    if context.declaration.stmt_count == 1 {
+        statement: ZAstStmt = context.ast.stmts[context.declaration.stmt_start]
+        return zbackend_ir_lower_expression(context, statement.expr_index) catch |err| { return err }
+    }
+
+    local: ZAstStmt = context.ast.stmts[context.declaration.stmt_start]
+    returned: ZAstStmt = context.ast.stmts[context.declaration.stmt_start + 1]
+    if local.type_index == ZAstNoIndex || context.declaration.return_type_index == ZAstNoIndex {
+        return error.NotImplemented
+    }
+    if !ZAstText.eql(context.ast.types[local.type_index].text, context.ast.types[context.declaration.return_type_index].text) {
+        return error.NotImplemented
+    }
+
+    address_id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    alloca_instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(address_id, "alloca")
+    zbackend_ir_append_instruction(context, alloca_instruction) catch |err| { return err }
+
+    initializer_id: i64 = zbackend_ir_lower_expression(context, local.expr_index) catch |err| { return err }
+    store_id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    store_instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(store_id, "store")
+    store_instruction.lhs = address_id
+    store_instruction.rhs = initializer_id
+    zbackend_ir_append_instruction(context, store_instruction) catch |err| { return err }
+
+    context.local_name = local.name
+    context.local_address = address_id
+    context.has_local = true
+    return zbackend_ir_lower_expression(context, returned.expr_index) catch |err| { return err }
+}
+
 fn zbackend_ir_lower_function(
     allocator: *std.mem.HeapAllocator,
     ast: *ZAstModule,
@@ -215,17 +283,13 @@ fn zbackend_ir_lower_function(
     function_id: i64,
     scalar_name: string
 ) !ZBackendIrFunction {
-    if declaration.return_is_error_union || declaration.stmt_count != 1 {
+    if declaration.return_is_error_union || (declaration.stmt_count != 1 && declaration.stmt_count != 2) {
         return error.NotImplemented
     }
     if declaration.return_type_index == ZAstNoIndex { return error.NotImplemented }
     return_type: ZAstText = ast.types[declaration.return_type_index].text
     if !ZAstText.eql_string(return_type, scalar_name) { return error.NotImplemented }
 
-    statement: ZAstStmt = ast.stmts[declaration.stmt_start]
-    if statement.kind != ZAstStmtReturn || statement.expr_index == ZAstNoIndex {
-        return error.NotImplemented
-    }
     function_name: string = zbackend_ir_copy_text(allocator, declaration.name) catch |err| { return err }
 
     parameters: *ZBackendIrParameter = cast(*ZBackendIrParameter, 0)
@@ -247,7 +311,7 @@ fn zbackend_ir_lower_function(
         }
     }
 
-    instruction_capacity: i64 = zbackend_ir_expression_instruction_count(ast, statement.expr_index) catch |err| { return err }
+    instruction_capacity: i64 = zbackend_ir_body_instruction_count(ast, declaration) catch |err| { return err }
     instructions: *ZBackendIrInstruction = cast(*ZBackendIrInstruction, 0)
     if instruction_capacity > 0 {
         instructions_raw: *u8 = std.mem.HeapAllocator.alloc(
@@ -263,9 +327,12 @@ fn zbackend_ir_lower_function(
         instructions: instructions,
         instruction_capacity: instruction_capacity,
         instruction_count: 0,
-        next_value_id: declaration.param_count + 1
+        next_value_id: declaration.param_count + 1,
+        local_name: ZAstText.empty(),
+        local_address: 0,
+        has_local: false
     }
-    result_id: i64 = zbackend_ir_lower_expression(&expression_context, statement.expr_index) catch |err| { return err }
+    result_id: i64 = zbackend_ir_lower_body(&expression_context) catch |err| { return err }
     if expression_context.instruction_count != instruction_capacity { return error.InvalidArgument }
 
     blocks_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, Builtin.sizeof(ZBackendIrBlock)) catch |err| {

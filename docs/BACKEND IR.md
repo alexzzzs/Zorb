@@ -95,3 +95,6 @@ lowering is expanded incrementally. A function may also directly return a call
 to another same-scalar function. Integer literals, parameters, direct calls,
 and supported binary operations may be nested; lowering emits their values in
 post-order so every instruction references an earlier function-local value.
+One initialized scalar local before the return is supported through `alloca`,
+`store`, and `load` instructions. Broader statement and local-variable lowering
+remains incremental.
