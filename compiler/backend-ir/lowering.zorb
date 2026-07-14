@@ -67,6 +67,20 @@ fn zbackend_ir_parameter_id(ast: *ZAstModule, declaration: ZAstDecl, name: ZAstT
     return error.NotImplemented
 }
 
+fn zbackend_ir_function_id(ast: *ZAstModule, name: ZAstText) !i64 {
+    function_id: i64 = 1
+    index: i64 = 0
+    while index < ast.len {
+        declaration: ZAstDecl = ast.decls[index]
+        if declaration.kind == ZAstDeclFunction && !declaration.is_imported {
+            if ZAstText.eql(declaration.name, name) { return function_id }
+            function_id = function_id + 1
+        }
+        index = index + 1
+    }
+    return error.NotImplemented
+}
+
 fn zbackend_ir_binary_op(token: i64) !string {
     if token == ZTokenPlus { return "add" }
     if token == ZTokenMinus { return "sub" }
@@ -125,7 +139,7 @@ fn zbackend_ir_lower_function(
     result_id: i64 = 1
     if declaration.param_count == 0 && expression.kind == ZAstExprInteger {
         integer: i64 = zbackend_ir_parse_positive_integer(expression.literal) catch |err| { return err }
-        instruction = ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: integer, binary_op: "", lhs: 0, rhs: 0 }
+        instruction = ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: integer, binary_op: "", lhs: 0, rhs: 0, callee: 0, arguments: cast(*i64, 0), argument_count: 0 }
     } else if declaration.param_count == 2 && expression.kind == ZAstExprBinary {
         if expression.left == ZAstNoIndex || expression.right == ZAstNoIndex { return error.NotImplemented }
         left: ZAstExpr = ast.exprs[expression.left]
@@ -135,7 +149,26 @@ fn zbackend_ir_lower_function(
         rhs: i64 = zbackend_ir_parameter_id(ast, declaration, right.name) catch |err| { return err }
         binary_op: string = zbackend_ir_binary_op(expression.op) catch |err| { return err }
         result_id = declaration.param_count + 1
-        instruction = ZBackendIrInstruction{ id: result_id, op: "binary", type_id: 1, integer: 0, binary_op: binary_op, lhs: lhs, rhs: rhs }
+        instruction = ZBackendIrInstruction{ id: result_id, op: "binary", type_id: 1, integer: 0, binary_op: binary_op, lhs: lhs, rhs: rhs, callee: 0, arguments: cast(*i64, 0), argument_count: 0 }
+    } else if expression.kind == ZAstExprCall && expression.name.len > 0 {
+        if expression.arg_count != declaration.param_count { return error.NotImplemented }
+        arguments: *i64 = cast(*i64, 0)
+        if expression.arg_count > 0 {
+            arguments_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, expression.arg_count * Builtin.sizeof(i64)) catch |err| {
+                return error.OutOfMemory
+            }
+            arguments = cast(*i64, arguments_raw)
+            argument_index: i64 = 0
+            while expression.arg_count > argument_index {
+                argument: ZAstExpr = ast.exprs[ast.expr_args[expression.arg_start + argument_index]]
+                if argument.kind != ZAstExprIdentifier { return error.NotImplemented }
+                arguments[argument_index] = zbackend_ir_parameter_id(ast, declaration, argument.name) catch |err| { return err }
+                argument_index = argument_index + 1
+            }
+        }
+        callee: i64 = zbackend_ir_function_id(ast, expression.name) catch |err| { return err }
+        result_id = declaration.param_count + 1
+        instruction = ZBackendIrInstruction{ id: result_id, op: "call", type_id: 1, integer: 0, binary_op: "", lhs: 0, rhs: 0, callee: callee, arguments: arguments, argument_count: expression.arg_count }
     } else {
         return error.NotImplemented
     }

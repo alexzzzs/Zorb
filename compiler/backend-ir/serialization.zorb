@@ -8,6 +8,17 @@ fn zbackend_ir_write_separator(index: i64) {
     if index > 0 { std.io.print(",") }
 }
 
+fn zbackend_ir_write_ids(values: *i64, count: i64) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < count {
+        zbackend_ir_write_separator(index)
+        std.io.print_i64(values[index])
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
 fn zbackend_ir_write_target(target: ZBackendIrTarget) {
     std.io.print("{\"triple\":")
     ZJson.write_string(target.triple)
@@ -60,6 +71,11 @@ fn zbackend_ir_write_instructions(instructions: *ZBackendIrInstruction, count: i
             std.io.print_i64(instruction.lhs)
             std.io.print(",\"rhs\":")
             std.io.print_i64(instruction.rhs)
+        } else if instruction.op == "call" {
+            std.io.print(",\"callee\":")
+            std.io.print_i64(instruction.callee)
+            std.io.print(",\"arguments\":")
+            zbackend_ir_write_ids(instruction.arguments, instruction.argument_count)
         }
         std.io.print("}")
         index = index + 1

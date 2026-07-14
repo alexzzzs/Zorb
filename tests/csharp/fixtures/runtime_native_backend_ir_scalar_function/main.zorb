@@ -7,7 +7,7 @@ fn _start() {
         ZBackendIrType{ id: 1, kind: "scalar", scalar: "i32" }
     }
     instructions_storage: [1]ZBackendIrInstruction = [1]ZBackendIrInstruction{
-        ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: 42, binary_op: "", lhs: 0, rhs: 0 }
+        ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: 42, binary_op: "", lhs: 0, rhs: 0, callee: 0, arguments: cast(*i64, 0), argument_count: 0 }
     }
     terminator: ZBackendIrTerminator = ZBackendIrTerminator{ op: "return_value", value: 1 }
     blocks_storage: [1]ZBackendIrBlock = [1]ZBackendIrBlock{

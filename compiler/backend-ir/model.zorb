@@ -29,7 +29,10 @@ export struct ZBackendIrInstruction {
     integer: i64,
     binary_op: string,
     lhs: i64,
-    rhs: i64
+    rhs: i64,
+    callee: i64,
+    arguments: *i64,
+    argument_count: i64
 }
 
 export struct ZBackendIrTerminator {
