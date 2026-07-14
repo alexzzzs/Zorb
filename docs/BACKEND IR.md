@@ -116,3 +116,5 @@ surrounding function ABI.
 A top-level `if/else` whose two branches return lowers to three blocks. The
 entry block evaluates the condition and uses `conditional_branch`; the `then`
 and `else` blocks independently lower and return their expressions.
+The same graph shape supports a top-level `if` whose body returns followed by
+a fallthrough return; its false edge targets a `continuation` block.

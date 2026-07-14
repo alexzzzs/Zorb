@@ -1,0 +1,6 @@
+fn select_positive(value: i32, fallback: i32) -> i32 {
+    if value > 0 {
+        return value
+    }
+    return fallback
+}
