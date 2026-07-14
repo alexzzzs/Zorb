@@ -34,6 +34,7 @@ internal static partial class Program
         var backendIrDirectCallInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_direct_call.zorb");
         var backendIrNestedExpressionInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_nested_expression.zorb");
         var backendIrLocalInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_local.zorb");
+        var backendIrAssignmentInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_assignment.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
         {
@@ -78,6 +79,7 @@ internal static partial class Program
             AssertNativeDirectCallBackendIr(binaryPath, projectRoot, tempDir, backendIrDirectCallInput);
             AssertNativeNestedExpressionBackendIr(binaryPath, projectRoot, tempDir, backendIrNestedExpressionInput);
             AssertNativeLocalBackendIr(binaryPath, projectRoot, tempDir, backendIrLocalInput);
+            AssertNativeAssignmentBackendIr(binaryPath, projectRoot, tempDir, backendIrAssignmentInput);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
         });
@@ -333,6 +335,46 @@ internal static partial class Program
             !llvm.Contains("store i32", StringComparison.Ordinal) ||
             !llvm.Contains("load i32", StringComparison.Ordinal))
             throw new Exception($"native local IR produced unexpected LLVM.\n{llvm}".Trim());
+    }
+
+    private static void AssertNativeAssignmentBackendIr(
+        string binaryPath,
+        string workingDirectory,
+        string tempDirectory,
+        string inputPath)
+    {
+        var llvmPath = Path.Combine(tempDirectory, "native-assignment.ll");
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--emit-backend-ir", GetNativeLlvmTriple(), llvmPath, inputPath],
+            workingDirectory,
+            TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
+        if (execution.ExitCode != 0 || !string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"native assignment backend IR emission failed.\n{execution.StdErr}{execution.StdOut}".Trim());
+        using (var document = System.Text.Json.JsonDocument.Parse(execution.StdOut))
+        {
+            var instructions = document.RootElement.GetProperty("functions")[0]
+                .GetProperty("blocks")[0].GetProperty("instructions");
+            var operations = instructions.EnumerateArray()
+                .Select(instruction => instruction.GetProperty("op").GetString())
+                .ToArray();
+            if (!operations.SequenceEqual(
+                    ["alloca", "binary", "store", "load", "integer_constant", "binary", "store", "load"],
+                    StringComparer.Ordinal) ||
+                instructions[6].GetProperty("lhs").GetInt64() != 3 ||
+                instructions[6].GetProperty("rhs").GetInt64() != 8 ||
+                instructions[7].GetProperty("lhs").GetInt64() != 3)
+                throw new Exception("native backend IR did not lower the mutable local assignment in dependency order.");
+        }
+        var irPath = Path.Combine(tempDirectory, "native-assignment.json");
+        File.WriteAllText(irPath, execution.StdOut);
+        var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
+        if (backend.ExitCode != 0 || !File.Exists(llvmPath))
+            throw new Exception($"Zig backend rejected native assignment IR.\n{backend.StdErr}{backend.StdOut}".Trim());
+        var llvm = File.ReadAllText(llvmPath);
+        if (llvm.Split("store i32", StringSplitOptions.None).Length - 1 != 2 ||
+            !llvm.Contains("mul i32", StringComparison.Ordinal))
+            throw new Exception($"native assignment IR produced unexpected LLVM.\n{llvm}".Trim());
     }
 
     private static void AssertSelfCheckJsonResult(

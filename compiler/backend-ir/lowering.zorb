@@ -223,21 +223,36 @@ fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, expressi
     return error.NotImplemented
 }
 
+fn zbackend_ir_assignment_targets_local(ast: *ZAstModule, assignment: ZAstStmt, local_name: ZAstText) -> bool {
+    if assignment.kind != ZAstStmtAssign || assignment.expr_index == ZAstNoIndex || assignment.value_expr == ZAstNoIndex {
+        return false
+    }
+    target: ZAstExpr = ast.exprs[assignment.expr_index]
+    return target.kind == ZAstExprIdentifier && ZAstText.eql(target.name, local_name)
+}
+
 fn zbackend_ir_body_instruction_count(ast: *ZAstModule, declaration: ZAstDecl) !i64 {
     if declaration.stmt_count == 1 {
         statement: ZAstStmt = ast.stmts[declaration.stmt_start]
         if statement.kind != ZAstStmtReturn { return error.NotImplemented }
         return zbackend_ir_expression_instruction_count(ast, statement.expr_index, ZAstText.empty(), false) catch |err| { return err }
     }
-    if declaration.stmt_count == 2 {
+    if declaration.stmt_count == 2 || declaration.stmt_count == 3 {
         local: ZAstStmt = ast.stmts[declaration.stmt_start]
-        returned: ZAstStmt = ast.stmts[declaration.stmt_start + 1]
+        returned: ZAstStmt = ast.stmts[declaration.stmt_start + declaration.stmt_count - 1]
         if local.kind != ZAstStmtVar || local.expr_index == ZAstNoIndex || returned.kind != ZAstStmtReturn {
             return error.NotImplemented
         }
         initializer_count: i64 = zbackend_ir_expression_instruction_count(ast, local.expr_index, ZAstText.empty(), false) catch |err| { return err }
         return_count: i64 = zbackend_ir_expression_instruction_count(ast, returned.expr_index, local.name, true) catch |err| { return err }
-        return initializer_count + return_count + 2
+        count: i64 = initializer_count + return_count + 2
+        if declaration.stmt_count == 3 {
+            assignment: ZAstStmt = ast.stmts[declaration.stmt_start + 1]
+            if !zbackend_ir_assignment_targets_local(ast, assignment, local.name) { return error.NotImplemented }
+            assignment_count: i64 = zbackend_ir_expression_instruction_count(ast, assignment.value_expr, local.name, true) catch |err| { return err }
+            count = count + assignment_count + 1
+        }
+        return count
     }
     return error.NotImplemented
 }
@@ -249,7 +264,7 @@ fn zbackend_ir_lower_body(context: *ZBackendIrExpressionLowering) !i64 {
     }
 
     local: ZAstStmt = context.ast.stmts[context.declaration.stmt_start]
-    returned: ZAstStmt = context.ast.stmts[context.declaration.stmt_start + 1]
+    returned: ZAstStmt = context.ast.stmts[context.declaration.stmt_start + context.declaration.stmt_count - 1]
     if local.type_index == ZAstNoIndex || context.declaration.return_type_index == ZAstNoIndex {
         return error.NotImplemented
     }
@@ -273,6 +288,18 @@ fn zbackend_ir_lower_body(context: *ZBackendIrExpressionLowering) !i64 {
     context.local_name = local.name
     context.local_address = address_id
     context.has_local = true
+
+    if context.declaration.stmt_count == 3 {
+        assignment: ZAstStmt = context.ast.stmts[context.declaration.stmt_start + 1]
+        if !zbackend_ir_assignment_targets_local(context.ast, assignment, local.name) { return error.NotImplemented }
+        assigned_value_id: i64 = zbackend_ir_lower_expression(context, assignment.value_expr) catch |err| { return err }
+        assignment_store_id: i64 = context.next_value_id
+        context.next_value_id = context.next_value_id + 1
+        assignment_store: ZBackendIrInstruction = zbackend_ir_new_instruction(assignment_store_id, "store")
+        assignment_store.lhs = address_id
+        assignment_store.rhs = assigned_value_id
+        zbackend_ir_append_instruction(context, assignment_store) catch |err| { return err }
+    }
     return zbackend_ir_lower_expression(context, returned.expr_index) catch |err| { return err }
 }
 
@@ -283,7 +310,7 @@ fn zbackend_ir_lower_function(
     function_id: i64,
     scalar_name: string
 ) !ZBackendIrFunction {
-    if declaration.return_is_error_union || (declaration.stmt_count != 1 && declaration.stmt_count != 2) {
+    if declaration.return_is_error_union || (declaration.stmt_count != 1 && declaration.stmt_count != 2 && declaration.stmt_count != 3) {
         return error.NotImplemented
     }
     if declaration.return_type_index == ZAstNoIndex { return error.NotImplemented }
