@@ -112,10 +112,14 @@ export fn zorb_llvm_link_object(
             reportError(io, "unable to prepare target output argument", err);
             return 1;
         };
-        link_args[0] = "clang-cl";
-        link_args[1] = "/nologo";
-        link_args[2] = object;
-        link_args[3] = windows_output_arg.?;
+        link_args_helpers.populateWindowsBaseArgs(
+            link_args,
+            object,
+            windows_output_arg.?,
+        ) catch |err| {
+            reportError(io, "unable to prepare target linker arguments", err);
+            return 1;
+        };
     } else if (builtin.os.tag == .linux) {
         link_args[0] = "cc";
         // Zorb's current hosted code model uses absolute relocations for

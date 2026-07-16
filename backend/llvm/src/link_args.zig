@@ -1,6 +1,26 @@
 const std = @import("std");
 
-pub const windows_base_arg_count: usize = 4;
+pub const windows_base_arg_count: usize = 9;
+
+pub fn populateWindowsBaseArgs(
+    args: [][]const u8,
+    object_path: []const u8,
+    output_arg: []const u8,
+) !void {
+    if (args.len < windows_base_arg_count)
+        return error.InvalidArgument;
+
+    args[0] = "clang-cl";
+    args[1] = "/nologo";
+    args[2] = object_path;
+    args[3] = output_arg;
+    args[4] = "/link";
+    args[5] = "/subsystem:console";
+    // LLVM-generated objects do not contain MSVC /DEFAULTLIB directives.
+    args[6] = "kernel32.lib";
+    args[7] = "ucrt.lib";
+    args[8] = "ws2_32.lib";
+}
 
 pub fn prepareWindowsEntryRetry(
     allocator: std.mem.Allocator,
@@ -9,29 +29,28 @@ pub fn prepareWindowsEntryRetry(
     if (initial_args.len < windows_base_arg_count)
         return error.InvalidArgument;
 
-    const entry_arg_count: usize = 3;
+    const entry_arg_count: usize = 1;
     const retry_args = try allocator.alloc(
         []const u8,
         initial_args.len + entry_arg_count,
     );
-    for (0..windows_base_arg_count) |index|
+    const entry_arg_index: usize = 6;
+    for (0..entry_arg_index) |index|
         retry_args[index] = initial_args[index];
-    retry_args[windows_base_arg_count] = "/link";
-    retry_args[windows_base_arg_count + 1] = "/entry:_start";
-    retry_args[windows_base_arg_count + 2] = "/subsystem:console";
-    for (windows_base_arg_count..initial_args.len) |index|
+    retry_args[entry_arg_index] = "/entry:_start";
+    for (entry_arg_index..initial_args.len) |index|
         retry_args[index + entry_arg_count] = initial_args[index];
     return retry_args;
 }
 
 test "Windows entry retry selects the Zorb start symbol" {
-    const initial_args = [_][]const u8{
-        "clang-cl",
-        "/nologo",
+    var initial_args: [windows_base_arg_count + 1][]const u8 = undefined;
+    try populateWindowsBaseArgs(
+        &initial_args,
         "program.obj",
         "/Fe:program.exe",
-        "/defaultlib:kernel32.lib",
-    };
+    );
+    initial_args[windows_base_arg_count] = "/debug";
     const retry_args = try prepareWindowsEntryRetry(
         std.testing.allocator,
         &initial_args,
@@ -44,9 +63,12 @@ test "Windows entry retry selects the Zorb start symbol" {
         "program.obj",
         "/Fe:program.exe",
         "/link",
-        "/entry:_start",
         "/subsystem:console",
-        "/defaultlib:kernel32.lib",
+        "/entry:_start",
+        "kernel32.lib",
+        "ucrt.lib",
+        "ws2_32.lib",
+        "/debug",
     };
     try std.testing.expectEqual(expected_args.len, retry_args.len);
     for (expected_args, retry_args) |expected, actual|
