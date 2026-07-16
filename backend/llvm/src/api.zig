@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const ir = @import("backend_ir.zig");
 const Backend = @import("backend.zig").Backend;
+const link_args_helpers = @import("link_args.zig");
 
 // This library runs inside a compiler linked by the host toolchain. Avoid the
 // default stack-tracing panic path, which depends on private Windows loader
@@ -87,7 +88,10 @@ export fn zorb_llvm_link_object(
         reportError(io, "invalid target linker arguments", error.InvalidArgument);
         return 1;
     }
-    const base_arg_count: usize = if (builtin.os.tag == .linux) 5 else 4;
+    const base_arg_count: usize = if (builtin.os.tag == .linux)
+        5
+    else
+        link_args_helpers.windows_base_arg_count;
     const extra_arg_count: usize = @intCast(native_arg_count);
     const link_args = std.heap.c_allocator.alloc(
         []const u8,
@@ -170,6 +174,45 @@ export fn zorb_llvm_link_object(
             retry_args[base_arg_count + 1 + index] =
                 link_args[base_arg_count + index];
         }
+        const retry_result = std.process.run(std.heap.c_allocator, io, .{
+            .argv = retry_args,
+            .stdout_limit = .limited(max_linker_output_bytes),
+            .stderr_limit = .limited(max_linker_output_bytes),
+            .timeout = linker_timeout,
+        }) catch |err| {
+            std.Io.File.stdout().writeStreamingAll(io, link_result.stdout) catch {};
+            std.Io.File.stderr().writeStreamingAll(io, link_result.stderr) catch {};
+            reportError(io, "target linker retry failed", err);
+            return 1;
+        };
+        defer std.heap.c_allocator.free(retry_result.stdout);
+        defer std.heap.c_allocator.free(retry_result.stderr);
+        linked = switch (retry_result.term) {
+            .exited => |code| code == 0,
+            else => false,
+        };
+        if (linked) {
+            std.Io.File.stdout().writeStreamingAll(io, retry_result.stdout) catch {};
+            std.Io.File.stderr().writeStreamingAll(io, retry_result.stderr) catch {};
+        } else {
+            std.Io.File.stdout().writeStreamingAll(io, link_result.stdout) catch {};
+            std.Io.File.stderr().writeStreamingAll(io, link_result.stderr) catch {};
+            std.Io.File.stdout().writeStreamingAll(io, retry_result.stdout) catch {};
+            std.Io.File.stderr().writeStreamingAll(io, retry_result.stderr) catch {};
+            return 1;
+        }
+    } else if (!linked and builtin.os.tag == .windows) {
+        // Hosted programs normally link through the CRT's `main` entry point.
+        // Runtime-style programs expose `_start` directly, so retry those with
+        // an explicit console entry point after the normal link fails.
+        const retry_args = link_args_helpers.prepareWindowsEntryRetry(
+            std.heap.c_allocator,
+            link_args,
+        ) catch |err| {
+            reportError(io, "unable to prepare target linker retry", err);
+            return 1;
+        };
+        defer std.heap.c_allocator.free(retry_args);
         const retry_result = std.process.run(std.heap.c_allocator, io, .{
             .argv = retry_args,
             .stdout_limit = .limited(max_linker_output_bytes),
