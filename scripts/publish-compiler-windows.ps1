@@ -4,7 +4,8 @@ $ErrorActionPreference = "Stop"
 $RootDir = Split-Path -Parent $PSScriptRoot
 $ProjectPath = Join-Path $RootDir "seed/csharp/Zorb.Compiler.csproj"
 $DriverEntry = Join-Path $RootDir "compiler/driver/main.zorb"
-$Stage0 = Join-Path $RootDir "seed/csharp/bin/Release/net8.0/Zorb.Compiler.exe"
+$Stage0OutputDir = Join-Path $RootDir "build/stage0-windows"
+$Stage0Assembly = Join-Path $Stage0OutputDir "Zorb.Compiler.dll"
 $BackendDir = Join-Path $RootDir "backend/llvm"
 $OutputDir = if ($args.Count -ge 1) {
     $args[0]
@@ -41,9 +42,13 @@ function Resolve-LlvmLibDir {
 
 $LlvmLibDir = Resolve-LlvmLibDir -PreferredDir $LlvmLibDir -SearchRoot $LlvmPrefix
 
-dotnet build $ProjectPath --configuration Release --nologo
+New-Item -ItemType Directory -Force -Path $Stage0OutputDir | Out-Null
+dotnet build $ProjectPath --configuration Release --nologo --output $Stage0OutputDir
 if ($LASTEXITCODE -ne 0) {
     throw "C# recovery stage build failed with exit code $LASTEXITCODE."
+}
+if (-not (Test-Path -LiteralPath $Stage0Assembly -PathType Leaf)) {
+    throw "C# recovery stage assembly was not produced at '$Stage0Assembly'."
 }
 
 Push-Location $BackendDir
@@ -68,7 +73,7 @@ if (-not $BackendApi) {
 $LlvmImportLibrary = Join-Path $LlvmLibDir "LLVM-C.lib"
 $NativeFlags = "`"$BackendApi`" `"$LlvmImportLibrary`""
 $CompilerOutput = Join-Path $OutputDir "zorb.exe"
-& $Stage0 build $DriverEntry --target host-windows -o $CompilerOutput --native-flags $NativeFlags
+& dotnet $Stage0Assembly build $DriverEntry --target host-windows -o $CompilerOutput --native-flags $NativeFlags
 if ($LASTEXITCODE -ne 0) {
     throw "Integrated Zorb compiler build failed with exit code $LASTEXITCODE."
 }
