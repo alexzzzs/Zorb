@@ -1,0 +1,43 @@
+fn sum_for(limit: i64) -> i64 {
+    total: i64 = 0
+    for index: i64 = 0; index < limit; index = index + 1 {
+        if index == 2 {
+            continue
+        }
+        total = total + index
+        if total > 20 {
+            break
+        }
+    }
+    return total
+}
+
+fn nested_for(outer_limit: i64, inner_limit: i64) -> i64 {
+    total: i64 = 0
+    for outer: i64 = 0; outer < outer_limit; outer = outer + 1 {
+        for inner: i64 = 0; inner < inner_limit; inner = inner + 1 {
+            if inner == 1 {
+                continue
+            }
+            total = total + inner
+            if total > 10 {
+                break
+            }
+        }
+        if outer == 2 {
+            break
+        }
+    }
+    return total
+}
+
+fn empty_for() -> i64 {
+    value: i64 = 0
+    for ;; {
+        value = value + 1
+        if value == 2 {
+            break
+        }
+    }
+    return value
+}

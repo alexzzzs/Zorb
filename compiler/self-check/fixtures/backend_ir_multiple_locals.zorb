@@ -1,0 +1,6 @@
+fn combine(lhs: i32, rhs: i32) -> i32 {
+    first: i32 = lhs + rhs
+    second: i32 = first + 1
+    first = second * 2
+    return first + second
+}

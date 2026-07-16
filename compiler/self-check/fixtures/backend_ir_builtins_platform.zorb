@@ -1,0 +1,32 @@
+fn integer_size() -> i64 {
+    return Builtin.sizeof(i64)
+}
+
+fn platform_code() -> i32 {
+    if Builtin.IsLinux {
+        if Builtin.IsX86_64 {
+            return 64
+        }
+        if Builtin.IsAArch64 {
+            return 65
+        }
+    }
+    if Builtin.IsWindows {
+        return 32
+    }
+    return 0
+}
+
+fn invoke_syscall(number: i64, argument: i64) -> i64 {
+    return syscall(number, argument)
+}
+
+fn asm_increment() -> i64 {
+    value: i64 = 7
+    asm {
+        "addq $1, %0"
+        : "=r"(value)
+        : "0"(value)
+    }
+    return value
+}

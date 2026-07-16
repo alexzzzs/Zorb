@@ -1,0 +1,34 @@
+error Failed = 7
+
+fn may_fail(flag: i64) !i64 {
+    if flag != 0 {
+        return error.Failed
+    }
+    return 9
+}
+
+fn recover(flag: i64) -> i64 {
+    return may_fail(flag) catch |err| {
+        code: i32 = err
+        42
+    }
+}
+
+fn propagate(flag: i64) !i64 {
+    return may_fail(flag) catch |err| {
+        return err
+    }
+}
+
+fn discard(flag: i64) -> i64 {
+    may_fail(flag) catch |err| {
+        code: i32 = err
+    }
+    return 1
+}
+
+fn no_result() {}
+
+fn forward(flag: i64) !i64 {
+    return may_fail(flag)
+}

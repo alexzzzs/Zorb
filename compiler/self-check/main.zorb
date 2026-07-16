@@ -3,15 +3,16 @@ import "../../runtime/std/process.zorb"
 import "../../runtime/std/str.zorb"
 import "../frontend/diagnostic.zorb"
 import "../frontend/session.zorb"
+import "../ast.zorb"
 import "../backend-ir/lowering.zorb"
 import "../backend-ir/model.zorb"
 import "../backend-ir/serialization.zorb"
 
 // A session retains every source, token stream, AST arena, and direct-import
-// projection for the whole graph. Four MiB was sufficient for a single file
-// but not for the self-check graph; keep bootstrap capacity explicit until
-// measured memory limits replace this conservative hosted default.
-const ZORB_SELF_CHECK_HEAP_BYTES: i64 = 67108864
+// projection and backend IR for the whole compiler graph. The bump allocator
+// retains superseded CFG growth buffers, so keep ample hosted bootstrap space
+// until the production driver can size arenas from the source graph.
+const ZORB_SELF_CHECK_HEAP_BYTES: i64 = 1073741824
 const ZORB_SELF_CHECK_USAGE_EXIT: i64 = 64
 const ZORB_SELF_CHECK_FAILURE_EXIT: i64 = 1
 const ZORB_SELF_CHECK_JSON_OPTION: string = "--json"
@@ -39,15 +40,22 @@ fn zself_emit_backend_ir(target_triple: string, output_path: string, entry: stri
     }
 
     target: ZBackendIrTarget = ZBackendIrTarget.init(target_triple)
+    lowering_ast: *ZAstModule = ZFrontendSession.lowering_module(&session) catch |err| {
+        std.io.eprint("unable to prepare source graph for backend IR lowering\n")
+        ZFrontendSession.deinit(&session)
+        return ZORB_SELF_CHECK_FAILURE_EXIT
+    }
     module: ZBackendIrModule = ZBackendIrLowering.lower_module(
         &session.heap,
-        ZFrontendSession.entry_module(&session),
+        lowering_ast,
         entry,
         target,
         "llvm_ir",
         output_path
     ) catch |err| {
         std.io.eprint("native backend IR lowering does not support this source yet\n")
+        std.io.eprint_i64(err)
+        std.io.eprint("\n")
         ZFrontendSession.deinit(&session)
         return ZORB_SELF_CHECK_FAILURE_EXIT
     }

@@ -1,0 +1,23 @@
+fn narrow(value: i64) -> i8 {
+    return cast(i8, value)
+}
+
+fn sign_extend(value: i8) -> i64 {
+    return cast(i64, value)
+}
+
+fn zero_extend(value: u8) -> u64 {
+    return cast(u64, value)
+}
+
+fn pointer_to_integer(value: *u8) -> u64 {
+    return cast(u64, value)
+}
+
+fn integer_to_pointer(value: u64) -> *u8 {
+    return cast(*u8, value)
+}
+
+fn null_pointer() -> *u8 {
+    return cast(*u8, 0)
+}

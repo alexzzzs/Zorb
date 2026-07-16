@@ -7,20 +7,39 @@ set -euo pipefail
 
 readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly MANIFEST_PATH="$REPOSITORY_ROOT/bootstrap/manifest.json"
-readonly LOCAL_ARTIFACT_DIR="$REPOSITORY_ROOT/bootstrap/artifacts"
+readonly DEFAULT_LOCAL_ARTIFACT_DIR="$REPOSITORY_ROOT/bootstrap/artifacts"
 readonly DEFAULT_CACHE_DIR="$REPOSITORY_ROOT/build/bootstrap"
 
 usage() {
-    printf 'usage: %s <target> [--cache-dir <directory>]\n' "$0"
+    printf 'usage: %s <target> [--artifact-dir <directory>] [--cache-dir <directory>]\n' "$0"
 }
+
+verify_sha256() {
+    local artifact_path="$1"
+    local expected_sha256="$2"
+
+    [[ "$expected_sha256" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+    printf '%s  %s\n' "$expected_sha256" "$artifact_path" | sha256sum --check --status
+}
+
+if (($# == 1)) && [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
 
 (($# >= 1)) || { usage >&2; exit 64; }
 target="$1"
 shift
+artifact_dir="$DEFAULT_LOCAL_ARTIFACT_DIR"
 cache_dir="$DEFAULT_CACHE_DIR"
 
 while (($# > 0)); do
     case "$1" in
+        --artifact-dir)
+            (($# >= 2)) || { usage >&2; exit 64; }
+            artifact_dir="$2"
+            shift 2
+            ;;
         --cache-dir)
             (($# >= 2)) || { usage >&2; exit 64; }
             cache_dir="$2"
@@ -33,8 +52,21 @@ while (($# > 0)); do
     esac
 done
 
-for candidate in "$LOCAL_ARTIFACT_DIR/$target/zorb-self-check" "$LOCAL_ARTIFACT_DIR/$target/zorb-self-check.exe"; do
+for candidate in "$artifact_dir/$target/zorb-self-check" "$artifact_dir/$target/zorb-self-check.exe"; do
     if [[ -f "$candidate" ]]; then
+        checksum_path="$candidate.sha256"
+        if [[ ! -f "$checksum_path" ]]; then
+            printf 'Local bootstrap seed checksum is missing for %s.\n' "$candidate" >&2
+            exit 65
+        fi
+
+        sha256=""
+        read -r sha256 _ < "$checksum_path" || true
+        if ! verify_sha256 "$candidate" "$sha256"; then
+            printf 'Local bootstrap seed checksum verification failed for %s.\n' "$candidate" >&2
+            exit 65
+        fi
+
         printf '%s\n' "$candidate"
         exit 0
     fi
@@ -53,7 +85,7 @@ command -v curl >/dev/null || { printf 'curl is required to download bootstrap s
 mkdir -p "$cache_dir"
 artifact_path="$cache_dir/zorb-bootstrap-$target"
 curl --fail --location --silent --show-error "$url" --output "$artifact_path"
-printf '%s  %s\n' "$sha256" "$artifact_path" | sha256sum --check --status || {
+verify_sha256 "$artifact_path" "$sha256" || {
     rm -f "$artifact_path"
     printf 'Bootstrap seed checksum verification failed for %s.\n' "$target" >&2
     exit 65

@@ -1,0 +1,44 @@
+fn pointer_local(value: i64) -> i64 {
+    local: i64 = value
+    pointer: *i64 = &local
+    return *pointer + pointer[0]
+}
+
+fn pointer_parameter(pointer: *i64, index: i64) -> i64 {
+    return pointer[index]
+}
+
+fn identity_pointer(pointer: *i64) -> *i64 {
+    return pointer
+}
+
+fn pointer_call(pointer: *i64) -> i64 {
+    copy: *i64 = identity_pointer(pointer)
+    return *copy
+}
+
+fn array_copy() -> i64 {
+    original: [3]i64 = [3]i64{10, 20, 30}
+    copied: [3]i64 = original
+    copied[1] = 99
+    return original[1] + copied[1]
+}
+
+fn array_decay() -> i64 {
+    values: [2]i64 = [2]i64{7, 8}
+    pointer: *i64 = &values
+    return pointer[1]
+}
+
+fn first_array(values: [2]i64) -> i64 {
+    return values[0]
+}
+
+fn make_array() -> [2]i64 {
+    return [2]i64{40, 2}
+}
+
+fn array_call() -> i64 {
+    values: [2]i64 = make_array()
+    return first_array(values)
+}

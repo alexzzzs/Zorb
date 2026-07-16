@@ -1,0 +1,17 @@
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn apply_i64(callback: fn(i64) -> i64, value: i64) -> i64 {
+    return callback(value)
+}
+
+fn generic_values() -> i64 {
+    number: i64 = identity<i64>(41)
+    flag: bool = identity<bool>(true)
+    callback: fn(i64) -> i64 = (identity<i64>)
+    if flag {
+        return apply_i64(callback, number)
+    }
+    return 0
+}

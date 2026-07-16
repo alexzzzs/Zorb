@@ -1,8 +1,5 @@
 const std = @import("std");
-const ir = @import("backend_ir.zig");
-const Backend = @import("backend.zig").Backend;
-
-const max_ir_bytes = 64 * 1024 * 1024;
+const api = @import("api.zig");
 
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
@@ -14,35 +11,7 @@ pub fn main(init: std.process.Init) !void {
         return error.InvalidArguments;
     }
 
-    const input = try std.Io.Dir.cwd().readFileAlloc(
-        init.io,
-        args[1],
-        init.gpa,
-        .limited(max_ir_bytes),
-    );
-    defer init.gpa.free(input);
-
-    const parsed = std.json.parseFromSlice(ir.Module, init.gpa, input, .{
-        .ignore_unknown_fields = false,
-    }) catch |err| {
-        try writeError(init.io, "failed to parse backend IR", err);
-        return err;
-    };
-    defer parsed.deinit();
-
-    var diagnostic_buffer: [4096]u8 = undefined;
-    var diagnostics: std.Io.Writer = .fixed(&diagnostic_buffer);
-    parsed.value.validate(&diagnostics) catch |err| {
-        try std.Io.File.stderr().writeStreamingAll(init.io, diagnostics.buffered());
-        return err;
-    };
-
-    var backend = Backend.init(init.gpa, &parsed.value) catch |err| {
-        try writeError(init.io, "failed to initialize LLVM backend", err);
-        return err;
-    };
-    defer backend.deinit();
-    backend.emit() catch |err| {
+    api.emitFile(init.gpa, init.io, args[1]) catch |err| {
         try writeError(init.io, "LLVM backend emission failed", err);
         return err;
     };

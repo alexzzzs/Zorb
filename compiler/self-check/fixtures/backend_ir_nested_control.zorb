@@ -1,0 +1,49 @@
+fn nested_control(limit: i64) -> i64 {
+    value: i64 = 0
+    while value < limit {
+        step: i64 = 2
+        if value == 2 {
+            value = value + step
+            continue
+        }
+        if value == 4 {
+            break
+        }
+        {
+            step: i64 = 1
+            value = value + step
+        }
+    }
+    return value
+}
+
+fn nested_loops(outer_limit: i64, inner_limit: i64) -> i64 {
+    value: i64 = 0
+    while value < outer_limit {
+        inner: i64 = 0
+        while inner < inner_limit {
+            inner = inner + 1
+            if inner == 2 {
+                break
+            }
+        }
+        value = value + inner
+        value = value + 1
+        if value > 4 {
+            continue
+        }
+    }
+    return value
+}
+
+fn nested_else_if(value: i64, fallback: i64) -> i64 {
+    result: i64 = 0
+    if value < 0 {
+        result = fallback
+    } else if value == 0 {
+        result = fallback + 1
+    } else {
+        result = value
+    }
+    return result
+}

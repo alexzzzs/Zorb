@@ -1,0 +1,67 @@
+error Failed = 11
+
+fn add_i64(lhs: i64, rhs: i64) -> i64 {
+    return lhs + rhs
+}
+
+fn less_u8(lhs: u8, rhs: u8) -> bool {
+    return lhs < rhs
+}
+
+fn call_less(value: u8) -> bool {
+    return less_u8(value, 2)
+}
+
+fn identity_bool(value: bool) -> bool {
+    return value
+}
+
+fn compare_through_call(lhs: u8, rhs: u8) -> bool {
+    return identity_bool(lhs < rhs)
+}
+
+fn choose_u16(flag: bool, value: u16) -> u16 {
+    if flag {
+        return value
+    }
+    return 3
+}
+
+fn divide_u64(lhs: u64, rhs: u64) -> u64 {
+    return lhs / rhs
+}
+
+fn consume_i32(value: i32) {}
+
+fn maybe_small(flag: bool) !i16 {
+    if flag {
+        return error.Failed
+    }
+    return 5
+}
+
+fn recover_small(flag: bool) -> i16 {
+    return maybe_small(flag) catch |err| {
+        observed: i32 = err
+        6
+    }
+}
+
+fn maybe_big(flag: bool) !u64 {
+    if flag {
+        return error.Failed
+    }
+    return 90
+}
+
+fn recover_big(flag: bool) -> u64 {
+    return maybe_big(flag) catch |err| {
+        observed: i32 = err
+        91
+    }
+}
+
+fn local_only_scalar() -> i64 {
+    temporary: u32 = 12
+    return 1
+}

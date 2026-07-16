@@ -3,14 +3,15 @@ $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent $PSScriptRoot
 $ProjectPath = Join-Path $RootDir "seed/csharp/Zorb.Compiler.csproj"
+$DriverEntry = Join-Path $RootDir "compiler/driver/main.zorb"
+$Stage0 = Join-Path $RootDir "seed/csharp/bin/Release/net8.0/Zorb.Compiler.exe"
 $BackendDir = Join-Path $RootDir "backend/llvm"
 $OutputDir = if ($args.Count -ge 1) {
     $args[0]
 } else {
     Join-Path $RootDir "artifacts/compiler/win-x64"
 }
-$Version = $env:VERSION
-$InformationalVersion = $env:INFORMATIONAL_VERSION
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $Zig = if ($env:ZIG) { $env:ZIG } else { "zig" }
 $LlvmPrefix = if ($env:LLVM_PREFIX) { $env:LLVM_PREFIX } else { Join-Path $env:ProgramFiles "LLVM" }
 if (-not (Test-Path -LiteralPath $LlvmPrefix -PathType Container)) {
@@ -40,25 +41,10 @@ function Resolve-LlvmLibDir {
 
 $LlvmLibDir = Resolve-LlvmLibDir -PreferredDir $LlvmLibDir -SearchRoot $LlvmPrefix
 
-$PublishArgs = @(
-  $ProjectPath
-  "-c", "Release"
-  "-r", "win-x64"
-  "--self-contained", "true"
-  "/p:PublishSingleFile=true"
-  "/p:PublishTrimmed=false"
-  "-o", $OutputDir
-)
-
-if ($Version) {
-    $PublishArgs += "/p:Version=$Version"
+dotnet build $ProjectPath --configuration Release --nologo
+if ($LASTEXITCODE -ne 0) {
+    throw "C# recovery stage build failed with exit code $LASTEXITCODE."
 }
-
-if ($InformationalVersion) {
-    $PublishArgs += "/p:InformationalVersion=$InformationalVersion"
-}
-
-dotnet publish @PublishArgs
 
 Push-Location $BackendDir
 try {
@@ -71,8 +57,22 @@ finally {
     Pop-Location
 }
 
-Copy-Item (Join-Path $BackendDir "zig-out/bin/zorb-llvm-backend.exe") $OutputDir -Force
+$BackendApiCandidates = @(
+    (Join-Path $BackendDir "zig-out/lib/zorb-llvm.lib"),
+    (Join-Path $BackendDir "zig-out/lib/libzorb-llvm.a")
+)
+$BackendApi = $BackendApiCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+if (-not $BackendApi) {
+    throw "Zig build did not produce the static zorb-llvm API library."
+}
+$LlvmImportLibrary = Join-Path $LlvmLibDir "LLVM-C.lib"
+$NativeFlags = "`"$BackendApi`" `"$LlvmImportLibrary`""
+$CompilerOutput = Join-Path $OutputDir "zorb.exe"
+& $Stage0 build $DriverEntry --target host-windows -o $CompilerOutput --native-flags $NativeFlags
+if ($LASTEXITCODE -ne 0) {
+    throw "Integrated Zorb compiler build failed with exit code $LASTEXITCODE."
+}
+
 Copy-Item (Join-Path $LlvmPrefix "bin/LLVM-C.dll") $OutputDir -Force
-Copy-Item (Join-Path $LlvmPrefix "bin/ld.lld.exe") $OutputDir -Force
 
 Write-Host "Published Windows compiler to $OutputDir"

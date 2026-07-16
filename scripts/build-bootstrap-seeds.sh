@@ -8,15 +8,13 @@ readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly STAGE0_PROJECT="$REPOSITORY_ROOT/seed/csharp/Zorb.Compiler.csproj"
 readonly STAGE0_BINARY="$REPOSITORY_ROOT/seed/csharp/bin/Release/net8.0/Zorb.Compiler"
 readonly FRONTEND_ENTRY="$REPOSITORY_ROOT/compiler/self-check/main.zorb"
-readonly BACKEND_DIRECTORY="$REPOSITORY_ROOT/backend/llvm"
 readonly DEFAULT_OUTPUT_DIR="$REPOSITORY_ROOT/bootstrap/artifacts"
 
 targets=()
 output_dir="$DEFAULT_OUTPUT_DIR"
-build_backend=true
 
 usage() {
-    printf 'usage: %s [--target <target>]... [--output-dir <directory>] [--skip-backend]\n' "$0"
+    printf 'usage: %s [--target <target>]... [--output-dir <directory>]\n' "$0"
 }
 
 while (($# > 0)); do
@@ -30,10 +28,6 @@ while (($# > 0)); do
             (($# >= 2)) || { usage >&2; exit 64; }
             output_dir="$2"
             shift 2
-            ;;
-        --skip-backend)
-            build_backend=false
-            shift
             ;;
         --help|-h)
             usage
@@ -57,9 +51,6 @@ if ((${#targets[@]} == 0)); then
     esac
 fi
 
-if "$build_backend"; then
-    (cd "$BACKEND_DIRECTORY" && zig build)
-fi
 dotnet build "$STAGE0_PROJECT" --configuration Release --nologo
 
 for target in "${targets[@]}"; do
@@ -80,6 +71,6 @@ for target in "${targets[@]}"; do
     artifact_path="$artifact_dir/$output_name"
     mkdir -p "$artifact_dir"
     "$STAGE0_BINARY" build "$FRONTEND_ENTRY" --target "$target" -o "$artifact_path"
-    sha256sum "$artifact_path" > "$artifact_path.sha256"
+    (cd "$artifact_dir" && sha256sum "$output_name" > "$output_name.sha256")
     printf 'Built %s (%s)\n' "$artifact_path" "$target"
 done

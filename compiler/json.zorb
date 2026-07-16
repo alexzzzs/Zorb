@@ -28,7 +28,7 @@ export fn ZJson.write_bytes(ptr: *u8, length: i64) {
             byte: [1]u8
             byte[0] = ch
             view: []u8 = byte
-            std.io.write(1, view)
+            std.io.write_stdout(view)
         }
         index = index + 1
     }

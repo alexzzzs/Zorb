@@ -29,8 +29,9 @@ internal static partial class Program
             return 1;
         }
 
+        using var nativeFixtureHarness = NativeFixtureHarness.Create(projectRoot);
         foreach (var fixtureDir in fixtureDirs)
-            RunNamedTest(failures, Path.GetFileName(fixtureDir), () => RunFixture(fixtureDir));
+            RunNamedTest(failures, Path.GetFileName(fixtureDir), () => RunFixture(fixtureDir, nativeFixtureHarness));
 
         RunNamedTest(failures, "cli_workflow", () => RunCliWorkflowTests(fixtureRoot));
         RunNamedTest(failures, "fixture_parity_classification", RunFixtureParityClassificationTests);

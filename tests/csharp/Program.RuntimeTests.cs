@@ -6,13 +6,14 @@ using Zorb.Compiler.Semantic;
 
 internal static partial class Program
 {
-    private static void RunFixture(string fixtureDir)
+    private static void RunFixture(string fixtureDir, NativeFixtureHarness nativeFixtureHarness)
     {
         var mainPath = Path.Combine(fixtureDir, "main.zorb");
         if (!File.Exists(mainPath))
             throw new Exception("Fixture is missing main.zorb");
 
         var expectations = LoadFixtureExpectations(fixtureDir);
+        nativeFixtureHarness.Validate(mainPath, expectations);
         var compilation = CompileFixtureForExpectations(mainPath, fixtureDir, expectations);
         AssertFixtureDiagnostics(compilation, expectations);
 

@@ -4,10 +4,10 @@ import "../../../../compiler/backend-ir/serialization.zorb"
 
 fn _start() {
     types_storage: [1]ZBackendIrType = [1]ZBackendIrType{
-        ZBackendIrType{ id: 1, kind: "scalar", scalar: "i32" }
+        ZBackendIrType{ id: 1, kind: "scalar", name: "", scalar: "i32", element_type: 0, length: 0, fields: cast(*ZBackendIrTypeField, 0), field_count: 0, is_packed: false }
     }
     instructions_storage: [1]ZBackendIrInstruction = [1]ZBackendIrInstruction{
-        ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: 42, binary_op: "", compare_op: "", lhs: 0, rhs: 0, callee: 0, arguments: cast(*i64, 0), argument_count: 0 }
+        ZBackendIrInstruction{ id: 1, op: "integer_constant", type_id: 1, integer: 42, text: "", binary_op: "", compare_op: "", cast_op: "", lhs: 0, rhs: 0, callee: 0, arguments: cast(*i64, 0), argument_count: 0, incoming_values: cast(*i64, 0), incoming_blocks: cast(*i64, 0), incoming_count: 0, field_index: 0, source_type: 0, global_id: 0, asm_template: "", constraints: "", output_types: cast(*i64, 0), output_addresses: cast(*i64, 0), output_count: 0 }
     }
     terminator: ZBackendIrTerminator = ZBackendIrTerminator{ op: "return_value", value: 1, target: 0, condition: 0, true_target: 0, false_target: 0 }
     blocks_storage: [1]ZBackendIrBlock = [1]ZBackendIrBlock{
@@ -26,6 +26,8 @@ fn _start() {
         output_path: "out.ll",
         types: types_storage,
         type_count: 1,
+        globals: cast(*ZBackendIrGlobal, 0),
+        global_count: 0,
         functions: functions_storage,
         function_count: 1
     }

@@ -3,14 +3,27 @@
 import "str.zorb"
 export struct std.io {}
 
+std_io_stdout_fd: i32 = 1
+
 // Windows Externs
 import c "windows.h"
 extern fn GetStdHandle(nStdHandle: i32) -> i64
 extern fn ReadFile(h: i64, buf: *i8, len: u32, read: *u32, overlapped: i64) -> i32
 extern fn WriteFile(h: i64, buf: *i8, len: u32, written: *u32, overlapped: i64) -> i32
+extern fn _get_osfhandle(fd: i32) -> i64
 
 fn std.io.stdout_fd() -> i32 {
-    return 1
+    return std_io_stdout_fd
+}
+
+export fn std.io.set_stdout_fd(fd: i32) -> i32 {
+    previous: i32 = std_io_stdout_fd
+    std_io_stdout_fd = fd
+    return previous
+}
+
+export fn std.io.write_stdout(buf: []u8) {
+    std.io.write(std.io.stdout_fd(), buf)
 }
 
 fn std.io.stderr_fd() -> i32 {
@@ -127,13 +140,16 @@ export fn std.io.write(fd: i32, buf: []u8) {
         }
 
         handle: i64 = 0
-        if fd == std.io.stdout_fd() {
+        if fd == 1 {
             handle = GetStdHandle(-11)
         }
-        if fd == std.io.stderr_fd() {
+        if fd == 2 {
             handle = GetStdHandle(-12)
         }
-        if handle != 0 {
+        if fd != 1 && fd != 2 {
+            handle = _get_osfhandle(fd)
+        }
+        if handle != 0 && handle != -1 {
             written: u32 = 0
             WriteFile(handle, cast(*i8, buf.ptr), windows_len, &written, 0)
         }
@@ -171,16 +187,19 @@ export fn std.io.read(fd: i32, buf: []u8) -> i64 {
         }
 
         handle: i64 = 0
-        if fd == std.io.stdout_fd() {
+        if fd == 1 {
             handle = GetStdHandle(-11)
         }
-        if fd == std.io.stderr_fd() {
+        if fd == 2 {
             handle = GetStdHandle(-12)
         }
         if fd == 0 {
             handle = GetStdHandle(-10)
         }
-        if handle == 0 {
+        if fd != 0 && fd != 1 && fd != 2 {
+            handle = _get_osfhandle(fd)
+        }
+        if handle == 0 || handle == -1 {
             return -1
         }
 

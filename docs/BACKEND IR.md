@@ -87,42 +87,19 @@ LLVM.
 
 The native frontend can emit this contract with
 `zorb-self-check --emit-backend-ir <target-triple> <output-path> <entry.zorb>`.
-Its current supported lowering slice is one or more `i32` or `i64` functions
-sharing the same scalar type and using any number of same-typed parameters.
-Functions may compose integer literals, parameters, direct same-scalar calls,
-unary negation, comparisons, and arithmetic, remainder, bitwise, or shift
-operations. Lowering emits expression values in post-order so every
-instruction references an earlier function-local value. Supported statements
-currently include scalar locals, one reassignment, conditional returns, and a
-single scalar-local `while` shape. Unsupported AST shapes fail explicitly
-while native lowering is expanded incrementally.
-One initialized scalar local before the return is supported through `alloca`,
-`store`, and `load` instructions. That local may be reassigned once before the
-return; both the assignment value and return expression use the same recursive
-expression lowering. Broader statement and local-variable lowering remains
-incremental.
+Native lowering covers the compiler's admitted language surface: scalar and
+aggregate types, globals and constants, declarations and direct/function-value
+calls, locals and assignments, casts, pointers, arrays, slices and strings,
+struct/enum/union/error-union operations, inline assembly, and structured
+control flow including loops, switch, match, catch, break, and continue.
+Generic declarations are monomorphized before or during lowering.
 
-Unary integer negation is compositional: the operand is recursively lowered,
-then the frontend emits an integer zero and a `sub` instruction. This supports
-both negative literals and negated nested expressions without a special IR op.
+Lowering is graph-wide. The frontend concatenates owning declarations from all
+retained source modules, rebases their compact arena references, and omits
+metadata-only imported projections. Parameters are materialized once into
+stable locals so assignments and address-taking use one representation.
 
-Boolean functions and equality or signed ordered comparisons lower to the
-backend `compare` instruction with the canonical `compare_op` names.
-Integer modules intern their value scalar as type 1 and `bool` as type 2;
-boolean-only modules reuse type 1. Expression lowering receives both IDs
-explicitly so comparisons can produce condition values without changing the
-surrounding function ABI.
-
-A top-level `if/else` whose two branches return lowers to three blocks. The
-entry block evaluates the condition and uses `conditional_branch`; the `then`
-and `else` blocks independently lower and return their expressions.
-The same graph shape supports a top-level `if` whose body returns followed by
-a fallthrough return; its false edge targets a `continuation` block.
-
-A scalar local initialized before a top-level `while`, reassigned one or more
-times in its body, and returned afterward lowers to `entry`, `condition`, `body`, and `exit`
-blocks. The entry and body use `branch`; the condition uses
-`conditional_branch` to either repeat the body or continue to the exit.
-An explicit `continue` after the body's assignment sequence terminates the body
-with the same branch back to the condition block.
-An explicit `break` instead terminates the body with a branch to the exit block.
+The production driver serializes this contract to a private temporary file and
+calls `zorb_llvm_emit_file` from the statically linked backend API. The JSON
+boundary remains useful for schema validation and bootstrap fixed-point tests;
+it is not a separate user-facing backend process.

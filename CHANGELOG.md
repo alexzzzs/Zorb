@@ -4,10 +4,57 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- A production compiler driver written in Zorb with `check`, `build`, and
+  `run` commands, backed by the in-process Zig/LLVM backend through a static C
+  ABI library.
+- Native Zorb implementations of frontend sessions, Backend IR modeling,
+  serialization, and AST-to-IR lowering for the full admitted fixture corpus,
+  including control flow, aggregates, generics, error unions, function values,
+  inline assembly, globals, and target builtins.
+- A native fixture harness that bootstraps the integrated compiler and runs the
+  normal fixture suite through native frontend and IR lowering paths.
+- Generation-2/generation-3 fixed-point verification for byte-identical native
+  compiler rebuilds.
+- Standalone compiler publishers for Linux and Windows. Linux release builds
+  statically link LLVM; Windows packages include the required LLVM C API DLL.
+- Native Backend IR envelope and scalar-function runtime fixtures, plus
+  expanded self-check coverage for the native lowerer.
+
 ### Changed
 
 - The compiler version now advances to the `0.2.2-dev` line after the
   `0.2.1` release.
+- The Zorb-written frontend and IR lowerer are now the normal compiler path;
+  the C# compiler remains as the checked-in recovery stage used to bootstrap a
+  native compiler from a source checkout.
+- The LLVM backend can now be embedded as a library instead of requiring a
+  separate backend process.
+- Compiler bootstrap, release packaging, CI smoke tests, and self-hosting
+  documentation now target the integrated native `zorb` executable.
+- Bootstrap seed generation now emits portable checksums without performing an
+  unrelated LLVM backend build, and seed resolution accepts a custom artifact
+  directory.
+
+### Fixed
+
+- Native IR lowering now passes the complete fixture suite, including runtime
+  inline-assembly execution and the previously unsupported aggregate and
+  control-flow cases.
+- Native compiler rebuilds now clean up intermediate object files and temporary
+  output directories instead of leaving build artifacts behind.
+- CI jobs now restore and run the actual C# test project instead of the removed
+  `tests/csharp/tests/csharp.csproj` path.
+- Local bootstrap seeds are now rejected when their checksum is missing,
+  malformed, or does not match the artifact; downloaded seeds use the same
+  verification path.
+
+### Removed
+
+- Obsolete standalone LLVM smoke, legacy parser-demo, sample-source, and
+  redundant slice self-check files that were not imported, tested, documented,
+  or packaged.
 
 ## [0.2.1] - July 5, 2026
 

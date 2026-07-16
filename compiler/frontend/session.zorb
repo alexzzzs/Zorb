@@ -71,6 +71,214 @@ export fn ZFrontendSession.entry_module(self: *ZFrontendSession) -> *ZAstModule 
     return self.sources.files[0].module
 }
 
+fn zsession_rebase_index(index: i64, base: i64) -> i64 {
+    if index == ZAstNoIndex { return ZAstNoIndex }
+    return index + base
+}
+
+// Keep aggregate temporaries out of the arena-copy loops. Native LLVM allocas
+// inside a loop remain live until the function returns, so placing a full AST
+// node temporary in the loop can exhaust the process stack on compiler-sized
+// source graphs.
+fn zsession_copy_parameter(destination: *ZAstParam, source: *ZAstParam, type_base: i64) {
+    destination[0] = source[0]
+    destination[0].type_index = zsession_rebase_index(destination[0].type_index, type_base)
+}
+
+fn zsession_copy_member(destination: *ZAstMember, source: *ZAstMember, type_base: i64, expression_base: i64) {
+    destination[0] = source[0]
+    destination[0].type_index = zsession_rebase_index(destination[0].type_index, type_base)
+    destination[0].value_expr = zsession_rebase_index(destination[0].value_expr, expression_base)
+    destination[0].attribute_expr = zsession_rebase_index(destination[0].attribute_expr, expression_base)
+}
+
+fn zsession_copy_statement(destination: *ZAstStmt, source: *ZAstStmt, type_base: i64, statement_base: i64, expression_base: i64, argument_base: i64) {
+    destination[0] = source[0]
+    destination[0].type_index = zsession_rebase_index(destination[0].type_index, type_base)
+    destination[0].expr_index = zsession_rebase_index(destination[0].expr_index, expression_base)
+    destination[0].value_expr = zsession_rebase_index(destination[0].value_expr, expression_base)
+    destination[0].attribute_expr = zsession_rebase_index(destination[0].attribute_expr, expression_base)
+    destination[0].catch_owner = zsession_rebase_index(destination[0].catch_owner, expression_base)
+    destination[0].asm_output_start = destination[0].asm_output_start + argument_base
+    destination[0].asm_input_start = destination[0].asm_input_start + argument_base
+    destination[0].asm_clobber_start = destination[0].asm_clobber_start + argument_base
+    destination[0].child_start = destination[0].child_start + statement_base
+}
+
+fn zsession_copy_expression(destination: *ZAstExpr, source: *ZAstExpr, type_base: i64, statement_base: i64, expression_base: i64, argument_base: i64, field_base: i64) {
+    destination[0] = source[0]
+    destination[0].left = zsession_rebase_index(destination[0].left, expression_base)
+    destination[0].right = zsession_rebase_index(destination[0].right, expression_base)
+    destination[0].type_index = zsession_rebase_index(destination[0].type_index, type_base)
+    if destination[0].kind == ZAstExprCatch {
+        destination[0].arg_start = destination[0].arg_start + statement_base
+    } else {
+        destination[0].arg_start = destination[0].arg_start + argument_base
+    }
+    destination[0].field_start = zsession_rebase_index(destination[0].field_start, field_base)
+}
+
+fn zsession_copy_literal_field(destination: *ZAstLiteralField, source: *ZAstLiteralField, field_base: i64, expression_base: i64) {
+    destination[0] = source[0]
+    destination[0].next_index = zsession_rebase_index(destination[0].next_index, field_base)
+    destination[0].value_expr = zsession_rebase_index(destination[0].value_expr, expression_base)
+}
+
+fn zsession_copy_declaration(destination: *ZAstDecl, source: *ZAstDecl, type_base: i64, generic_base: i64, param_base: i64, member_base: i64, statement_base: i64, expression_base: i64) {
+    destination[0] = source[0]
+    destination[0].type_index = zsession_rebase_index(destination[0].type_index, type_base)
+    destination[0].return_type_index = zsession_rebase_index(destination[0].return_type_index, type_base)
+    destination[0].init_expr = zsession_rebase_index(destination[0].init_expr, expression_base)
+    destination[0].attribute_expr = zsession_rebase_index(destination[0].attribute_expr, expression_base)
+    destination[0].generic_param_start = destination[0].generic_param_start + generic_base
+    destination[0].param_start = destination[0].param_start + param_base
+    destination[0].member_start = destination[0].member_start + member_base
+    destination[0].stmt_start = destination[0].stmt_start + statement_base
+}
+
+// Backend lowering needs owning declarations, not the metadata-only import
+// projections used while checking one source file. Build a graph-local AST
+// view after semantic checking by concatenating every retained module and
+// rebasing its compact arena indexes. Imported projections are omitted because
+// their defining declarations are present elsewhere in the source graph.
+export fn ZFrontendSession.lowering_module(self: *ZFrontendSession) !*ZAstModule {
+    storage: *u8 = std.mem.HeapAllocator.alloc(
+        &self.heap, Builtin.sizeof(ZAstModule)
+    ) catch |err| { return error.OutOfMemory }
+    result: *ZAstModule = cast(*ZAstModule, storage)
+    declaration_capacity: i64 = 16
+    type_capacity: i64 = 0
+    generic_capacity: i64 = 0
+    param_capacity: i64 = 0
+    member_capacity: i64 = 0
+    statement_capacity: i64 = 0
+    expression_capacity: i64 = 0
+    argument_capacity: i64 = 0
+    field_capacity: i64 = 0
+    capacity_source_index: i64 = 0
+    while capacity_source_index < self.sources.len {
+        capacity_source: *ZAstModule = self.sources.files[capacity_source_index].module
+        declaration_capacity = declaration_capacity + capacity_source.len
+        type_capacity = type_capacity + capacity_source.type_count
+        generic_capacity = generic_capacity + capacity_source.generic_param_count_total
+        param_capacity = param_capacity + capacity_source.param_count_total
+        member_capacity = member_capacity + capacity_source.member_count_total
+        statement_capacity = statement_capacity + capacity_source.stmt_count_total
+        expression_capacity = expression_capacity + capacity_source.expr_count
+        argument_capacity = argument_capacity + capacity_source.expr_arg_count
+        field_capacity = field_capacity + capacity_source.literal_field_count
+        capacity_source_index = capacity_source_index + 1
+    }
+    if type_capacity > declaration_capacity { declaration_capacity = type_capacity }
+    if generic_capacity > declaration_capacity { declaration_capacity = generic_capacity }
+    if param_capacity > declaration_capacity { declaration_capacity = param_capacity }
+    if member_capacity > declaration_capacity { declaration_capacity = member_capacity }
+    if statement_capacity > declaration_capacity { declaration_capacity = statement_capacity }
+    if expression_capacity > declaration_capacity { declaration_capacity = expression_capacity }
+    if argument_capacity > declaration_capacity { declaration_capacity = argument_capacity }
+    if field_capacity > declaration_capacity { declaration_capacity = field_capacity }
+    result[0] = ZAstModule.init(
+        &self.heap, declaration_capacity
+    ) catch |err| { return err }
+    ZAstModule.reserve_arenas(
+        result, &self.heap, declaration_capacity
+    ) catch |err| { return err }
+
+    source_index: i64 = 0
+    while source_index < self.sources.len {
+        source: *ZAstModule = self.sources.files[source_index].module
+        type_base: i64 = result.type_count
+        generic_base: i64 = result.generic_param_count_total
+        param_base: i64 = result.param_count_total
+        member_base: i64 = result.member_count_total
+        statement_base: i64 = result.stmt_count_total
+        expression_base: i64 = result.expr_count
+        argument_base: i64 = result.expr_arg_count
+        field_base: i64 = result.literal_field_count
+
+        index: i64 = 0
+        while index < source.type_count {
+            result.types[result.type_count] = source.types[index]
+            result.types[result.type_count].scope_declaration_start = zsession_rebase_index(
+                source.types[index].scope_declaration_start, statement_base
+            )
+            result.types[result.type_count].scope_statement = zsession_rebase_index(
+                source.types[index].scope_statement, statement_base
+            )
+            result.type_count = result.type_count + 1
+            index = index + 1
+        }
+        index = 0
+        while index < source.generic_param_count_total {
+            destination: i64 = result.generic_param_count_total
+            result.generic_params[destination] = source.generic_params[index]
+            result.generic_default_types[destination] = zsession_rebase_index(
+                source.generic_default_types[index], type_base
+            )
+            result.generic_param_count_total = result.generic_param_count_total + 1
+            index = index + 1
+        }
+        index = 0
+        while index < source.param_count_total {
+            zsession_copy_parameter(&result.params[result.param_count_total], &source.params[index], type_base)
+            result.param_count_total = result.param_count_total + 1
+            index = index + 1
+        }
+        index = 0
+        while index < source.member_count_total {
+            zsession_copy_member(&result.members[result.member_count_total], &source.members[index], type_base, expression_base)
+            result.member_count_total = result.member_count_total + 1
+            index = index + 1
+        }
+        index = 0
+        while index < source.stmt_count_total {
+            zsession_copy_statement(&result.stmts[result.stmt_count_total], &source.stmts[index], type_base, statement_base, expression_base, argument_base)
+            result.stmt_count_total = result.stmt_count_total + 1
+            index = index + 1
+        }
+        index = 0
+        while index < source.expr_count {
+            zsession_copy_expression(&result.exprs[result.expr_count], &source.exprs[index], type_base, statement_base, expression_base, argument_base, field_base)
+            result.expr_count = result.expr_count + 1
+            index = index + 1
+        }
+        index = 0
+        while index < source.expr_arg_count {
+            result.expr_args[result.expr_arg_count] = zsession_rebase_index(
+                source.expr_args[index], expression_base
+            )
+            result.expr_arg_count = result.expr_arg_count + 1
+            index = index + 1
+        }
+        index = 0
+        while index < source.literal_field_count {
+            zsession_copy_literal_field(&result.literal_fields[result.literal_field_count], &source.literal_fields[index], field_base, expression_base)
+            result.literal_field_count = result.literal_field_count + 1
+            index = index + 1
+        }
+        index = 0
+        while index < source.len {
+            zsession_copy_declaration(&result.decls[result.len], &source.decls[index], type_base, generic_base, param_base, member_base, statement_base, expression_base)
+            result.len = result.len + 1
+            if !source.decls[index].is_imported {
+                if result.decls[result.len - 1].kind == ZAstDeclExternFunction {
+                    result.extern_count = result.extern_count + 1
+                }
+                if result.decls[result.len - 1].kind == ZAstDeclError { result.error_count = result.error_count + 1 }
+                if result.decls[result.len - 1].kind == ZAstDeclConst { result.const_count = result.const_count + 1 }
+                if result.decls[result.len - 1].kind == ZAstDeclGlobal { result.global_count = result.global_count + 1 }
+                if result.decls[result.len - 1].kind == ZAstDeclStruct { result.struct_count = result.struct_count + 1 }
+                if result.decls[result.len - 1].kind == ZAstDeclEnum { result.enum_count = result.enum_count + 1 }
+                if result.decls[result.len - 1].kind == ZAstDeclUnion { result.union_count = result.union_count + 1 }
+                if result.decls[result.len - 1].kind == ZAstDeclFunction { result.function_count = result.function_count + 1 }
+            }
+            index = index + 1
+        }
+        source_index = source_index + 1
+    }
+    return result
+}
+
 fn zsession_phase_name(phase: i64) -> string {
     if phase == ZFrontendPhaseLexical { return "lexical" }
     if phase == ZFrontendPhaseParse { return "parse" }
@@ -387,6 +595,7 @@ fn zsession_add_direct_import_exports(self: *ZFrontendSession, module: *ZAstModu
                         // transitive `leaf.answer` re-export.
                         candidate_is_direct_or_unqualified_function: bool = !candidate.is_imported || ((candidate.kind == ZAstDeclFunction || candidate.kind == ZAstDeclExternFunction) && zsession_name_is_unqualified(candidate.name))
                         if candidate.kind != ZAstDeclImport && (candidate.exported || importing_std_module || candidate.is_imported) && candidate_is_direct_or_unqualified_function {
+                            candidate.canonical_name = candidate.name
                             candidate.name = zsession_imported_name(self, import_decl.alias, candidate.name) catch |err| {
                                 return err
                             }

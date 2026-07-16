@@ -1,0 +1,11 @@
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn forward<T>(value: T) -> T {
+    return identity(value)
+}
+
+fn main() -> i64 {
+    return forward(7)
+}

@@ -1,8 +1,14 @@
 # Zorb LLVM Backend
 
 This project is the Zig 0.16/LLVM 21 code-generation backend for Zorb. It reads
-the versioned JSON backend IR emitted by `Zorb.Compiler` and writes LLVM IR,
-bitcode, assembly, or a target object file.
+the versioned JSON backend IR emitted by the native `zorb` driver or recovery
+seed and writes LLVM IR, bitcode, assembly, or a target object file.
+
+The build also installs `libzorb-llvm.a`. Its C ABI exports
+`zorb_llvm_emit_file` and `zorb_llvm_link_object`; the production Zorb driver
+links this archive so backend emission and build/run orchestration happen from
+one compiler executable. `zorb-llvm-backend` remains available as a protocol
+test and debugging tool.
 
 ## Development Build
 
@@ -34,8 +40,9 @@ ordinary platform runtime libraries such as libc, libstdc++, zlib, and zstd.
 
 ## Windows Build
 
-The Windows release uses the shared LLVM C API and packages the DLL beside the
-backend:
+Windows development builds use the shared LLVM C API. The integrated driver
+links the generated static Zorb backend API archive and packages the LLVM DLL
+beside `zorb.exe`:
 
 ```powershell
 zig build `
@@ -44,17 +51,18 @@ zig build `
   "-Dllvm-library=LLVM-C"
 ```
 
-The release package must contain:
+The runtime package contains one user-facing compiler plus LLVM's shared
+library:
 
 ```text
-Zorb.Compiler.exe
-zorb-llvm-backend.exe
+zorb.exe
 LLVM-C.dll
-ld.lld.exe
 ```
 
-The compiler searches beside its own executable first. Development overrides
-are available through `ZORB_LLVM_BACKEND` and `ZORB_LLD`.
+Executable linking uses `clang-cl` from `PATH`, matching the MSVC target ABI;
+the compiler package does not bundle a host C/C++ toolchain. The standalone
+`zorb-llvm-backend.exe` is a development protocol tool and is not required by
+the integrated compiler.
 
 ## Supported Output Targets
 

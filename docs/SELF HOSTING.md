@@ -1,32 +1,48 @@
-# Self-hosted frontend parity
+# Self-hosting and frontend parity
 
 This document covers the current parity implementation. For the intended
 one-binary compiler architecture and bootstrap chain, see
 [Compiler architecture](ARCHITECTURE.md) and
 [Bootstrapping Zorb](BOOTSTRAPPING.md).
 
-`zorb-self-check` is an experimental, Zorb-written frontend checker.  The C# compiler remains the stage-0 compiler and release frontend.  This milestone explicitly excludes backend IR emission, compiler replacement, and changes to language syntax.
+`zorb-self-check` is the bootstrap verification entry for the same Zorb-written
+frontend used by the production driver. It emits the complete versioned backend
+IR surface needed by the compiler graph. The C# compiler is a recovery stage 0,
+not the release frontend.
+
+The fixed-point gate uses the recovery seed or preceding release to build the
+production driver, uses that candidate to rebuild `compiler/driver/main.zorb`,
+then uses the rebuilt compiler to build the driver once more. The generation-2
+and generation-3 compiler executables must be byte-identical; there is no
+normalization step.
+
+The ordinary managed fixture run now also creates (or accepts through
+`ZORB_NATIVE_FIXTURE_COMPILER`) the integrated native `zorb` driver. Every
+successful fixture must complete a native `build --output-kind llvm-ir`; every
+negative fixture must be rejected by native `check` with a structured
+diagnostic. This makes all fixture directories a native frontend-and-lowering
+gate rather than limiting native validation to the differential subset.
 
 ## Parity contract
 
 For each applicable fixture, both frontends must agree on success or failure, phase (`lexical`, `parse`, `import`, or `semantic`), diagnostic category, source file, and an overlapping source span. Diagnostic prose is not part of the contract. Stable diagnostic codes use `phase.category`, for example `lex.invalid-token`, `parse.expected-token`, `import.not-found`, `name.unknown`, `type.not-assignable`, and `flow.missing-return`.
 
-## Current feature matrix
+## Current verification scope
 
-| Stable feature group | C# frontend | Zorb lexer | Zorb parser/AST | Zorb semantics | Differential coverage |
-| --- | --- | --- | --- | --- | --- |
-| Source ownership and spans | complete | line/column only | partial | partial | none |
-| Diagnostics and phase codes | prose diagnostics | coarse errors | coarse errors | coarse errors | none |
-| Hosted command-line entry | complete | n/a | n/a | n/a | native Linux slice |
-| Imports, aliases, visibility, cycles | complete | keywords | relative graph walk | canonical relative loading, direct exported symbols, aliases, and cycle detection | native bootstrap fixtures |
-| Declarations and primitive types | complete | partial | qualified names, error-union returns, and structural function types | partial | function-value baseline |
-| Expressions and calls | complete | partial | calls, postfixes, array/struct literals, and generic function values partial | callback return typing and direct function-value validation partial | array, generic, and imported callback baselines |
-| Control flow and flow analysis | complete | keyword inventory | partial | partial | none |
-| Generics and constraints | complete | punctuation/keywords | parameter lists, nested multi-argument type references, explicit calls, generic literals, and delimiter-terminated function values partial | direct explicit-call result substitution, nominal literals, callback values, direct union bindings, and wrapped struct-member element substitution partial | function, struct, nested struct, multi-argument type reference, local/global callback, and imported callback baselines |
-| Tagged unions, match, switch, catch | complete | keyword inventory | boolean/enum match, union cases, and direct pattern bindings partial | boolean/enum/union exhaustiveness and direct union binding substitution partial | boolean, enum, generic-union, union-binding, and union-exhaustiveness baselines |
-| Attributes, layouts, assembly, extern types | complete | partial | partial | not implemented | none |
+The native production gate covers every fixture directory. Successful inputs
+must pass parsing, semantic checking, Backend IR lowering, Backend IR
+validation, and LLVM IR emission. Negative inputs must fail native checking
+with a phase-prefixed structured diagnostic. The compiler graph additionally
+has focused native self-check fixtures for aggregate types, control flow,
+errors, generics, globals, casts, function values, builtins, and platform
+branches.
 
-The initial executable slice creates a compilation-owned session, retains source buffers for the check, canonically walks relative imports, detects active import cycles, projects only direct exported symbols (including aliases), invokes the existing native lexer/parser/checker, and reports stable phase-prefixed diagnostics. `zorb-self-check --json <entry.zorb>` emits exactly one JSON result or diagnostic object on stdout, while `--dump-tokens` and `--dump-ast` use the same JSON-lines protocol for stable source-order records. Rich spans, parser recovery, and differential fixture gating remain tracked work rather than implied parity.
+Exact cross-frontend diagnostic equivalence is intentionally narrower. Rich
+span agreement, recovery ordering, and diagnostic-category parity are admitted
+case-by-case through `tests/csharp/frontend-parity.json`; they should not be
+confused with the broader native compilation gate. `zorb-self-check --json`
+emits one result or diagnostic object, while `--dump-tokens` and `--dump-ast`
+use the same JSON-lines protocol for stable source-order records.
 
 ## Fixture classification
 

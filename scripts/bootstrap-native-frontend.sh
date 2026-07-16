@@ -3,8 +3,8 @@
 #
 # This is a developer/bootstrap command, not the end-user compiler driver.
 # The resulting executable owns lexing, parsing, import loading, semantic
-# checking, and structured diagnostics; code generation remains stage 0 work
-# until the frontend-to-backend contract is completed.
+# checking, structured diagnostics, and Backend IR emission. The production
+# check/build/run entry remains compiler/driver/main.zorb.
 
 set -euo pipefail
 

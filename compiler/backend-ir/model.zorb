@@ -19,7 +19,18 @@ export fn ZBackendIrTarget.init(triple: string) -> ZBackendIrTarget {
 export struct ZBackendIrType {
     id: i64,
     kind: string,
-    scalar: string
+    name: string,
+    scalar: string,
+    element_type: i64,
+    length: i64,
+    fields: *ZBackendIrTypeField,
+    field_count: i64,
+    is_packed: bool
+}
+
+export struct ZBackendIrTypeField {
+    name: string,
+    type_id: i64
 }
 
 export struct ZBackendIrInstruction {
@@ -27,13 +38,44 @@ export struct ZBackendIrInstruction {
     op: string,
     type_id: i64,
     integer: i64,
+    text: string,
     binary_op: string,
     compare_op: string,
+    cast_op: string,
     lhs: i64,
     rhs: i64,
     callee: i64,
     arguments: *i64,
-    argument_count: i64
+    argument_count: i64,
+    incoming_values: *i64,
+    incoming_blocks: *i64,
+    incoming_count: i64,
+    field_index: i64,
+    source_type: i64,
+    global_id: i64,
+    asm_template: string,
+    constraints: string,
+    output_types: *i64,
+    output_addresses: *i64,
+    output_count: i64
+}
+
+export struct ZBackendIrConstant {
+    kind: string,
+    integer: i64,
+    text: string,
+    function_id: i64,
+    elements: *ZBackendIrConstant,
+    element_count: i64
+}
+
+export struct ZBackendIrGlobal {
+    id: i64,
+    name: string,
+    type_id: i64,
+    linkage: string,
+    is_constant: bool,
+    initializer: ZBackendIrConstant
 }
 
 export struct ZBackendIrTerminator {
@@ -77,6 +119,8 @@ export struct ZBackendIrModule {
     output_path: string,
     types: *ZBackendIrType,
     type_count: i64,
+    globals: *ZBackendIrGlobal,
+    global_count: i64,
     functions: *ZBackendIrFunction,
     function_count: i64
 }

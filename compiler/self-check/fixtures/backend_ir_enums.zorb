@@ -1,0 +1,27 @@
+enum Mode: i32 {
+    Idle,
+    Run = 4,
+    Stop
+}
+
+fn current_mode() -> Mode {
+    return Mode.Run
+}
+
+fn is_running(mode: Mode) -> bool {
+    return mode == Mode.Run
+}
+
+fn classify(mode: Mode) -> i64 {
+    switch mode {
+        case Mode.Idle {
+            return 1
+        }
+        case Mode.Run {
+            return 4
+        }
+        else {
+            return 9
+        }
+    }
+}

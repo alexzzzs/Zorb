@@ -71,6 +71,37 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(backend);
 
+    const api_module = b.createModule(.{
+        .root_source_file = b.path("src/api.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "llvm", .module = llvm_header.createModule() },
+        },
+    });
+    api_module.addLibraryPath(.{ .cwd_relative = llvm_lib_dir });
+    if (static_llvm) {
+        linkStaticLlvm(
+            api_module,
+            cxx_runtime orelse @panic("-Dcxx-runtime=<path> is required with -Dstatic-llvm=true"),
+        );
+    } else {
+        api_module.linkSystemLibrary(llvm_library, .{
+            .use_pkg_config = .no,
+            .preferred_link_mode = .dynamic,
+        });
+        if (target.result.os.tag != .windows)
+            api_module.addRPath(.{ .cwd_relative = llvm_lib_dir });
+    }
+    const backend_api = b.addLibrary(.{
+        .name = "zorb-llvm",
+        .linkage = .static,
+        .root_module = api_module,
+    });
+    backend_api.bundle_compiler_rt = true;
+    b.installArtifact(backend_api);
+
     const run_backend = b.addRunArtifact(backend);
     if (b.args) |args| run_backend.addArgs(args);
     const run_step = b.step("run-backend", "Run the LLVM backend");

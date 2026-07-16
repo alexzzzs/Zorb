@@ -1,0 +1,17 @@
+error Failed = 4
+
+fn preserve_success(value: i32) !i32 {
+    local: i32 = value
+    return local
+}
+
+fn produce_error() !i32 {
+    return error.Failed
+}
+
+fn recover_i32() -> i32 {
+    return produce_error() catch |err| {
+        observed: i32 = err
+        6
+    }
+}

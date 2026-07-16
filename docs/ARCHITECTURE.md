@@ -1,8 +1,8 @@
 # Compiler architecture
 
-Zorb is transitioning to a compiler with a Zorb-written frontend and a
-Zig/LLVM backend. The intended distributable is one `zorb` executable; users
-will not choose between C# and native frontend modes.
+Zorb's normal compiler has a Zorb-written frontend and a Zig/LLVM backend. The
+distributable is one `zorb` executable; users do not choose between frontend
+modes or launch a separate backend process.
 
 ## Target architecture
 
@@ -27,21 +27,23 @@ is `runtime/std/`. `backend/llvm/` owns LLVM object emission and platform linkin
 
 ## Bootstrap roles
 
-`seed/csharp/` is the C# stage-0 seed compiler. It is currently required to
-build the native frontend checker and remains the release frontend until the
-native frontend can emit the backend contract. It is not a competing
-user-facing compiler mode.
+`seed/csharp/` is the C# stage-0 recovery compiler. It can build the native
+compiler from a source checkout without a released seed, but it is not the
+normal release frontend or a competing user-facing compiler mode. The native
+driver in `compiler/driver/` owns `check`, `build`, and `run`; it calls the
+static backend API in `backend/llvm/src/api.zig`.
 
 The versioned frontend/backend boundary is documented in
 [Backend IR contract](BACKEND%20IR.md).
 
-The transition has three stages:
+The bootstrap chain is:
 
-1. C# stage 0 builds the native Zorb frontend checker.
-2. The native frontend reaches differential parity for the admitted corpus and
-   emits the stable backend contract.
-3. A released `zorb` binary builds the next release. The C# seed is retained
-   only for recovery and bootstrapping.
+1. C# stage 0 builds a native Zorb compiler when no released seed is present.
+2. The native compiler emits the stable backend contract and builds programs
+   through the in-process LLVM API.
+3. The candidate recompiles the compiler graph until generation-2 and
+   generation-3 driver executables are byte-identical.
+4. Releases use the preceding verified `zorb`; C# remains only for recovery.
 
 ## Repository map
 
@@ -50,6 +52,7 @@ The transition has three stages:
 | `compiler/` | Authoritative Zorb compiler source | Frontend core |
 | `compiler/frontend/` | Native session, diagnostics, import graph | Frontend core |
 | `compiler/self-check/` | Hosted native checker entry and probes | Bootstrap verification |
+| `compiler/driver/` | Production `check`, `build`, and `run` entry | User-facing compiler |
 | `runtime/std/` | Zorb standard library/runtime-facing modules | Runtime core |
 | `backend/llvm/` | Zig/LLVM backend integration | Backend core |
 | `seed/csharp/` | C# stage-0 seed compiler | Frozen recovery seed after self-hosting |

@@ -11,6 +11,8 @@ fn _start() {
         output_path: "out.ll",
         types: cast(*ZBackendIrType, 0),
         type_count: 0,
+        globals: cast(*ZBackendIrGlobal, 0),
+        global_count: 0,
         functions: cast(*ZBackendIrFunction, 0),
         function_count: 0
     }

@@ -17,7 +17,17 @@ Resolve a cached or published seed with:
 ./scripts/resolve-bootstrap-seed.sh host-linux
 ```
 
-The current artifacts are native frontend checkers. They are not yet the
-end-user `zorb` compiler because native backend IR emission has not landed.
-The builder compiles the Zig backend before invoking the C# seed; use
-`--skip-backend` only when that backend is already built for local iteration.
+For a custom seed output directory, pass that directory back to the resolver:
+
+```bash
+./scripts/build-bootstrap-seeds.sh --target host-linux --output-dir /tmp/zorb-seeds
+./scripts/resolve-bootstrap-seed.sh host-linux --artifact-dir /tmp/zorb-seeds
+```
+
+The resolver verifies the SHA-256 checksum for both local and downloaded
+artifacts before returning a seed path.
+
+The current artifacts are native frontend checkers used by the recovery and
+fixed-point workflow. They include native Backend IR emission, but intentionally
+do not contain the LLVM backend or the end-user `check`/`build`/`run` driver.
+Build the integrated end-user compiler with `scripts/bootstrap-compiler.sh`.

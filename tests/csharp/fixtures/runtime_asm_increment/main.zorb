@@ -1,0 +1,21 @@
+import "../../../../runtime/std/os.zorb"
+
+fn asm_increment() -> i64 {
+    if Builtin.IsX86_64 {
+        value: i64 = 7
+        asm {
+            "addq $1, %0"
+            : "=r"(value)
+            : "0"(value)
+        }
+        return value
+    }
+    return 8
+}
+
+fn _start() {
+    if asm_increment() == 8 {
+        std.os.exit(0)
+    }
+    std.os.exit(1)
+}

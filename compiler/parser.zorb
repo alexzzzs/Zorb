@@ -68,6 +68,61 @@ export fn ZParser.set_debug_output(self: *ZParser, enabled: bool) {
     self.emit_debug = enabled
 }
 
+struct ZParserExpressionBuffer {
+    values: *i64,
+    count: i64,
+    capacity: i64
+}
+
+fn zparser_expression_buffer_init() -> ZParserExpressionBuffer {
+    return ZParserExpressionBuffer{
+        values: cast(*i64, 0),
+        count: 0,
+        capacity: 0
+    }
+}
+
+fn zparser_expression_buffer_append(
+    buffer: *ZParserExpressionBuffer,
+    allocator: *std.mem.HeapAllocator,
+    value: i64
+) !i64 {
+    if buffer.count >= buffer.capacity {
+        new_capacity: i64 = 4
+        if buffer.capacity > 0 { new_capacity = buffer.capacity * 2 }
+        raw: *u8 = std.mem.HeapAllocator.alloc(
+            allocator, new_capacity * Builtin.sizeof(i64)
+        ) catch |err| { return error.OutOfMemory }
+        new_values: *i64 = cast(*i64, raw)
+        index: i64 = 0
+        while index < buffer.count {
+            new_values[index] = buffer.values[index]
+            index = index + 1
+        }
+        buffer.values = new_values
+        buffer.capacity = new_capacity
+    }
+    buffer.values[buffer.count] = value
+    buffer.count = buffer.count + 1
+    return 0
+}
+
+fn zparser_expression_buffer_flush(
+    buffer: *ZParserExpressionBuffer,
+    allocator: *std.mem.HeapAllocator,
+    module: *ZAstModule
+) !i64 {
+    start: i64 = module.expr_arg_count
+    index: i64 = 0
+    while index < buffer.count {
+        ZAstModule.append_expr_arg(
+            module, allocator, buffer.values[index]
+        ) catch |err| { return err }
+        index = index + 1
+    }
+    return start
+}
+
 fn zparser_current(self: *ZParser) -> ZToken {
     if self.index >= self.tokens.len {
         return self.tokens.ptr[self.tokens.len - 1]
@@ -445,7 +500,7 @@ fn zparser_capture_generic_argument_suffix(self: *ZParser, allocator: *std.mem.H
     text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
         return err
     }
-    index: i64 = ZAstModule.append_type(module, allocator, text) catch |err| {
+    index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
         return err
     }
     return index
@@ -681,6 +736,22 @@ export fn ZParser.print_structured_summary(self: *ZParser) {
     std.io.print("\n")
 }
 
+fn zparser_append_type(
+    self: *ZParser,
+    allocator: *std.mem.HeapAllocator,
+    module: *ZAstModule,
+    text: ZAstText
+) !i64 {
+    index: i64 = ZAstModule.append_type(
+        module, allocator, text
+    ) catch |err| { return err }
+    if self.active_decl != cast(*ZAstDecl, 0) {
+        module.types[index].scope_declaration_start = self.active_decl.stmt_start
+        module.types[index].scope_statement = module.stmt_count_total
+    }
+    return index
+}
+
 fn zparser_capture_type(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule) !i64 {
     if zparser_at(self, ZTokenComma) || zparser_at(self, ZTokenRParen) || zparser_at(self, ZTokenRBrace) || zparser_at(self, ZTokenLBrace) || zparser_at(self, ZTokenEquals) || zparser_at(self, ZTokenSemicolon) || zparser_at(self, ZTokenEof) {
         return error.InvalidArgument
@@ -698,7 +769,7 @@ fn zparser_capture_type(self: *ZParser, allocator: *std.mem.HeapAllocator, modul
             text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
                 return err
             }
-            index: i64 = ZAstModule.append_type(module, allocator, text) catch |err| {
+            index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
                 return err
             }
             return index
@@ -709,7 +780,7 @@ fn zparser_capture_type(self: *ZParser, allocator: *std.mem.HeapAllocator, modul
             text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
                 return err
             }
-            index: i64 = ZAstModule.append_type(module, allocator, text) catch |err| {
+            index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
                 return err
             }
             return index
@@ -721,7 +792,7 @@ fn zparser_capture_type(self: *ZParser, allocator: *std.mem.HeapAllocator, modul
             text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
                 return err
             }
-            index: i64 = ZAstModule.append_type(module, allocator, text) catch |err| {
+            index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
                 return err
             }
             return index
@@ -730,7 +801,7 @@ fn zparser_capture_type(self: *ZParser, allocator: *std.mem.HeapAllocator, modul
             text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
                 return err
             }
-            index: i64 = ZAstModule.append_type(module, allocator, text) catch |err| {
+            index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
                 return err
             }
             return index
@@ -751,7 +822,7 @@ fn zparser_capture_type(self: *ZParser, allocator: *std.mem.HeapAllocator, modul
                 text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
                     return err
                 }
-                index: i64 = ZAstModule.append_type(module, allocator, text) catch |err| {
+                index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
                     return err
                 }
                 return index
@@ -856,7 +927,7 @@ fn zparser_parse_call(self: *ZParser, allocator: *std.mem.HeapAllocator, module:
     } else {
         expr.name = ZAstText.empty()
     }
-    expr.arg_start = module.expr_arg_count
+    arguments: ZParserExpressionBuffer = zparser_expression_buffer_init()
     self.current_call_count = self.current_call_count + 1
 
     // `Builtin.sizeof` takes a type grammar argument, which may begin with an
@@ -879,16 +950,10 @@ fn zparser_parse_call(self: *ZParser, allocator: *std.mem.HeapAllocator, module:
     }
 
     while !zparser_at(self, ZTokenEof) {
-        // Reserve the parent slot before parsing recursively. Nested calls
-        // append their own arguments to the same arena; appending only after
-        // recursion would interleave those child entries into this call.
-        arg_slot: i64 = ZAstModule.append_expr_arg(module, allocator, ZAstNoIndex) catch |err| {
-            return err
-        }
         arg: i64 = zparser_parse_expression(self, allocator, module, true, false, false) catch |err| {
             return err
         }
-        module.expr_args[arg_slot] = arg
+        zparser_expression_buffer_append(&arguments, allocator, arg) catch |err| { return err }
         expr.arg_count = expr.arg_count + 1
 
         if zparser_at(self, ZTokenComma) {
@@ -899,6 +964,9 @@ fn zparser_parse_call(self: *ZParser, allocator: *std.mem.HeapAllocator, module:
         zparser_expect(self, ZTokenRParen) catch |err| {
             return error.InvalidArgument
         }
+        expr.arg_start = zparser_expression_buffer_flush(
+            &arguments, allocator, module
+        ) catch |err| { return err }
         expr.span = zparser_span_from_indices(self, start_index, self.index)
         index: i64 = ZAstModule.append_expr(module, allocator, expr) catch |err| {
             return err
@@ -1023,16 +1091,13 @@ fn zparser_parse_primary(self: *ZParser, allocator: *std.mem.HeapAllocator, modu
         expr: ZAstExpr = ZAstExpr.init(ZAstExprArrayLiteral)
         expr.span = zparser_span_from_indices(self, start_index, self.index)
         expr.type_index = type_index
-        expr.arg_start = module.expr_arg_count
+        elements: ZParserExpressionBuffer = zparser_expression_buffer_init()
 
         while !zparser_at(self, ZTokenEof) && !zparser_at(self, ZTokenRBrace) {
-            element_slot: i64 = ZAstModule.append_expr_arg(module, allocator, ZAstNoIndex) catch |err| {
-                return err
-            }
             element: i64 = zparser_parse_expression(self, allocator, module, true, false, true) catch |err| {
                 return err
             }
-            module.expr_args[element_slot] = element
+            zparser_expression_buffer_append(&elements, allocator, element) catch |err| { return err }
             expr.arg_count = expr.arg_count + 1
             if zparser_at(self, ZTokenComma) {
                 zparser_advance(self)
@@ -1041,6 +1106,9 @@ fn zparser_parse_primary(self: *ZParser, allocator: *std.mem.HeapAllocator, modu
         zparser_expect(self, ZTokenRBrace) catch |err| {
             return error.InvalidArgument
         }
+        expr.arg_start = zparser_expression_buffer_flush(
+            &elements, allocator, module
+        ) catch |err| { return err }
         expr.span = zparser_span_from_indices(self, start_index, self.index)
         index: i64 = ZAstModule.append_expr(module, allocator, expr) catch |err| {
             return err
@@ -1121,9 +1189,9 @@ fn zparser_parse_postfix(self: *ZParser, allocator: *std.mem.HeapAllocator, modu
             expr: ZAstExpr = ZAstExpr.init(ZAstExprStructLiteral)
             expr.span = zparser_span_from_indices(self, start_index, self.index)
             expr.left = expr_index
-            expr.arg_start = module.expr_arg_count
             expr.field_start = ZAstNoIndex
             last_literal_field: i64 = ZAstNoIndex
+            values: ZParserExpressionBuffer = zparser_expression_buffer_init()
 
             while !zparser_at(self, ZTokenEof) && !zparser_at(self, ZTokenRBrace) {
                 field_start_index: i64 = self.index
@@ -1133,7 +1201,8 @@ fn zparser_parse_postfix(self: *ZParser, allocator: *std.mem.HeapAllocator, modu
                 literal_field: ZAstLiteralField = ZAstLiteralField{
                     name: ZAstText.from_token(field_name),
                     span: zparser_span_from_indices(self, field_start_index, self.index),
-                    next_index: ZAstNoIndex
+                    next_index: ZAstNoIndex,
+                    value_expr: ZAstNoIndex
                 }
                 literal_field_index: i64 = ZAstModule.append_literal_field(module, allocator, literal_field) catch |err| {
                     return err
@@ -1147,15 +1216,11 @@ fn zparser_parse_postfix(self: *ZParser, allocator: *std.mem.HeapAllocator, modu
                 zparser_expect(self, ZTokenColon) catch |err| {
                     return error.InvalidArgument
                 }
-                // Struct fields share the expression-argument arena with
-                // calls, so they need the same pre-reserved slot discipline.
-                value_slot: i64 = ZAstModule.append_expr_arg(module, allocator, ZAstNoIndex) catch |err| {
-                    return err
-                }
                 value: i64 = zparser_parse_expression(self, allocator, module, true, false, true) catch |err| {
                     return err
                 }
-                module.expr_args[value_slot] = value
+                zparser_expression_buffer_append(&values, allocator, value) catch |err| { return err }
+                module.literal_fields[literal_field_index].value_expr = value
                 expr.arg_count = expr.arg_count + 1
                 if zparser_at(self, ZTokenComma) {
                     zparser_advance(self)
@@ -1165,6 +1230,9 @@ fn zparser_parse_postfix(self: *ZParser, allocator: *std.mem.HeapAllocator, modu
             zparser_expect(self, ZTokenRBrace) catch |err| {
                 return error.InvalidArgument
             }
+            expr.arg_start = zparser_expression_buffer_flush(
+                &values, allocator, module
+            ) catch |err| { return err }
             expr.span = zparser_span_from_indices(self, start_index, self.index)
             expr_index = ZAstModule.append_expr(module, allocator, expr) catch |err| {
                 return err
@@ -1312,7 +1380,12 @@ fn zparser_parse_catch_expression(self: *ZParser, allocator: *std.mem.HeapAlloca
         before: i64 = module.stmt_count_total
         zparser_parse_statement(self, allocator, module, self.active_decl) catch |err| { return err }
         while before < module.stmt_count_total {
-            module.stmts[before].catch_owner = expr_index
+            // Nested catch parsing assigns its recovery statements first.
+            // Preserve that narrower owner; only the nested catch's root
+            // statement belongs directly to this outer recovery.
+            if module.stmts[before].catch_owner == ZAstNoIndex {
+                module.stmts[before].catch_owner = expr_index
+            }
             before = before + 1
         }
     }
@@ -1341,11 +1414,13 @@ fn zparser_current_is_type_keyword(self: *ZParser) -> bool {
 fn zparser_parse_asm_constraints(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule) !i64 {
     start: i64 = module.expr_arg_count
     while zparser_at(self, ZTokenString) {
-        zparser_advance(self) // constraint text is retained by codegen later.
+        constraint_token: ZToken = zparser_current(self)
+        zparser_advance(self)
         zparser_expect(self, ZTokenLParen) catch |err| { return error.InvalidArgument }
         slot: i64 = ZAstModule.append_expr_arg(module, allocator, ZAstNoIndex) catch |err| { return err }
         operand: i64 = zparser_parse_expression(self, allocator, module, false, false, false) catch |err| { return err }
         module.expr_args[slot] = operand
+        module.exprs[operand].literal = ZAstText.from_token(constraint_token)
         zparser_expect(self, ZTokenRParen) catch |err| { return error.InvalidArgument }
         if !zparser_at(self, ZTokenComma) { break }
         zparser_advance(self)
@@ -1362,7 +1437,13 @@ fn zparser_parse_assembly_statement(self: *ZParser, allocator: *std.mem.HeapAllo
     zparser_advance(self)
     zparser_expect(self, ZTokenLBrace) catch |err| { return error.InvalidArgument }
     stmt: ZAstStmt = ZAstStmt.init(ZAstStmtAsm)
-    while zparser_at(self, ZTokenString) { zparser_advance(self) }
+    while zparser_at(self, ZTokenString) {
+        template_token: ZToken = zparser_current(self)
+        if stmt.name.len == 0 {
+            stmt.name = ZAstText.from_token(template_token)
+        }
+        zparser_advance(self)
+    }
     if zparser_at(self, ZTokenColon) {
         zparser_advance(self)
         stmt.asm_output_start = module.expr_arg_count
@@ -1375,11 +1456,21 @@ fn zparser_parse_assembly_statement(self: *ZParser, allocator: *std.mem.HeapAllo
     }
     if zparser_at(self, ZTokenColon) {
         zparser_advance(self)
+        stmt.asm_clobber_start = module.expr_arg_count
         while zparser_at(self, ZTokenString) {
-            zparser_advance(self)
+            clobber_token: ZToken = zparser_advance(self)
+            clobber: ZAstExpr = ZAstExpr.init(ZAstExprString)
+            clobber.literal = ZAstText.from_token(clobber_token)
+            clobber_index: i64 = ZAstModule.append_expr(
+                module, allocator, clobber
+            ) catch |err| { return err }
+            ZAstModule.append_expr_arg(
+                module, allocator, clobber_index
+            ) catch |err| { return err }
             if !zparser_at(self, ZTokenComma) { break }
             zparser_advance(self)
         }
+        stmt.asm_clobber_count = module.expr_arg_count - stmt.asm_clobber_start
     }
     zparser_expect(self, ZTokenRBrace) catch |err| { return error.InvalidArgument }
     stmt.span = zparser_span_from_indices(self, start_index, self.index)
@@ -1426,6 +1517,7 @@ fn zparser_parse_for_statement(self: *ZParser, allocator: *std.mem.HeapAllocator
     if !zparser_at(self, ZTokenSemicolon) {
         zparser_parse_statement(self, allocator, module, decl) catch |err| { return err }
     }
+    module.stmts[loop_index].for_initializer_count = module.stmt_count_total - module.stmts[loop_index].child_start
     zparser_expect(self, ZTokenSemicolon) catch |err| { return error.InvalidArgument }
 
     if !zparser_at(self, ZTokenSemicolon) {
@@ -1434,7 +1526,23 @@ fn zparser_parse_for_statement(self: *ZParser, allocator: *std.mem.HeapAllocator
     zparser_expect(self, ZTokenSemicolon) catch |err| { return error.InvalidArgument }
 
     if !zparser_at(self, ZTokenLBrace) {
+        update_start: i64 = module.stmt_count_total
         zparser_parse_statement(self, allocator, module, decl) catch |err| { return err }
+        // A C-style update clause is an evaluated expression or assignment,
+        // never a declaration/control-flow statement. Recovery statements
+        // owned by a catch may precede the root statement in the flattened
+        // arena, so skip them to find the update's top-level statement.
+        update_root_index: i64 = update_start
+        while update_root_index < module.stmt_count_total &&
+            module.stmts[update_root_index].catch_owner != ZAstNoIndex {
+            update_root_index = update_root_index + 1
+        }
+        if update_root_index >= module.stmt_count_total { return error.InvalidArgument }
+        update_root: ZAstStmt = module.stmts[update_root_index]
+        if update_root.kind != ZAstStmtExpr && update_root.kind != ZAstStmtAssign {
+            return error.InvalidArgument
+        }
+        module.stmts[loop_index].for_update_count = module.stmt_count_total - update_start
     }
     zparser_parse_block(self, allocator, module, decl) catch |err| { return err }
     module.stmts[loop_index].child_count = module.stmt_count_total - module.stmts[loop_index].child_start

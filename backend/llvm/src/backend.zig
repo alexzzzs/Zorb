@@ -138,69 +138,99 @@ pub const Backend = struct {
     fn constantValue(self: *Backend, type_id: u32, constant: ir.Constant) !llvm.LLVMValueRef {
         const value_type = try self.typeById(type_id);
         return switch (constant.kind) {
-                .zero => llvm.LLVMConstNull(value_type),
-                .integer => llvm.LLVMConstInt(
-                    value_type,
+            .zero => llvm.LLVMConstNull(value_type),
+            .integer => llvm.LLVMConstInt(
+                value_type,
+                @bitCast(constant.integer orelse return error.InvalidBackendIr),
+                @intFromBool((constant.integer orelse 0) < 0),
+            ),
+            .string => blk: {
+                const text = constant.text orelse return error.InvalidBackendIr;
+                const bytes = llvm.LLVMConstStringInContext2(
+                    self.context,
+                    text.ptr,
+                    text.len,
+                    0,
+                );
+                const array_type = llvm.LLVMTypeOf(bytes);
+                const string_global = llvm.LLVMAddGlobal(self.module, array_type, ".str.global");
+                llvm.LLVMSetLinkage(string_global, llvm.LLVMPrivateLinkage);
+                llvm.LLVMSetGlobalConstant(string_global, 1);
+                llvm.LLVMSetUnnamedAddress(string_global, llvm.LLVMGlobalUnnamedAddr);
+                llvm.LLVMSetInitializer(string_global, bytes);
+                const zero = llvm.LLVMConstInt(
+                    llvm.LLVMInt32TypeInContext(self.context),
+                    0,
+                    0,
+                );
+                var indices = [_]llvm.LLVMValueRef{ zero, zero };
+                break :blk llvm.LLVMConstInBoundsGEP2(
+                    array_type,
+                    string_global,
+                    &indices,
+                    indices.len,
+                );
+            },
+            .pointer_integer => llvm.LLVMConstIntToPtr(
+                llvm.LLVMConstInt(
+                    llvm.LLVMInt64TypeInContext(self.context),
                     @bitCast(constant.integer orelse return error.InvalidBackendIr),
                     @intFromBool((constant.integer orelse 0) < 0),
                 ),
-                .string => blk: {
-                    const text = constant.text orelse return error.InvalidBackendIr;
-                    const bytes = llvm.LLVMConstStringInContext2(
-                        self.context,
-                        text.ptr,
-                        text.len,
-                        0,
-                    );
-                    const array_type = llvm.LLVMTypeOf(bytes);
-                    const string_global = llvm.LLVMAddGlobal(self.module, array_type, ".str.global");
-                    llvm.LLVMSetLinkage(string_global, llvm.LLVMPrivateLinkage);
-                    llvm.LLVMSetGlobalConstant(string_global, 1);
-                    llvm.LLVMSetUnnamedAddress(string_global, llvm.LLVMGlobalUnnamedAddr);
-                    llvm.LLVMSetInitializer(string_global, bytes);
-                    const zero = llvm.LLVMConstInt(
-                        llvm.LLVMInt32TypeInContext(self.context),
-                        0,
-                        0,
-                    );
-                    var indices = [_]llvm.LLVMValueRef{ zero, zero };
-                    break :blk llvm.LLVMConstInBoundsGEP2(
-                        array_type,
-                        string_global,
-                        &indices,
-                        indices.len,
-                    );
-                },
-                .pointer_integer => llvm.LLVMConstIntToPtr(
-                    llvm.LLVMConstInt(
-                        llvm.LLVMInt64TypeInContext(self.context),
-                        @bitCast(constant.integer orelse return error.InvalidBackendIr),
-                        @intFromBool((constant.integer orelse 0) < 0),
-                    ),
-                    value_type,
-                ),
-                .function => (self.functions.get(
-                    constant.function orelse return error.InvalidBackendIr,
-                ) orelse return error.InvalidBackendIr).function,
-                .aggregate => blk: {
-                    const type_def = self.findTypeDef(type_id) orelse return error.InvalidBackendIr;
-                    if (type_def.kind != .array or
-                        constant.elements.len != (type_def.length orelse return error.InvalidBackendIr))
-                    {
-                        return error.InvalidBackendIr;
+                value_type,
+            ),
+            .function => (self.functions.get(
+                constant.function orelse return error.InvalidBackendIr,
+            ) orelse return error.InvalidBackendIr).function,
+            .aggregate => blk: {
+                const type_def = self.findTypeDef(type_id) orelse return error.InvalidBackendIr;
+                const expected_element_count: usize = switch (type_def.kind) {
+                    .array => @intCast(type_def.length orelse return error.InvalidBackendIr),
+                    .@"struct" => type_def.fields.len,
+                    .@"union" => type_def.fields.len + 1,
+                    else => return error.InvalidBackendIr,
+                };
+                if (constant.elements.len != expected_element_count)
+                    return error.InvalidBackendIr;
+                var elements = try self.allocator.alloc(llvm.LLVMValueRef, constant.elements.len);
+                defer self.allocator.free(elements);
+                for (constant.elements, 0..) |element, index| {
+                    if (type_def.kind == .@"union" and index == 0) {
+                        const tag_type = llvm.LLVMInt32TypeInContext(self.context);
+                        elements[index] = switch (element.kind) {
+                            .zero => llvm.LLVMConstNull(tag_type),
+                            .integer => llvm.LLVMConstInt(
+                                tag_type,
+                                @bitCast(element.integer orelse return error.InvalidBackendIr),
+                                @intFromBool((element.integer orelse 0) < 0),
+                            ),
+                            else => return error.InvalidBackendIr,
+                        };
+                        continue;
                     }
-                    const element_type_id = type_def.element_type orelse return error.InvalidBackendIr;
-                    var elements = try self.allocator.alloc(llvm.LLVMValueRef, constant.elements.len);
-                    defer self.allocator.free(elements);
-                    for (constant.elements, 0..) |element, index|
-                        elements[index] = try self.constantValue(element_type_id, element);
-                    break :blk llvm.LLVMConstArray2(
-                        try self.typeById(element_type_id),
+                    const element_type_id = switch (type_def.kind) {
+                        .array => type_def.element_type orelse return error.InvalidBackendIr,
+                        .@"struct" => type_def.fields[index].type,
+                        .@"union" => type_def.fields[index - 1].type,
+                        else => unreachable,
+                    };
+                    elements[index] = try self.constantValue(element_type_id, element);
+                }
+                break :blk switch (type_def.kind) {
+                    .array => llvm.LLVMConstArray2(
+                        try self.typeById(type_def.element_type orelse return error.InvalidBackendIr),
                         if (elements.len == 0) null else elements.ptr,
                         elements.len,
-                    );
-                },
-            };
+                    ),
+                    .@"struct", .@"union" => llvm.LLVMConstNamedStruct(
+                        value_type,
+                        if (elements.len == 0) null else elements.ptr,
+                        @intCast(elements.len),
+                    ),
+                    else => unreachable,
+                };
+            },
+        };
     }
 
     fn initializeTypes(self: *Backend) !void {
@@ -356,6 +386,7 @@ pub const Backend = struct {
 
         try self.populateParameterValues(function_ir, record.function, &values);
         try self.createFunctionBlocks(function_ir, record.function, &blocks);
+        try self.emitFunctionAllocas(builder, function_ir, &values, &blocks);
         try self.emitFunctionInstructions(builder, function_ir, &values, &blocks);
         try self.addPhiIncomingEdges(function_ir, &values, &blocks);
     }
@@ -401,11 +432,37 @@ pub const Backend = struct {
             llvm.LLVMPositionBuilderAtEnd(builder, block);
 
             for (block_ir.instructions) |instruction| {
+                if (instruction.op == .alloca) continue;
                 const value = try self.emitInstruction(builder, values, instruction);
                 try values.put(self.allocator, instruction.id, value);
             }
 
             try self.emitTerminator(builder, block_ir.terminator, values, blocks);
+        }
+    }
+
+    // LLVM allocas execute wherever they are emitted. Hoist every source-level
+    // stack slot into the entry block so loop-local declarations reuse their
+    // slot instead of growing the native stack on every iteration.
+    fn emitFunctionAllocas(
+        self: *Backend,
+        builder: llvm.LLVMBuilderRef,
+        function_ir: ir.Function,
+        values: *ValueMap,
+        blocks: *BlockMap,
+    ) !void {
+        const entry = blocks.get(function_ir.blocks[0].id) orelse return error.InvalidBackendIr;
+        llvm.LLVMPositionBuilderAtEnd(builder, entry);
+        for (function_ir.blocks) |block_ir| {
+            for (block_ir.instructions) |instruction| {
+                if (instruction.op != .alloca) continue;
+                const value = llvm.LLVMBuildAlloca(
+                    builder,
+                    try self.typeById(instruction.type),
+                    "",
+                );
+                try values.put(self.allocator, instruction.id, value);
+            }
         }
     }
 

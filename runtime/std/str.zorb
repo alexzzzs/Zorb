@@ -142,17 +142,22 @@ export fn std.str.from_i64(value: i64, buf: []u8) -> i64 {
     
     if v < 0 {
         is_neg = 1
-        v = -v
     }
 
-    while v > 0 && i < limit {
+    // Keep negative values negative while extracting digits. Negating the
+    // minimum i64 would overflow, whereas division and remainder toward zero
+    // are defined for every value here.
+    while v != 0 && i < limit {
         rem: i64 = v % 10
+        if rem < 0 {
+            rem = 0 - rem
+        }
         buf[i] = cast(u8, rem + 48)
         v = v / 10
         i = i + 1
     }
 
-    if v > 0 {
+    if v != 0 {
         return -1
     }
 
