@@ -1,8 +1,34 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using Zorb.Compiler.Utils;
 
 internal static partial class Program
 {
+    private static void RunWindowsLinkerSelectionTests()
+    {
+        var clangArguments = ExternalTools.GetWindowsCompileAndLinkArgumentList(
+            "clang-cl",
+            "input.c",
+            ["backend.lib"],
+            "output.exe").ToList();
+        var linkerSelectionIndex = clangArguments.IndexOf("-fuse-ld=lld");
+        var linkerArgumentsIndex = clangArguments.IndexOf("/link");
+        if (linkerSelectionIndex < 0 || linkerArgumentsIndex < 0 ||
+            linkerSelectionIndex >= linkerArgumentsIndex)
+        {
+            throw new Exception(
+                "clang-cl must select lld before the /link argument separator.");
+        }
+
+        var msvcArguments = ExternalTools.GetWindowsCompileAndLinkArgumentList(
+            "cl",
+            "input.c",
+            ["backend.lib"],
+            "output.exe");
+        if (msvcArguments.Contains("-fuse-ld=lld", StringComparer.Ordinal))
+            throw new Exception("MSVC cl.exe must not receive a Clang linker-selection flag.");
+    }
+
     private static void RunCliWorkflowTests(string fixtureRoot)
     {
         if (OperatingSystem.IsLinux())

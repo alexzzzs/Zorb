@@ -39,6 +39,7 @@ internal static partial class Program
         RunNamedTest(failures, "aarch64_linux_targets", () => RunAArch64LinuxCrossTargetTests(fixtureRoot));
         RunNamedTest(failures, "cli_bare_metal", () => RunBareMetalCliBuildTests(fixtureRoot));
         RunNamedTest(failures, "cli_args", () => RunCliArgumentValidationTests(fixtureRoot));
+        RunNamedTest(failures, "windows_linker_selection", RunWindowsLinkerSelectionTests);
         RunNamedTest(failures, "self_check_bootstrap", () => RunSelfCheckBootstrapTests(fixtureRoot));
         RunNamedTest(failures, "semantic_output", () => RunSemanticDiagnosticOutputTests(fixtureRoot));
         RunNamedTest(failures, "type_checker_state_reset", RunTypeCheckerStateResetTests);

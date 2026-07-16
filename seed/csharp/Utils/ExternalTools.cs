@@ -22,10 +22,15 @@ public static class ExternalTools
         IReadOnlyList<string> additionalInputs,
         string outputPath)
     {
+        var linkerSelectionArguments = compiler == "clang-cl"
+            ? new[] { "-fuse-ld=lld" }
+            : Array.Empty<string>();
+
         return compiler switch
         {
             "clang-cl" or "cl" => [
                 "/nologo",
+                .. linkerSelectionArguments,
                 "/TC",
                 "/O2",
                 "/MD",
