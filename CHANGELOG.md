@@ -46,6 +46,8 @@ All notable changes to this project will be documented in this file.
   output directories instead of leaving build artifacts behind.
 - CI jobs now restore and run the actual C# test project instead of the removed
   `tests/csharp/tests/csharp.csproj` path.
+- Windows fixture CI now builds and configures the integrated native
+  `zorb.exe` before starting the cross-compiler test harness.
 - Local bootstrap seeds are now rejected when their checksum is missing,
   malformed, or does not match the artifact; downloaded seeds use the same
   verification path.

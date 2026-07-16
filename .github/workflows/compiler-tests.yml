@@ -222,6 +222,25 @@ jobs:
       - name: Build Compiler
         run: dotnet build seed/csharp/Zorb.Compiler.csproj -c Release --no-restore
 
+      - name: Build native fixture compiler
+        shell: pwsh
+        run: |
+          $nativeCompilerDir = Join-Path $env:RUNNER_TEMP "zorb-native-fixture"
+          ./scripts/publish-compiler-windows.ps1 $nativeCompilerDir
+
+          $nativeCompiler = Join-Path $nativeCompilerDir "zorb.exe"
+          if (-not (Test-Path -LiteralPath $nativeCompiler -PathType Leaf)) {
+            throw "Native fixture compiler was not produced at '$nativeCompiler'."
+          }
+
+          & $nativeCompiler check compiler/driver/main.zorb
+          if ($LASTEXITCODE -ne 0) {
+            throw "Native fixture compiler smoke check failed with exit code $LASTEXITCODE."
+          }
+
+          "ZORB_NATIVE_FIXTURE_COMPILER=$nativeCompiler" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Run Fixture Suite
         run: dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release
 
