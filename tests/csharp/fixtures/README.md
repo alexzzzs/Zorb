@@ -89,7 +89,7 @@ The current parity bar for the LLVM backend is:
 From the repository root:
 
 ```bash
-dotnet run --project tests/csharp/tests/csharp.csproj
+dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj
 ```
 
 The suite requires a built `backend/llvm`. Set `ZORB_LLVM_BACKEND` when the
