@@ -5884,6 +5884,60 @@ fn zbackend_ir_convert_asm_template(
     ) catch |err| { return error.OutOfMemory })
 }
 
+// LLVM treats single-letter GCC register constraints as register classes.
+// Preserve output modifiers while spelling the fixed x86 registers explicitly,
+// matching the stage-0 lowering contract.
+fn zbackend_ir_convert_asm_constraint(
+    allocator: *std.mem.HeapAllocator,
+    constraint: string,
+    is_x86: bool
+) !string {
+    constraint_bytes: *u8 = cast(*u8, constraint)
+    prefix_length: i64 = 0
+    while prefix_length < std.str.len(constraint) &&
+        (constraint_bytes[prefix_length] == 61 || constraint_bytes[prefix_length] == 43 ||
+        constraint_bytes[prefix_length] == 38) {
+        // LLVM output constraints do not support GCC's read-write '+' modifier.
+        if constraint_bytes[prefix_length] == 43 { return error.NotImplemented }
+        prefix_length = prefix_length + 1
+    }
+    if !is_x86 { return constraint }
+    body_length: i64 = std.str.len(constraint) - prefix_length
+    if body_length != 1 { return constraint }
+    register_name: string = ""
+    body: u8 = constraint_bytes[prefix_length]
+    if body == 97 { register_name = "ax" }
+    else if body == 98 { register_name = "bx" }
+    else if body == 99 { register_name = "cx" }
+    else if body == 100 { register_name = "dx" }
+    else if body == 83 { register_name = "si" }
+    else if body == 68 { register_name = "di" }
+    if std.str.len(register_name) == 0 { return constraint }
+
+    builder: std.collections.StringBuilder = std.collections.StringBuilder.init(
+        allocator, prefix_length + std.str.len(register_name) + 3
+    ) catch |err| { return error.OutOfMemory }
+    index: i64 = 0
+    while index < prefix_length {
+        std.collections.ByteList.append_byte(
+            &builder.bytes, allocator, constraint_bytes[index]
+        ) catch |err| { return error.OutOfMemory }
+        index = index + 1
+    }
+    std.collections.StringBuilder.append(
+        &builder, allocator, "{"
+    ) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(
+        &builder, allocator, register_name
+    ) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(
+        &builder, allocator, "}"
+    ) catch |err| { return error.OutOfMemory }
+    return cast(string, std.collections.StringBuilder.c_string(
+        &builder, allocator
+    ) catch |err| { return error.OutOfMemory })
+}
+
 fn zbackend_ir_cfg_lower_asm(
     context: *ZBackendIrControlFlowLowering,
     statement: ZAstStmt
@@ -5917,6 +5971,18 @@ fn zbackend_ir_cfg_lower_asm(
         arguments[operand_index] = zbackend_ir_cfg_lower_expression_as(
             context, expression_index, input_type_id
         ) catch |err| { return err }
+        input_type: ZBackendIrType = context.type_layout.types[input_type_id - 1]
+        if input_type.kind == "scalar" && zbackend_ir_scalar_bit_width(input_type.scalar) > 0 &&
+            zbackend_ir_scalar_bit_width(input_type.scalar) < 32 {
+            promoted_name: string = "u32"
+            if zbackend_ir_scalar_name_is_signed(input_type.scalar) { promoted_name = "i32" }
+            promoted_type_id: i64 = zbackend_ir_type_layout_intern_scalar(
+                context.type_layout, promoted_name
+            ) catch |err| { return err }
+            arguments[operand_index] = zbackend_ir_cfg_emit_cast_value(
+                context, arguments[operand_index], input_type_id, promoted_type_id
+            ) catch |err| { return err }
+        }
         operand_index = operand_index + 1
     }
     constraint_builder: std.collections.StringBuilder = std.collections.StringBuilder.init(
@@ -5958,6 +6024,10 @@ fn zbackend_ir_cfg_lower_asm(
                 &constraint_builder, context.allocator, "}"
             ) catch |err| { return error.OutOfMemory }
         } else {
+            constraint = zbackend_ir_convert_asm_constraint(
+                context.allocator, constraint,
+                std.str.starts_with(context.type_layout.target_triple, "x86_64-")
+            ) catch |err| { return err }
             std.collections.StringBuilder.append(
                 &constraint_builder, context.allocator, constraint
             ) catch |err| { return error.OutOfMemory }

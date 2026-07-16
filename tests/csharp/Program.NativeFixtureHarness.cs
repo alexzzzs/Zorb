@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 internal static partial class Program
 {
     private const string NativeFixtureCompilerEnvironmentVariable = "ZORB_NATIVE_FIXTURE_COMPILER";
@@ -169,6 +171,84 @@ internal static partial class Program
                     $"with exit code {result.ExitCode}.{Environment.NewLine}" +
                     $"{result.StdErr}{result.StdOut}".Trim());
             }
+        }
+
+        public void ValidateNamedTargetEmission(string mainPath)
+        {
+            var nativeLinuxTriple = RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+                ? "aarch64-unknown-linux-gnu"
+                : "x86_64-pc-linux-gnu";
+            var nativeWindowsTriple = RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+                ? "aarch64-pc-windows-msvc"
+                : "x86_64-pc-windows-msvc";
+            var cases = new (string Name, string Triple)[]
+            {
+                ("host-linux", nativeLinuxTriple),
+                ("freestanding-linux", nativeLinuxTriple),
+                ("host-linux-aarch64", "aarch64-unknown-linux-gnu"),
+                ("freestanding-linux-aarch64", "aarch64-unknown-linux-gnu"),
+                ("bare-metal-x86_64", "x86_64-unknown-none-elf"),
+                ("host-windows", nativeWindowsTriple)
+            };
+            foreach (var targetCase in cases)
+            {
+                var outputPath = Path.Combine(
+                    ownedTempDirectory,
+                    $"named-target-{targetCase.Name}.ll");
+                var result = RunProcessWithTimeoutArgs(
+                    compilerPath,
+                    [
+                        "build", mainPath, "--target", targetCase.Name,
+                        "--output-kind", "llvm-ir", "-o", outputPath
+                    ],
+                    projectRoot,
+                    TimeSpan.FromSeconds(NativeFixtureCommandTimeoutSeconds));
+                if (result.ExitCode != 0 || !File.Exists(outputPath))
+                {
+                    throw new Exception(
+                        $"Native Zorb failed named target '{targetCase.Name}'.{Environment.NewLine}" +
+                        $"{result.StdErr}{result.StdOut}".Trim());
+                }
+                var llvmIr = File.ReadAllText(outputPath);
+                if (!llvmIr.Contains(
+                    $"target triple = \"{targetCase.Triple}\"",
+                    StringComparison.Ordinal))
+                {
+                    throw new Exception(
+                        $"Native target '{targetCase.Name}' did not resolve to '{targetCase.Triple}'.");
+                }
+            }
+        }
+
+        public bool CanValidateBareMetalLinking() =>
+            OperatingSystem.IsLinux() &&
+            RuntimeInformation.ProcessArchitecture == Architecture.X64 &&
+            IsBareMetalLinkerAvailable();
+
+        public void ValidateBareMetalLinking(string mainPath)
+        {
+            if (!CanValidateBareMetalLinking())
+                throw new InvalidOperationException("Bare-metal linking is not available on this host.");
+
+            var outputPath = Path.Combine(ownedTempDirectory, "native-kernel.elf");
+            var linkerScriptPath = Path.Combine(ownedTempDirectory, "native-kernel.ld");
+            var result = RunProcessWithTimeoutArgs(
+                compilerPath,
+                [
+                    "build", mainPath, "--target", "bare-metal-x86_64",
+                    "-o", outputPath, "--emit-linker-script", linkerScriptPath
+                ],
+                projectRoot,
+                TimeSpan.FromSeconds(NativeFixtureCommandTimeoutSeconds));
+            if (result.ExitCode != 0 || !File.Exists(outputPath) || !File.Exists(linkerScriptPath))
+            {
+                throw new Exception(
+                    $"Native bare-metal linking failed.{Environment.NewLine}" +
+                    $"{result.StdErr}{result.StdOut}".Trim());
+            }
+            var linkerScript = File.ReadAllText(linkerScriptPath);
+            if (!linkerScript.Contains("ENTRY(_start)", StringComparison.Ordinal))
+                throw new Exception("Native bare-metal linking emitted an unexpected linker script.");
         }
 
         public void Dispose()
