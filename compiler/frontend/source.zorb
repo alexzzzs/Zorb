@@ -112,6 +112,25 @@ fn zsource_segment_same(path: []u8, start: i64, len: i64, value: string) -> bool
     return true
 }
 
+fn zsource_is_path_separator(value: u8) -> bool {
+    return value == 47 || value == 92
+}
+
+fn zsource_has_drive_prefix(path: []u8) -> bool {
+    if path.len < 2 || path.ptr[1] != 58 {
+        return false
+    }
+    first: u8 = path.ptr[0]
+    return (first >= 65 && first <= 90) || (first >= 97 && first <= 122)
+}
+
+fn zsource_is_absolute_path(path: []u8) -> bool {
+    if path.len > 0 && zsource_is_path_separator(path.ptr[0]) {
+        return true
+    }
+    return zsource_has_drive_prefix(path) && path.len > 2 && zsource_is_path_separator(path.ptr[2])
+}
+
 // Normalize purely lexical path components before a source enters the graph.
 // This gives one identity to `lib.zorb`, `./lib.zorb`, and `dir/../lib.zorb`
 // without changing symlink semantics or depending on host-specific realpath.
@@ -128,13 +147,18 @@ export fn zsource_canonicalize_path(allocator: *std.mem.HeapAllocator, path: []u
     }
     starts: *i64 = cast(*i64, starts_raw)
     lengths: *i64 = cast(*i64, lengths_raw)
-    absolute: bool = path.len > 0 && path.ptr[0] == 47
+    drive_absolute: bool = zsource_has_drive_prefix(path) && path.len > 2 && zsource_is_path_separator(path.ptr[2])
+    network_absolute: bool = path.len > 1 && zsource_is_path_separator(path.ptr[0]) && zsource_is_path_separator(path.ptr[1])
+    absolute: bool = zsource_is_absolute_path(path)
+    root_segment_count: i64 = 0
+    if drive_absolute { root_segment_count = 1 }
+    if network_absolute { root_segment_count = 2 }
     count: i64 = 0
     cursor: i64 = 0
 
     while cursor <= path.len {
         segment_start: i64 = cursor
-        while cursor < path.len && path.ptr[cursor] != 47 {
+        while cursor < path.len && !zsource_is_path_separator(path.ptr[cursor]) {
             cursor = cursor + 1
         }
         segment_len: i64 = cursor - segment_start
@@ -142,7 +166,7 @@ export fn zsource_canonicalize_path(allocator: *std.mem.HeapAllocator, path: []u
         if segment_len > 0 && !zsource_segment_same(path, segment_start, segment_len, ".") {
             is_parent: bool = zsource_segment_same(path, segment_start, segment_len, "..")
             previous_is_parent: bool = count > 0 && zsource_segment_same(path, starts[count - 1], lengths[count - 1], "..")
-            if is_parent && count > 0 && !previous_is_parent {
+            if is_parent && count > root_segment_count && !previous_is_parent {
                 count = count - 1
             } else if !is_parent || !absolute {
                 starts[count] = segment_start
@@ -160,7 +184,11 @@ export fn zsource_canonicalize_path(allocator: *std.mem.HeapAllocator, path: []u
     builder: std.collections.StringBuilder = std.collections.StringBuilder.init(allocator, path.len + 1) catch |err| {
         return error.OutOfMemory
     }
-    if absolute {
+    if network_absolute {
+        std.collections.StringBuilder.append(&builder, allocator, "//") catch |err| {
+            return error.OutOfMemory
+        }
+    } else if absolute && !drive_absolute {
         std.collections.StringBuilder.append(&builder, allocator, "/") catch |err| {
             return error.OutOfMemory
         }
@@ -197,7 +225,10 @@ export fn ZSourceManager.resolve_import_path(allocator: *std.mem.HeapAllocator, 
     raw: std.collections.StringBuilder = std.collections.StringBuilder.init(allocator, import_path.len + 1) catch |err| {
         return error.OutOfMemory
     }
-    if import_path.len > 0 && import_path.ptr[0] == 47 {
+    import_bytes: []u8
+    import_bytes.ptr = import_path.ptr
+    import_bytes.len = import_path.len
+    if zsource_is_absolute_path(import_bytes) {
         absolute: []u8
         absolute.ptr = import_path.ptr
         absolute.len = import_path.len
@@ -214,7 +245,7 @@ export fn ZSourceManager.resolve_import_path(allocator: *std.mem.HeapAllocator, 
     directory_len: i64 = 0
     cursor: i64 = 0
     while cursor < importer_len {
-        if cast(*u8, importer_path)[cursor] == 47 {
+        if zsource_is_path_separator(cast(*u8, importer_path)[cursor]) {
             directory_len = cursor + 1
         }
         cursor = cursor + 1

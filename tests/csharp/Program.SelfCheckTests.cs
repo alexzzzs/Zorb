@@ -18,6 +18,7 @@ internal static partial class Program
         var builtinSizeofInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "builtin_sizeof.zorb");
         var qualifiedHeapAllocationInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "qualified_heap_alloc.zorb");
         var importedInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "import_graph", "main.zorb");
+        var windowsStyleImportedInput = importedInput.Replace('/', '\\');
         var aliasedImportInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "import_alias", "main.zorb");
         var canonicalImportInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "import_canonical", "main.zorb");
         var aliasedEnumImportInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "import_alias_enum", "main.zorb");
@@ -89,6 +90,7 @@ internal static partial class Program
             // import graph without invoking the production frontend at run time.
             AssertSelfCheckResult(binaryPath, projectRoot, [selfGraphInput], 0, "self-check succeeded:", null);
             AssertSelfCheckResult(binaryPath, projectRoot, [importedInput], 0, "self-check succeeded:", null);
+            AssertSelfCheckResult(binaryPath, projectRoot, [windowsStyleImportedInput], 0, "self-check succeeded:", null);
             AssertSelfCheckResult(binaryPath, projectRoot, [aliasedImportInput], 0, "self-check succeeded:", null);
             AssertSelfCheckResult(binaryPath, projectRoot, [aliasedEnumImportInput], 0, "self-check succeeded:", null);
             AssertSelfCheckResult(binaryPath, projectRoot, [canonicalImportInput], 0, "self-check succeeded:", null);

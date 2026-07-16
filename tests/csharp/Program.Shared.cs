@@ -15,6 +15,8 @@ internal static partial class Program
         var projectRoot = GetProjectRoot();
         var compilerInvocation = GetCompilerInvocation(projectRoot);
         var sampleInput = Path.Combine(fixtureRoot, "error_undeclared", "main.zorb");
+        var diagnosticPath = Path.GetFullPath(sampleInput)
+            .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
         var result = RunProcessWithTimeoutArgs(
             compilerInvocation.FileName,
             CombineCommandArguments(compilerInvocation.ArgumentsPrefix, $"\"{sampleInput}\""),
@@ -38,8 +40,8 @@ internal static partial class Program
         if (diagnosticCount != 2)
             throw new Exception($"Expected exactly 2 semantic diagnostic messages for the two distinct source locations, got {diagnosticCount}.{Environment.NewLine}Actual stderr:{Environment.NewLine}{stderr}");
 
-        var firstLocationCount = CountOccurrences(stderr, $"{sampleInput}:2:18:");
-        var secondLocationCount = CountOccurrences(stderr, $"{sampleInput}:2:5:");
+        var firstLocationCount = CountOccurrences(stderr, $"{diagnosticPath}:2:18:");
+        var secondLocationCount = CountOccurrences(stderr, $"{diagnosticPath}:2:5:");
         if (firstLocationCount != 1 || secondLocationCount != 1)
         {
             throw new Exception(
