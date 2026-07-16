@@ -3,6 +3,11 @@ const builtin = @import("builtin");
 const ir = @import("backend_ir.zig");
 const Backend = @import("backend.zig").Backend;
 
+// This library runs inside a compiler linked by the host toolchain. Avoid the
+// default stack-tracing panic path, which depends on private Windows loader
+// notification imports that are not consistently exposed by ntdll.lib.
+pub const panic = std.debug.simple_panic;
+
 const max_ir_bytes = 64 * 1024 * 1024;
 const max_linker_output_bytes = 8 * 1024 * 1024;
 const linker_timeout: std.Io.Timeout = .{ .duration = .{
