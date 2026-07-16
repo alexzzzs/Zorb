@@ -1,0 +1,9 @@
+struct Box<T> {
+    value: T,
+}
+
+struct Bad {
+    value: T,
+}
+
+fn _start() {}

@@ -28,6 +28,15 @@ fn zself_usage() {
     std.io.eprint("       zorb-self-check --emit-backend-ir <target-triple> <output-path> <entry.zorb>\n")
 }
 
+fn zself_option_requires_operand(value: string) -> bool {
+    return std.str.eql(value, ZORB_SELF_CHECK_JSON_OPTION) ||
+        std.str.eql(value, ZORB_SELF_CHECK_DUMP_TOKENS_OPTION) ||
+        std.str.eql(value, ZORB_SELF_CHECK_DUMP_AST_OPTION) ||
+        std.str.eql(value, ZORB_SELF_CHECK_BATCH_OPTION) ||
+        std.str.eql(value, ZORB_SELF_CHECK_BATCH_JSON_OPTION) ||
+        std.str.eql(value, ZORB_SELF_CHECK_EMIT_BACKEND_IR_OPTION)
+}
+
 fn zself_emit_backend_ir(target_triple: string, output_path: string, entry: string) -> i64 {
     session: ZFrontendSession = ZFrontendSession.init(ZORB_SELF_CHECK_HEAP_BYTES) catch |err| {
         std.io.eprint("backend IR initialization failed\n")
@@ -137,6 +146,11 @@ fn main(argc: i64, argv: **u8) -> i64 {
         return zself_check_batch(args, 2, false)
     } else if std.process.len(args) >= 3 && std.str.eql(std.process.at(args, 1), ZORB_SELF_CHECK_BATCH_JSON_OPTION) {
         return zself_check_batch(args, 2, true)
+    } else if std.process.len(args) == 2 && zself_option_requires_operand(
+        std.process.at(args, 1)
+    ) {
+        zself_usage()
+        return ZORB_SELF_CHECK_USAGE_EXIT
     } else if std.process.len(args) != 2 {
         zself_usage()
         return ZORB_SELF_CHECK_USAGE_EXIT

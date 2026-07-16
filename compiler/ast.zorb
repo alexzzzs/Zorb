@@ -550,6 +550,58 @@ fn zast_generic_argument_count(suffix: ZAstText) -> i64 {
     return count
 }
 
+fn zast_generic_default_type_known(
+    self: *ZAstModule,
+    decl: ZAstDecl,
+    type_text: ZAstText,
+    generic_index: i64
+) -> bool {
+    type_text = zast_type_text_unwrap(type_text)
+    base: ZAstText = zast_type_text_base(type_text)
+    parameter_index: i64 = zast_decl_generic_param_index(self, decl, base)
+    if parameter_index != ZAstNoIndex {
+        return parameter_index < generic_index
+    }
+    if !zast_is_builtin_type(base) && !zast_is_function_type(base) &&
+        ZAstModule.find_decl(self, base) == ZAstNoIndex {
+        return false
+    }
+
+    suffix: ZAstText = ZAstText.empty()
+    if base.len < type_text.len && type_text.ptr[base.len] == 60 {
+        suffix.ptr = type_text.ptr + base.len
+        suffix.len = type_text.len - base.len
+    }
+    argument_index: i64 = 0
+    argument: ZAstText = zast_generic_argument_at(suffix, argument_index)
+    while argument.len > 0 {
+        if !zast_generic_default_type_known(
+            self, decl, argument, generic_index
+        ) {
+            return false
+        }
+        argument_index = argument_index + 1
+        argument = zast_generic_argument_at(suffix, argument_index)
+    }
+    return true
+}
+
+fn zast_decl_generic_defaults_valid(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    generic_index: i64 = 0
+    while generic_index < decl.generic_param_count {
+        type_index: i64 = self.generic_default_types[
+            decl.generic_param_start + generic_index
+        ]
+        if type_index != ZAstNoIndex && !zast_generic_default_type_known(
+            self, decl, zast_decl_type_text(self, type_index), generic_index
+        ) {
+            return false
+        }
+        generic_index = generic_index + 1
+    }
+    return true
+}
+
 // Generic suffixes are retained in the type text. Validate their declaration
 // arity and direct argument names without allocating substituted types.
 fn zast_type_generic_arguments_valid(self: *ZAstModule, decl: ZAstDecl, type_index: i64) -> bool {
@@ -1668,7 +1720,7 @@ fn zast_expr_type_text(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, throu
     return ZAstText.empty()
 }
 
-fn zast_type_known(self: *ZAstModule, type_index: i64) -> bool {
+fn zast_type_known(self: *ZAstModule, decl: ZAstDecl, type_index: i64) -> bool {
     if type_index == ZAstNoIndex {
         return true
     }
@@ -1682,17 +1734,8 @@ fn zast_type_known(self: *ZAstModule, type_index: i64) -> bool {
     if zast_is_function_type(text) {
         return true
     }
-    declaration_index: i64 = 0
-    while declaration_index < self.len {
-        declaration: ZAstDecl = self.decls[declaration_index]
-        generic_index: i64 = 0
-        while generic_index < declaration.generic_param_count {
-            if zast_text_same(self.generic_params[declaration.generic_param_start + generic_index], text) {
-                return true
-            }
-            generic_index = generic_index + 1
-        }
-        declaration_index = declaration_index + 1
+    if zast_decl_has_generic_param(self, decl, text) {
+        return true
     }
     decl_index: i64 = ZAstModule.find_decl(self, text)
     if decl_index == ZAstNoIndex {
@@ -2071,7 +2114,7 @@ fn zast_function_type_param(type_text: ZAstText, wanted_index: i64) -> ZAstText 
 }
 
 fn zast_function_signature_matches(self: *ZAstModule, function_decl: ZAstDecl, expected: ZAstText) -> bool {
-    if function_decl.is_imported || function_decl.generic_param_count > 0 {
+    if function_decl.generic_param_count > 0 {
         return true
     }
     expected_count: i64 = zast_function_type_param_count(expected)
@@ -2252,7 +2295,7 @@ fn zast_function_accepts_return(self: *ZAstModule, decl: ZAstDecl, expr_index: i
     // The subset AST currently stores the payload type for `!T`. An explicit
     // `error.X` is therefore a valid alternate return even though it is not
     // assignable to T directly.
-    if self.exprs[expr_index].kind == ZAstExprError {
+    if decl.return_is_error_union && self.exprs[expr_index].kind == ZAstExprError {
         return true
     }
 
@@ -2303,9 +2346,8 @@ fn zast_function_accepts_return(self: *ZAstModule, decl: ZAstDecl, expr_index: i
         if callee_index == ZAstNoIndex && expr.left != ZAstNoIndex { callee_index = zast_qualified_decl_index(self, expr.left) }
         if callee_index != ZAstNoIndex {
             callee: ZAstDecl = self.decls[callee_index]
-            // Import projections preserve the symbol and declared result text
-            // but deliberately do not share generic parameter arenas. Let
-            // the return context supply the unresolved specialization.
+            // Imported callable variables retain their function type but do
+            // not have a function declaration return arena of their own.
             if callee.is_imported { return true }
             if callee.generic_param_count > 0 && zast_decl_has_generic_param(self, callee, zast_decl_type_text(self, callee.return_type_index)) {
                 return true
@@ -2528,7 +2570,7 @@ fn zast_expr_names_known(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, thr
     if expr.kind == ZAstExprCall {
         if zast_expr_is_builtin_member(self, expr.left, "sizeof") {
             if expr.type_index != ZAstNoIndex {
-                return zast_type_known(self, expr.type_index)
+                return zast_type_known(self, decl, expr.type_index)
             }
             return expr.arg_count == 1 && zast_builtin_sizeof_argument_known(self, self.expr_args[expr.arg_start])
         }
@@ -2550,10 +2592,9 @@ fn zast_expr_names_known(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, thr
                     return false
                 }
             }
-            // Projected import symbols intentionally do not carry foreign
-            // parameter arenas. Their arity is checked by import semantics
-            // once those records are modeled natively.
-            if fn_index != ZAstNoIndex && !self.decls[fn_index].is_imported && self.decls[fn_index].param_count != expr.arg_count {
+            // Imported projections copy their signature arenas into this
+            // module, so direct and qualified calls share the same arity rule.
+            if fn_index != ZAstNoIndex && self.decls[fn_index].param_count != expr.arg_count {
                 return false
             }
         } else {
@@ -2573,7 +2614,7 @@ fn zast_expr_names_known(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, thr
         return zast_expr_names_known(self, decl, expr.left, through_stmt) && zast_expr_names_known(self, decl, expr.right, through_stmt)
     }
     if expr.kind == ZAstExprCast {
-        return zast_type_known(self, expr.type_index) && zast_expr_names_known(self, decl, expr.left, through_stmt)
+        return zast_type_known(self, decl, expr.type_index) && zast_expr_names_known(self, decl, expr.left, through_stmt)
     }
     if expr.kind == ZAstExprStructLiteral {
         if !zast_expr_names_known(self, decl, expr.left, through_stmt) {
@@ -2589,7 +2630,7 @@ fn zast_expr_names_known(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, thr
         return zast_expr_type_text(self, decl, expr_index, through_stmt).len > 0
     }
     if expr.kind == ZAstExprArrayLiteral {
-        if !zast_type_known(self, expr.type_index) {
+        if !zast_type_known(self, decl, expr.type_index) {
             return false
         }
         i: i64 = 0
@@ -3201,10 +3242,23 @@ fn zast_validate_call_argument_types(self: *ZAstModule, decl: ZAstDecl, expr_ind
     if expr_index == ZAstNoIndex { return 0 }
     expr: ZAstExpr = self.exprs[expr_index]
     if expr.kind == ZAstExprCall {
+        function_index: i64 = ZAstNoIndex
         if expr.name.len > 0 {
-            function_index: i64 = zast_function_name_known(self, expr.name)
-            if function_index != ZAstNoIndex {
+            function_index = zast_function_name_known(self, expr.name)
+        } else if expr.left != ZAstNoIndex {
+            function_index = zast_qualified_decl_index(self, expr.left)
+        }
+        if function_index != ZAstNoIndex &&
+            self.decls[function_index].kind != ZAstDeclFunction &&
+            self.decls[function_index].kind != ZAstDeclExternFunction {
+            function_index = ZAstNoIndex
+        }
+        if function_index != ZAstNoIndex {
                 function_decl: ZAstDecl = self.decls[function_index]
+                if function_decl.param_count != expr.arg_count {
+                    self.semantic_error_span = self.exprs[expr.left].span
+                    return error.InvalidArgument
+                }
                 if !zast_call_generic_arguments_valid(self, expr) {
                     self.semantic_error_span = self.exprs[expr.left].span
                     return error.InvalidArgument
@@ -3248,7 +3302,7 @@ fn zast_validate_call_argument_types(self: *ZAstModule, decl: ZAstDecl, expr_ind
                         generic_index = generic_index + 1
                     }
                 }
-                if !function_decl.is_imported && function_decl.generic_param_count == 0 {
+                if function_decl.generic_param_count == 0 {
                     argument_index: i64 = 0
                     while argument_index < expr.arg_count {
                         expected_type_index: i64 = self.params[function_decl.param_start + argument_index].type_index
@@ -3279,7 +3333,6 @@ fn zast_validate_call_argument_types(self: *ZAstModule, decl: ZAstDecl, expr_ind
                         argument_index = argument_index + 1
                     }
                 }
-            }
         }
         argument_index: i64 = 0
         while argument_index < expr.arg_count {
@@ -3318,10 +3371,11 @@ fn zast_expr_is_error_union(self: *ZAstModule, expr_index: i64) -> bool {
         declaration_index = zast_qualified_decl_index(self, expr.left)
     }
     if declaration_index == ZAstNoIndex { return false }
-    // Imported lookup projections currently retain symbol visibility but not
-    // their foreign error-union signature. Preserve the established import
-    // boundary behavior until import metadata is fully materialized.
-    if self.decls[declaration_index].is_imported { return true }
+    if self.decls[declaration_index].is_imported &&
+        self.decls[declaration_index].kind != ZAstDeclFunction &&
+        self.decls[declaration_index].kind != ZAstDeclExternFunction {
+        return true
+    }
     return self.decls[declaration_index].return_is_error_union
 }
 
@@ -3833,7 +3887,7 @@ fn zast_check_stmt_node(self: *ZAstModule, decl: ZAstDecl, stmt_index: i64) !i64
             self.semantic_error_span = self.exprs[stmt.attribute_expr].span
             return error.InvalidArgument
         }
-        if !zast_type_known(self, stmt.type_index) {
+        if !zast_type_known(self, decl, stmt.type_index) {
             self.semantic_error_span = stmt.span
             return error.NotFound
         }
@@ -3861,7 +3915,7 @@ fn zast_check_stmt_node(self: *ZAstModule, decl: ZAstDecl, stmt_index: i64) !i64
                 initializer: ZAstExpr = self.exprs[stmt.expr_index]
                 if initializer.kind == ZAstExprCall && initializer.name.len > 0 {
                     callee_index: i64 = zast_function_name_known(self, initializer.name)
-                    if callee_index != ZAstNoIndex && !self.decls[callee_index].is_imported && !self.decls[callee_index].return_is_error_union {
+                    if callee_index != ZAstNoIndex && !self.decls[callee_index].return_is_error_union {
                         self.semantic_error_span = stmt.recovery_span
                         if self.semantic_error_span.line == 0 { self.semantic_error_span = stmt.span }
                         return error.InvalidArgument
@@ -4098,7 +4152,11 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
             continue
         }
 
-        if !zast_type_known(self, self.decls[i].type_index) {
+        if !zast_type_known(self, self.decls[i], self.decls[i].type_index) {
+            return error.NotFound
+        }
+        if !zast_decl_generic_defaults_valid(self, self.decls[i]) {
+            self.semantic_error_span = self.decls[i].span
             return error.NotFound
         }
         if !zast_type_generic_arguments_valid(self, self.decls[i], self.decls[i].type_index) {
@@ -4113,7 +4171,7 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
             self.semantic_error_span = self.decls[i].span
             return error.InvalidArgument
         }
-        if !zast_type_known(self, self.decls[i].return_type_index) {
+        if !zast_type_known(self, self.decls[i], self.decls[i].return_type_index) {
             return error.NotFound
         }
         if !zast_type_generic_arguments_valid(self, self.decls[i], self.decls[i].return_type_index) {
@@ -4161,7 +4219,7 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
 
         p: i64 = 0
         while p < self.decls[i].param_count {
-            if !zast_type_known(self, self.params[self.decls[i].param_start + p].type_index) {
+            if !zast_type_known(self, self.decls[i], self.params[self.decls[i].param_start + p].type_index) {
                 return error.NotFound
             }
             if !zast_type_generic_arguments_valid(self, self.decls[i], self.params[self.decls[i].param_start + p].type_index) {
@@ -4174,7 +4232,7 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
         m: i64 = 0
         while m < self.decls[i].member_count {
             member: ZAstMember = self.members[self.decls[i].member_start + m]
-            if member.type_index != ZAstNoIndex && !zast_type_known(self, member.type_index) {
+            if member.type_index != ZAstNoIndex && !zast_type_known(self, self.decls[i], member.type_index) {
                 return error.NotFound
             }
             if !zast_type_generic_arguments_valid(self, self.decls[i], member.type_index) {

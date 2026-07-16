@@ -32,6 +32,22 @@ internal static partial class Program
         using var nativeFixtureHarness = NativeFixtureHarness.Create(projectRoot);
         foreach (var fixtureDir in fixtureDirs)
             RunNamedTest(failures, Path.GetFileName(fixtureDir), () => RunFixture(fixtureDir, nativeFixtureHarness));
+        RunNamedTest(
+            failures,
+            "native_run_exit_code",
+            () => nativeFixtureHarness.ValidateRunExitCode(
+                Path.Combine(fixtureRoot, "runtime_host_nonzero_exit", "main.zorb"),
+                expectedExitCode: 7));
+        RunNamedTest(
+            failures,
+            "native_concurrent_runs",
+            () => nativeFixtureHarness.ValidateConcurrentRuns(
+                Path.Combine(fixtureRoot, "runtime_hello_world", "main.zorb")));
+        RunNamedTest(
+            failures,
+            "native_link_args_require_executable",
+            () => nativeFixtureHarness.ValidateNativeLinkArgsRequireExecutable(
+                Path.Combine(fixtureRoot, "runtime_hello_world", "main.zorb")));
 
         RunNamedTest(failures, "cli_workflow", () => RunCliWorkflowTests(fixtureRoot));
         RunNamedTest(failures, "fixture_parity_classification", RunFixtureParityClassificationTests);

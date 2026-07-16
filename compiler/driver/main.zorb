@@ -12,6 +12,7 @@ import "../backend-ir/serialization.zorb"
 import "../frontend/session.zorb"
 
 extern fn zorb_llvm_emit_file(path: *u8) -> i32
+extern fn zorb_llvm_process_id() -> i64
 extern fn zorb_llvm_link_object(
     object_path: *u8,
     output_path: *u8,
@@ -48,6 +49,21 @@ fn zorb_join_suffix(allocator: *std.mem.HeapAllocator, value: string, suffix: st
     std.collections.StringBuilder.append(&builder, allocator, suffix) catch |err| {
         return error.OutOfMemory
     }
+    return cast(string, std.collections.StringBuilder.c_string(
+        &builder, allocator
+    ) catch |err| { return error.OutOfMemory })
+}
+
+fn zorb_run_output(allocator: *std.mem.HeapAllocator) !string {
+    builder: std.collections.StringBuilder = std.collections.StringBuilder.init(
+        allocator, 32
+    ) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(&builder, allocator, ".zorb-run-") catch |err| {
+        return error.OutOfMemory
+    }
+    std.collections.StringBuilder.append_i64(
+        &builder, allocator, zorb_llvm_process_id()
+    ) catch |err| { return error.OutOfMemory }
     return cast(string, std.collections.StringBuilder.c_string(
         &builder, allocator
     ) catch |err| { return error.OutOfMemory })
@@ -98,6 +114,14 @@ fn zorb_compile(
         std.io.eprint("zorb: unable to initialize compiler session\n")
         return 1
     }
+    compile_output: string = output
+    if run_after_link {
+        compile_output = zorb_run_output(&session.heap) catch |err| {
+            std.io.eprint("zorb: unable to prepare run output path\n")
+            ZFrontendSession.deinit(&session)
+            return 1
+        }
+    }
     if ZFrontendSession.check_file(&session, input) != 0 {
         ZFrontendSession.deinit(&session)
         return 1
@@ -108,15 +132,15 @@ fn zorb_compile(
         return 1
     }
 
-    ir_path: string = zorb_join_suffix(&session.heap, output, ".zorb-ir.json") catch |err| {
+    ir_path: string = zorb_join_suffix(&session.heap, compile_output, ".zorb-ir.json") catch |err| {
         ZFrontendSession.deinit(&session)
         return 1
     }
-    backend_output: string = output
+    backend_output: string = compile_output
     backend_kind: string = output_kind
     needs_link: bool = std.str.eql(output_kind, "executable")
     if needs_link {
-        backend_output = zorb_join_suffix(&session.heap, output, ".zorb.o") catch |err| {
+        backend_output = zorb_join_suffix(&session.heap, compile_output, ".zorb.o") catch |err| {
             ZFrontendSession.deinit(&session)
             return 1
         }
@@ -138,7 +162,7 @@ fn zorb_compile(
     }
     if zorb_llvm_emit_file(cast(*u8, ir_path)) != 0 {
         zorb_cleanup_compile_files(
-            ir_path, backend_output, output, needs_link, false
+            ir_path, backend_output, compile_output, needs_link, false
         )
         ZFrontendSession.deinit(&session)
         return 1
@@ -148,12 +172,12 @@ fn zorb_compile(
         run_flag: i32 = 0
         if run_after_link { run_flag = 1 }
         result = cast(i64, zorb_llvm_link_object(
-            cast(*u8, backend_output), cast(*u8, output), run_flag,
+            cast(*u8, backend_output), cast(*u8, compile_output), run_flag,
             native_args, native_arg_count
         ))
     }
     zorb_cleanup_compile_files(
-        ir_path, backend_output, output, needs_link, run_after_link
+        ir_path, backend_output, compile_output, needs_link, run_after_link
     )
     ZFrontendSession.deinit(&session)
     return result
@@ -252,6 +276,10 @@ fn main(argc: i64, argv: **u8) -> i64 {
     }
     if is_run && !std.str.eql(output_kind, "executable") {
         std.io.eprint("zorb: run requires executable output\n")
+        return 64
+    }
+    if native_arg_count > 0 && !std.str.eql(output_kind, "executable") {
+        std.io.eprint("zorb: --native-link-args requires executable output\n")
         return 64
     }
     if std.str.eql(output_kind, "executable") && !zorb_can_link_target(target) {

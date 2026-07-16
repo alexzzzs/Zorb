@@ -3,6 +3,7 @@ internal static partial class Program
     private const string NativeFixtureCompilerEnvironmentVariable = "ZORB_NATIVE_FIXTURE_COMPILER";
     private const int NativeFixtureBootstrapTimeoutSeconds = 300;
     private const int NativeFixtureCommandTimeoutSeconds = 60;
+    private const int NativeFixtureConcurrentRunCount = 8;
 
     private sealed class NativeFixtureHarness : IDisposable
     {
@@ -98,6 +99,74 @@ internal static partial class Program
             {
                 throw new Exception(
                     $"Native Zorb did not reject the fixture with a structured diagnostic.{Environment.NewLine}" +
+                    $"{result.StdErr}{result.StdOut}".Trim());
+            }
+        }
+
+        public void ValidateRunExitCode(string mainPath, int expectedExitCode)
+        {
+            var result = RunProcessWithTimeoutArgs(
+                compilerPath,
+                ["run", mainPath],
+                projectRoot,
+                TimeSpan.FromSeconds(NativeFixtureCommandTimeoutSeconds));
+            if (result.ExitCode != expectedExitCode)
+            {
+                throw new Exception(
+                    $"Native Zorb returned {result.ExitCode} for a program that exited with " +
+                    $"{expectedExitCode}.{Environment.NewLine}{result.StdErr}{result.StdOut}".Trim());
+            }
+        }
+
+        public void ValidateConcurrentRuns(string mainPath)
+        {
+            var runs = Enumerable.Range(0, NativeFixtureConcurrentRunCount)
+                .Select(_ => Task.Run(() => RunProcessWithTimeoutArgs(
+                    compilerPath,
+                    ["run", mainPath],
+                    projectRoot,
+                    TimeSpan.FromSeconds(NativeFixtureCommandTimeoutSeconds))))
+                .ToArray();
+            Task.WaitAll(runs);
+
+            var failedRuns = runs
+                .Select((run, index) => (index, result: run.Result))
+                .Where(run => run.result.ExitCode != 0)
+                .ToArray();
+            if (failedRuns.Length > 0)
+            {
+                var details = string.Join(
+                    Environment.NewLine,
+                    failedRuns.Select(run =>
+                        $"run {run.index}: exit {run.result.ExitCode}{Environment.NewLine}" +
+                        $"{run.result.StdErr}{run.result.StdOut}".Trim()));
+                throw new Exception(
+                    $"{failedRuns.Length} concurrent native Zorb run(s) failed.{Environment.NewLine}{details}");
+            }
+        }
+
+        public void ValidateNativeLinkArgsRequireExecutable(string mainPath)
+        {
+            var outputPath = Path.Combine(ownedTempDirectory, "invalid-native-link-args.ll");
+            var result = RunProcessWithTimeoutArgs(
+                compilerPath,
+                [
+                    "build",
+                    mainPath,
+                    "--output-kind",
+                    "llvm-ir",
+                    "-o",
+                    outputPath,
+                    "--native-link-args",
+                    "-lm"
+                ],
+                projectRoot,
+                TimeSpan.FromSeconds(NativeFixtureCommandTimeoutSeconds));
+            if (result.ExitCode != 64)
+            {
+                throw new Exception(
+                    $"Native Zorb accepted linker arguments for non-executable output " +
+                    $"with exit code {result.ExitCode}.{Environment.NewLine}" +
                     $"{result.StdErr}{result.StdOut}".Trim());
             }
         }

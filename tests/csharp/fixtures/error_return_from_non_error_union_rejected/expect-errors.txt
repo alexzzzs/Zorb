@@ -1,0 +1,1 @@
+Function 'wrong' does not return an error union (!), so you cannot return an error code.

@@ -28,6 +28,7 @@ internal static partial class Program
         var cycleInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "import_cycle", "main.zorb");
         var missingImportInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "import_missing", "main.zorb");
         var invalidInput = Path.Combine(fixtureRoot, "parse_parameter_missing_colon", "main.zorb");
+        var catchExpressionInput = Path.Combine(fixtureRoot, "catch_expression_codegen", "main.zorb");
         var backendIrInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_scalar.zorb");
         var backendIrAddInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_add.zorb");
         var backendIrSignedDivInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_signed_div.zorb");
@@ -105,6 +106,7 @@ internal static partial class Program
             AssertSelfCheckJsonResult(binaryPath, projectRoot, invalidInput, 1, "diagnostic", null, "parse.invalid-syntax");
             AssertSelfCheckJsonStream(binaryPath, projectRoot, "--dump-tokens", validInput, "token");
             AssertSelfCheckJsonStream(binaryPath, projectRoot, "--dump-ast", validInput, "ast-module");
+            AssertSelfCheckAstHasNoUnknownKinds(binaryPath, projectRoot, catchExpressionInput);
             AssertNativeBackendIr(binaryPath, projectRoot, tempDir, backendIrInput, backendIrAddInput, backendIrSignedDivInput);
             AssertNativeMultipleFunctionsBackendIr(binaryPath, projectRoot, tempDir, backendIrMultipleFunctionsInput);
             AssertNativeDirectCallBackendIr(binaryPath, projectRoot, tempDir, backendIrDirectCallInput);
@@ -143,6 +145,24 @@ internal static partial class Program
                 binaryPath, projectRoot, tempDir, backendIrGenericsInput);
             AssertSelfCheckBatchIsolation(binaryPath, projectRoot, validInput, importedInput, invalidInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [], 64, null, "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
+            foreach (var option in new[]
+            {
+                "--json",
+                "--dump-tokens",
+                "--dump-ast",
+                "--batch",
+                "--batch-json",
+                "--emit-backend-ir"
+            })
+            {
+                AssertSelfCheckResult(
+                    binaryPath,
+                    projectRoot,
+                    [option],
+                    64,
+                    null,
+                    "usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>");
+            }
         });
     }
 
@@ -1629,6 +1649,32 @@ internal static partial class Program
         catch (System.Text.Json.JsonException ex)
         {
             throw new Exception($"zorb-self-check did not emit one valid JSON object: {ex.Message}\nActual stdout:\n{execution.StdOut}".Trim());
+        }
+    }
+
+    private static void AssertSelfCheckAstHasNoUnknownKinds(
+        string binaryPath,
+        string workingDirectory,
+        string inputPath)
+    {
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--dump-ast", inputPath],
+            workingDirectory,
+            TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
+        if (execution.ExitCode != 0 || !string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"zorb-self-check AST dump failed.\n{execution.StdErr}{execution.StdOut}".Trim());
+
+        foreach (var line in execution.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(line);
+            var record = document.RootElement;
+            if (record.TryGetProperty("expressionKind", out var expressionKind) &&
+                expressionKind.GetString() == "unknown")
+                throw new Exception($"zorb-self-check serialized an unknown expression kind.\n{line}");
+            if (record.TryGetProperty("statementKind", out var statementKind) &&
+                statementKind.GetString() == "unknown")
+                throw new Exception($"zorb-self-check serialized an unknown statement kind.\n{line}");
         }
     }
 

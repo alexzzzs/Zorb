@@ -36,6 +36,7 @@ fn zserialize_expr_kind(kind: i64) -> string {
     if kind == ZAstExprField { return "field" }
     if kind == ZAstExprIndex { return "index" }
     if kind == ZAstExprCast { return "cast" }
+    if kind == ZAstExprCatch { return "catch" }
     if kind == ZAstExprError { return "error" }
     if kind == ZAstExprStructLiteral { return "struct-literal" }
     if kind == ZAstExprArrayLiteral { return "array-literal" }
@@ -52,6 +53,12 @@ fn zserialize_stmt_kind(kind: i64) -> string {
     if kind == ZAstStmtCase { return "case" }
     if kind == ZAstStmtElse { return "else" }
     if kind == ZAstStmtFor { return "for" }
+    if kind == ZAstStmtIf { return "if" }
+    if kind == ZAstStmtWhile { return "while" }
+    if kind == ZAstStmtSwitch { return "switch" }
+    if kind == ZAstStmtBreak { return "break" }
+    if kind == ZAstStmtContinue { return "continue" }
+    if kind == ZAstStmtAsm { return "asm" }
     return "unknown"
 }
 

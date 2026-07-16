@@ -1583,7 +1583,21 @@ fn zbackend_ir_eval_integer_text(
 ) !i64 {
     text = zbackend_ir_trim_type_text(text)
     if text.len == 0 { return error.InvalidArgument }
+    outer_group: bool = false
     if text.ptr[0] == 40 && text.ptr[text.len - 1] == 41 {
+        group_depth: i64 = 0
+        group_index: i64 = 0
+        while group_index < text.len {
+            if text.ptr[group_index] == 40 { group_depth = group_depth + 1 }
+            if text.ptr[group_index] == 41 { group_depth = group_depth - 1 }
+            if group_depth == 0 {
+                outer_group = group_index == text.len - 1
+                break
+            }
+            group_index = group_index + 1
+        }
+    }
+    if outer_group {
         return zbackend_ir_eval_integer_text(
             ast, ZAstText{ ptr: text.ptr + 1, len: text.len - 2 },
             scope_declaration_start, scope_statement

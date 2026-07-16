@@ -50,6 +50,12 @@ fn processEnviron() std.process.Environ {
     return .{ .block = .{ .slice = std.c.environ[0..count :null] } };
 }
 
+export fn zorb_llvm_process_id() callconv(.c) i64 {
+    if (builtin.os.tag == .windows)
+        return @intCast(std.os.windows.GetCurrentProcessId());
+    return @intCast(std.c.getpid());
+}
+
 export fn zorb_llvm_emit_file(path: [*:0]const u8) callconv(.c) c_int {
     const io = std.Io.Threaded.global_single_threaded.io();
     emitFile(std.heap.c_allocator, io, std.mem.span(path)) catch |err| {
@@ -215,7 +221,7 @@ export fn zorb_llvm_link_object(
         return 1;
     };
     return switch (run_term) {
-        .exited => |code| if (code == 0) 0 else 1,
+        .exited => |code| @intCast(code),
         else => 1,
     };
 }

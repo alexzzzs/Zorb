@@ -513,16 +513,24 @@ fn zsession_name_is_unqualified(name: ZAstText) -> bool {
 
 // Enum members are independently visible symbols in the stage-0 frontend
 // (`Mode.Run`), so project them beside their exported enum declaration.
-fn zsession_add_imported_enum_members(self: *ZFrontendSession, module: *ZAstModule, imported_module: *ZAstModule, enum_decl: ZAstDecl) !i64 {
+fn zsession_add_imported_enum_members(
+    self: *ZFrontendSession,
+    module: *ZAstModule,
+    imported_module: *ZAstModule,
+    source_decl: ZAstDecl,
+    imported_name: ZAstText
+) !i64 {
     member_index: i64 = 0
-    while member_index < enum_decl.member_count {
-        member: ZAstMember = imported_module.members[enum_decl.member_start + member_index]
+    while member_index < source_decl.member_count {
+        member: ZAstMember = imported_module.members[
+            source_decl.member_start + member_index
+        ]
         member_decl: ZAstDecl = ZAstDecl.init(ZAstDeclConst, false)
-        member_decl.name = zsession_imported_name(self, enum_decl.name, member.name) catch |err| {
+        member_decl.name = zsession_imported_name(self, imported_name, member.name) catch |err| {
             return err
         }
         if ZAstModule.find_decl(module, member_decl.name) == ZAstNoIndex {
-            member_decl.type_index = ZAstModule.append_type(module, &self.heap, enum_decl.name) catch |err| {
+            member_decl.type_index = ZAstModule.append_type(module, &self.heap, imported_name) catch |err| {
                 return err
             }
             member_decl.is_imported = true
@@ -551,11 +559,52 @@ fn zsession_copy_imported_members(self: *ZFrontendSession, module: *ZAstModule, 
         // Member constant expressions point into the source AST. They are
         // intentionally deferred to the cross-module constant pass.
         member.value_expr = ZAstNoIndex
+        member.attribute_expr = ZAstNoIndex
         ZAstModule.append_member(module, &self.heap, member) catch |err| {
             return err
         }
         candidate.member_count = candidate.member_count + 1
         member_index = member_index + 1
+    }
+    return 0
+}
+
+fn zsession_copy_imported_signature(
+    self: *ZFrontendSession,
+    module: *ZAstModule,
+    imported_module: *ZAstModule,
+    candidate: *ZAstDecl,
+    source_decl: ZAstDecl
+) !i64 {
+    candidate.generic_param_start = module.generic_param_count_total
+    generic_index: i64 = 0
+    while generic_index < source_decl.generic_param_count {
+        source_generic_index: i64 = source_decl.generic_param_start + generic_index
+        destination_generic_index: i64 = ZAstModule.append_generic_param(
+            module, &self.heap, imported_module.generic_params[source_generic_index]
+        ) catch |err| { return err }
+        module.generic_default_types[destination_generic_index] = zsession_copy_type(
+            self,
+            module,
+            imported_module,
+            imported_module.generic_default_types[source_generic_index]
+        ) catch |err| { return err }
+        generic_index = generic_index + 1
+    }
+
+    candidate.param_start = module.param_count_total
+    parameter_index: i64 = 0
+    while parameter_index < source_decl.param_count {
+        parameter: ZAstParam = imported_module.params[
+            source_decl.param_start + parameter_index
+        ]
+        parameter.type_index = zsession_copy_type(
+            self, module, imported_module, parameter.type_index
+        ) catch |err| { return err }
+        ZAstModule.append_param(module, &self.heap, parameter) catch |err| {
+            return err
+        }
+        parameter_index = parameter_index + 1
     }
     return 0
 }
@@ -605,27 +654,33 @@ fn zsession_add_direct_import_exports(self: *ZFrontendSession, module: *ZAstModu
                             }
                             candidate.type_index = zsession_copy_type(self, module, imported_module, candidate.type_index) catch |err| { return err }
                             candidate.return_type_index = zsession_copy_type(self, module, imported_module, candidate.return_type_index) catch |err| { return err }
-                            // Parameter, expression, and statement indexes
-                            // belong to the defining module. Preserve only
-                            // copied fields, which are declaration metadata
-                            // needed for direct imported field access.
-                            candidate.generic_param_start = 0
-                            candidate.generic_param_count = 0
-                            candidate.param_start = 0
-                            candidate.param_count = 0
+                            zsession_copy_imported_signature(
+                                self,
+                                module,
+                                imported_module,
+                                &candidate,
+                                imported_module.decls[declaration_index]
+                            ) catch |err| { return err }
                             zsession_copy_imported_members(self, module, imported_module, &candidate, imported_module.decls[declaration_index]) catch |err| {
                                 return err
                             }
                             candidate.stmt_start = 0
                             candidate.stmt_count = 0
                             candidate.init_expr = ZAstNoIndex
+                            candidate.attribute_expr = ZAstNoIndex
                             candidate.exported = false
                             candidate.is_imported = true
                             ZAstModule.append(module, &self.heap, candidate) catch |err| {
                                 return err
                             }
                             if candidate.kind == ZAstDeclEnum {
-                                zsession_add_imported_enum_members(self, module, imported_module, candidate) catch |err| {
+                                zsession_add_imported_enum_members(
+                                    self,
+                                    module,
+                                    imported_module,
+                                    imported_module.decls[declaration_index],
+                                    candidate.name
+                                ) catch |err| {
                                     return err
                                 }
                             }

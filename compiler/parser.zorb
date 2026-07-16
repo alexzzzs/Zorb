@@ -569,6 +569,7 @@ fn zparser_parse_generic_params(self: *ZParser, allocator: *std.mem.HeapAllocato
         return 0
     }
     zparser_advance(self)
+    saw_default: bool = false
     while !zparser_at(self, ZTokenEof) {
         name: ZToken = zparser_expect_name(self) catch |err| {
             return error.InvalidArgument
@@ -604,7 +605,14 @@ fn zparser_parse_generic_params(self: *ZParser, allocator: *std.mem.HeapAllocato
             }
         }
         module.generic_default_types[decl.generic_param_start + decl.generic_param_count - 1] = default_type_index
-        if default_type_index == ZAstNoIndex { decl.generic_required_param_count = decl.generic_required_param_count + 1 }
+        if default_type_index == ZAstNoIndex {
+            if saw_default {
+                return error.InvalidArgument
+            }
+            decl.generic_required_param_count = decl.generic_required_param_count + 1
+        } else {
+            saw_default = true
+        }
         if zparser_at(self, ZTokenComma) {
             zparser_advance(self)
             continue
