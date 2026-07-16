@@ -1,0 +1,161 @@
+import "../../runtime/std/io.zorb"
+import "../../runtime/std/process.zorb"
+import "../../runtime/std/str.zorb"
+import "../frontend/diagnostic.zorb"
+import "../frontend/session.zorb"
+import "../ast.zorb"
+import "../backend-ir/lowering.zorb"
+import "../backend-ir/model.zorb"
+import "../backend-ir/serialization.zorb"
+
+// A session retains every source, token stream, AST arena, and direct-import
+// projection and backend IR for the whole compiler graph. The bump allocator
+// retains superseded CFG growth buffers, so keep ample hosted bootstrap space
+// until the production driver can size arenas from the source graph.
+const ZORB_SELF_CHECK_HEAP_BYTES: i64 = 1073741824
+const ZORB_SELF_CHECK_USAGE_EXIT: i64 = 64
+const ZORB_SELF_CHECK_FAILURE_EXIT: i64 = 1
+const ZORB_SELF_CHECK_JSON_OPTION: string = "--json"
+const ZORB_SELF_CHECK_DUMP_TOKENS_OPTION: string = "--dump-tokens"
+const ZORB_SELF_CHECK_DUMP_AST_OPTION: string = "--dump-ast"
+const ZORB_SELF_CHECK_BATCH_OPTION: string = "--batch"
+const ZORB_SELF_CHECK_BATCH_JSON_OPTION: string = "--batch-json"
+const ZORB_SELF_CHECK_EMIT_BACKEND_IR_OPTION: string = "--emit-backend-ir"
+
+fn zself_usage() {
+    std.io.eprint("usage: zorb-self-check [--json|--dump-tokens|--dump-ast] <entry.zorb>\n")
+    std.io.eprint("       zorb-self-check [--batch|--batch-json] <entry.zorb> [entry.zorb ...]\n")
+    std.io.eprint("       zorb-self-check --emit-backend-ir <target-triple> <output-path> <entry.zorb>\n")
+}
+
+fn zself_option_requires_operand(value: string) -> bool {
+    return std.str.eql(value, ZORB_SELF_CHECK_JSON_OPTION) ||
+        std.str.eql(value, ZORB_SELF_CHECK_DUMP_TOKENS_OPTION) ||
+        std.str.eql(value, ZORB_SELF_CHECK_DUMP_AST_OPTION) ||
+        std.str.eql(value, ZORB_SELF_CHECK_BATCH_OPTION) ||
+        std.str.eql(value, ZORB_SELF_CHECK_BATCH_JSON_OPTION) ||
+        std.str.eql(value, ZORB_SELF_CHECK_EMIT_BACKEND_IR_OPTION)
+}
+
+fn zself_emit_backend_ir(target_triple: string, output_path: string, entry: string) -> i64 {
+    session: ZFrontendSession = ZFrontendSession.init(ZORB_SELF_CHECK_HEAP_BYTES) catch |err| {
+        std.io.eprint("backend IR initialization failed\n")
+        return ZORB_SELF_CHECK_FAILURE_EXIT
+    }
+    ZFrontendSession.set_machine_output(&session, true)
+    if ZFrontendSession.check_file(&session, entry) != 0 {
+        ZFrontendSession.deinit(&session)
+        return ZORB_SELF_CHECK_FAILURE_EXIT
+    }
+
+    target: ZBackendIrTarget = ZBackendIrTarget.init(target_triple)
+    lowering_ast: *ZAstModule = ZFrontendSession.lowering_module(&session) catch |err| {
+        std.io.eprint("unable to prepare source graph for backend IR lowering\n")
+        ZFrontendSession.deinit(&session)
+        return ZORB_SELF_CHECK_FAILURE_EXIT
+    }
+    module: ZBackendIrModule = ZBackendIrLowering.lower_module(
+        &session.heap,
+        lowering_ast,
+        entry,
+        target,
+        "llvm_ir",
+        output_path
+    ) catch |err| {
+        std.io.eprint("native backend IR lowering does not support this source yet\n")
+        std.io.eprint_i64(err)
+        std.io.eprint("\n")
+        ZFrontendSession.deinit(&session)
+        return ZORB_SELF_CHECK_FAILURE_EXIT
+    }
+    ZBackendIrSerialization.write_module(module)
+    ZFrontendSession.deinit(&session)
+    return 0
+}
+
+fn zself_print_json_success(path: string) {
+    std.io.print("{\"kind\":\"result\",\"status\":\"ok\",\"file\":")
+    ZDiagnostic.write_json_string(path)
+    std.io.print("}\n")
+}
+
+// Every entry gets a new session, even in batch mode.  This makes batch mode a
+// direct lifecycle test: a failed graph cannot leave imports, AST nodes, or
+// diagnostics visible to the next graph.
+fn zself_check_entry(entry: string, machine_output: bool, serialization_mode: i64) -> i64 {
+    session: ZFrontendSession = ZFrontendSession.init(ZORB_SELF_CHECK_HEAP_BYTES) catch |err| {
+        std.io.eprint("self-check initialization failed\n")
+        return ZORB_SELF_CHECK_FAILURE_EXIT
+    }
+    ZFrontendSession.set_machine_output(&session, machine_output)
+    ZFrontendSession.set_serialization_mode(&session, serialization_mode)
+
+    result: i64 = ZFrontendSession.check_file(&session, entry)
+    if result == 0 {
+        if machine_output {
+            zself_print_json_success(entry)
+        } else {
+            std.io.print("self-check succeeded: ")
+            std.io.print(entry)
+            std.io.print("\n")
+        }
+    }
+    ZFrontendSession.deinit(&session)
+    return result
+}
+
+fn zself_check_batch(args: std.process.Arguments, entry_index: i64, machine_output: bool) -> i64 {
+    had_failure: bool = false
+    index: i64 = entry_index
+    while index < std.process.len(args) {
+        if zself_check_entry(std.process.at(args, index), machine_output, ZFrontendSerializationNone) != 0 {
+            had_failure = true
+        }
+        index = index + 1
+    }
+    if had_failure {
+        return ZORB_SELF_CHECK_FAILURE_EXIT
+    }
+    return 0
+}
+
+fn main(argc: i64, argv: **u8) -> i64 {
+    args: std.process.Arguments = std.process.from_native(argc, argv)
+    if std.process.len(args) == 5 && std.str.eql(std.process.at(args, 1), ZORB_SELF_CHECK_EMIT_BACKEND_IR_OPTION) {
+        return zself_emit_backend_ir(
+            std.process.at(args, 2),
+            std.process.at(args, 3),
+            std.process.at(args, 4)
+        )
+    }
+    machine_output: bool = false
+    serialization_mode: i64 = ZFrontendSerializationNone
+    entry_index: i64 = 1
+    if std.process.len(args) == 3 && std.str.eql(std.process.at(args, 1), ZORB_SELF_CHECK_JSON_OPTION) {
+        machine_output = true
+        entry_index = 2
+    } else if std.process.len(args) == 3 && std.str.eql(std.process.at(args, 1), ZORB_SELF_CHECK_DUMP_TOKENS_OPTION) {
+        machine_output = true
+        serialization_mode = ZFrontendSerializationTokens
+        entry_index = 2
+    } else if std.process.len(args) == 3 && std.str.eql(std.process.at(args, 1), ZORB_SELF_CHECK_DUMP_AST_OPTION) {
+        machine_output = true
+        serialization_mode = ZFrontendSerializationAst
+        entry_index = 2
+    } else if std.process.len(args) >= 3 && std.str.eql(std.process.at(args, 1), ZORB_SELF_CHECK_BATCH_OPTION) {
+        return zself_check_batch(args, 2, false)
+    } else if std.process.len(args) >= 3 && std.str.eql(std.process.at(args, 1), ZORB_SELF_CHECK_BATCH_JSON_OPTION) {
+        return zself_check_batch(args, 2, true)
+    } else if std.process.len(args) == 2 && zself_option_requires_operand(
+        std.process.at(args, 1)
+    ) {
+        zself_usage()
+        return ZORB_SELF_CHECK_USAGE_EXIT
+    } else if std.process.len(args) != 2 {
+        zself_usage()
+        return ZORB_SELF_CHECK_USAGE_EXIT
+    }
+
+    entry: string = std.process.at(args, entry_index)
+    return zself_check_entry(entry, machine_output, serialization_mode)
+}

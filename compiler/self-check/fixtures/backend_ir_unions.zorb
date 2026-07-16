@@ -1,0 +1,30 @@
+union Value {
+    Number: i64,
+    Flag: bool
+}
+
+fn number_value(value: i64) -> Value {
+    return Value{ Number: value }
+}
+
+fn flag_value(value: bool) -> Value {
+    return Value{ Flag: value }
+}
+
+fn identity_value(value: Value) -> Value {
+    return value
+}
+
+fn score(value: Value) -> i64 {
+    match value {
+        case Value.Number(number) {
+            return number
+        }
+        case Value.Flag(flag) {
+            if flag {
+                return 1
+            }
+            return 0
+        }
+    }
+}

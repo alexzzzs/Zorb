@@ -37,26 +37,26 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            Zorb.LlvmBackend/.zig-cache
+            backend/llvm/.zig-cache
             ~/.cache/zig
-          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
             ${{ runner.os }}-zig-0.16.0-llvm21-
 
       - name: Build LLVM backend
         run: |
-          cd Zorb.LlvmBackend
+          cd backend/llvm
           zig build test
           zig build -Dstatic-llvm=true -Dcxx-runtime="$(g++ -print-file-name=libstdc++.so)" -Doptimize=ReleaseSafe
 
       - name: Restore
-        run: dotnet restore Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj
+        run: dotnet restore tests/csharp/Zorb.Compiler.Tests.csproj
 
       - name: Build Compiler
-        run: dotnet build Zorb.Compiler/Zorb.Compiler.csproj -c Release --no-restore
+        run: dotnet build seed/csharp/Zorb.Compiler.csproj -c Release --no-restore
 
       - name: Run Fixture Suite
-        run: dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj --configuration Release
+        run: dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release
 
   linux-aarch64-cross:
     name: linux-aarch64-cross
@@ -93,26 +93,67 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            Zorb.LlvmBackend/.zig-cache
+            backend/llvm/.zig-cache
             ~/.cache/zig
-          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
             ${{ runner.os }}-zig-0.16.0-llvm21-
 
       - name: Build LLVM backend
         run: |
-          cd Zorb.LlvmBackend
+          cd backend/llvm
           zig build test
           zig build -Dstatic-llvm=true -Dcxx-runtime="$(g++ -print-file-name=libstdc++.so)" -Doptimize=ReleaseSafe
 
       - name: Restore
-        run: dotnet restore Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj
+        run: dotnet restore tests/csharp/Zorb.Compiler.Tests.csproj
 
       - name: Build Compiler
-        run: dotnet build Zorb.Compiler/Zorb.Compiler.csproj -c Release --no-restore
+        run: dotnet build seed/csharp/Zorb.Compiler.csproj -c Release --no-restore
 
       - name: Run Fixture Suite With AArch64 Lane
-        run: dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj --configuration Release
+        run: dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release
+
+  linux-native-parity:
+    name: linux-native-frontend-parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      ZORB_FRONTEND_PARITY_ONLY: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install frontend bootstrap toolchains
+        run: |
+          . /etc/os-release
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y llvm-21-dev lld-21 g++
+          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Build LLVM backend
+        run: |
+          cd backend/llvm
+          zig build -Dstatic-llvm=true -Dcxx-runtime="$(g++ -print-file-name=libstdc++.so)" -Doptimize=ReleaseSafe
+
+      - name: Restore and build stage 0
+        run: |
+          dotnet restore tests/csharp/Zorb.Compiler.Tests.csproj
+          dotnet build tests/csharp/Zorb.Compiler.Tests.csproj -c Release --no-restore
+
+      - name: Run native frontend parity gate
+        run: dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release --no-build
 
   windows-hosted-smoke:
     name: windows-hosted-x64
@@ -144,9 +185,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            Zorb.LlvmBackend/.zig-cache
+            backend/llvm/.zig-cache
             ~\AppData\Local\zig
-          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
             ${{ runner.os }}-zig-0.16.0-llvm21-
 
@@ -171,23 +212,43 @@ jobs:
       - name: Build LLVM backend
         shell: pwsh
         run: |
-          Set-Location Zorb.LlvmBackend
+          Set-Location backend/llvm
           zig build test
           zig build "-Dllvm-prefix=$env:LLVM_PREFIX" "-Dllvm-lib-dir=$env:LLVM_LIB_DIR" "-Dllvm-library=LLVM-C" "-Doptimize=ReleaseSafe"
 
       - name: Restore
-        run: dotnet restore Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj
+        run: dotnet restore tests/csharp/Zorb.Compiler.Tests.csproj
 
       - name: Build Compiler
-        run: dotnet build Zorb.Compiler/Zorb.Compiler.csproj -c Release --no-restore
+        run: dotnet build seed/csharp/Zorb.Compiler.csproj -c Release --no-restore
+
+      - name: Build native fixture compiler
+        shell: pwsh
+        run: |
+          $nativeCompilerDir = Join-Path $env:RUNNER_TEMP "zorb-native-fixture"
+          ./scripts/publish-compiler-windows.ps1 $nativeCompilerDir
+
+          $nativeCompiler = Join-Path $nativeCompilerDir "zorb.exe"
+          if (-not (Test-Path -LiteralPath $nativeCompiler -PathType Leaf)) {
+            throw "Native fixture compiler was not produced at '$nativeCompiler'."
+          }
+
+          & $nativeCompiler check compiler/driver/main.zorb
+          if ($LASTEXITCODE -ne 0) {
+            throw "Native fixture compiler smoke check failed with exit code $LASTEXITCODE."
+          }
+
+          "ZORB_NATIVE_FIXTURE_COMPILER=$nativeCompiler" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run Fixture Suite
-        run: dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj --configuration Release
+        run: dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release
 
   publish-standalone:
     needs:
       - test
       - linux-aarch64-cross
+      - linux-native-parity
       - windows-hosted-smoke
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
     strategy:
@@ -239,9 +300,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            Zorb.LlvmBackend/.zig-cache
+            backend/llvm/.zig-cache
             ~/.cache/zig
-          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
             ${{ runner.os }}-zig-0.16.0-llvm21-
 
@@ -250,9 +311,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            Zorb.LlvmBackend/.zig-cache
+            backend/llvm/.zig-cache
             ~\AppData\Local\zig
-          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
             ${{ runner.os }}-zig-0.16.0-llvm21-
 
@@ -267,7 +328,7 @@ jobs:
             version="${GITHUB_REF_NAME#v}"
             informational_version="$version"
           else
-            base_version="$(dotnet msbuild Zorb.Compiler/Zorb.Compiler.csproj -getProperty:Version -nologo -v:q | tail -n 1 | tr -d '\r')"
+            base_version="$(dotnet msbuild seed/csharp/Zorb.Compiler.csproj -getProperty:Version -nologo -v:q | tail -n 1 | tr -d '\r')"
             version="${base_version}.${GITHUB_RUN_NUMBER}"
             informational_version="${version}+${short_sha}"
           fi
@@ -277,17 +338,11 @@ jobs:
 
       - name: Publish standalone compiler
         if: matrix.os == 'ubuntu-latest'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          INFORMATIONAL_VERSION: ${{ steps.version.outputs.informational_version }}
         run: bash scripts/publish-compiler-linux.sh "artifacts/compiler/linux-x64"
 
       - name: Publish standalone compiler
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          INFORMATIONAL_VERSION: ${{ steps.version.outputs.informational_version }}
         run: ./scripts/publish-compiler-windows.ps1 "artifacts/compiler/win-x64"
 
       - name: Record version metadata
@@ -307,16 +362,18 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            compiler="artifacts/compiler/linux-x64/Zorb.Compiler"
-            output="/tmp/zorb-release-smoke.elf"
+            compiler="artifacts/compiler/linux-x64/zorb"
+            executable="/tmp/zorb-release-smoke"
           else
-            compiler="artifacts/compiler/win-x64/Zorb.Compiler.exe"
-            output="$RUNNER_TEMP/zorb-release-smoke.elf"
+            compiler="artifacts/compiler/win-x64/zorb.exe"
+            executable="$RUNNER_TEMP/zorb-release-smoke.exe"
           fi
-          "$compiler" --emit-llvm Zorb.Compiler.Tests/fixtures/runtime_hello_world/main.zorb -o "$RUNNER_TEMP/zorb-release-smoke.ll"
-          "$compiler" build Zorb.Compiler.Tests/fixtures/bare_metal_debug_port/main.zorb --target bare-metal-x86_64 -o "$output"
+          "$compiler" check compiler/driver/main.zorb
+          "$compiler" build tests/csharp/fixtures/runtime_hello_world/main.zorb --output-kind llvm-ir -o "$RUNNER_TEMP/zorb-release-smoke.ll"
+          "$compiler" build tests/csharp/fixtures/runtime_hello_world/main.zorb -o "$executable"
           test -s "$RUNNER_TEMP/zorb-release-smoke.ll"
-          test -s "$output"
+          test -s "$executable"
+          test "$("$executable")" = "ok"
 
       - name: Upload standalone compiler artifact
         uses: actions/upload-artifact@v4

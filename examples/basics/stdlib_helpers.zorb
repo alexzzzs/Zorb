@@ -1,7 +1,7 @@
-import "../../std/io.zorb"
-import "../../std/os.zorb"
-import "../../std/str.zorb"
-import "../../std/mem.zorb"
+import "../../runtime/std/io.zorb"
+import "../../runtime/std/os.zorb"
+import "../../runtime/std/str.zorb"
+import "../../runtime/std/mem.zorb"
 
 fn _start() {
     buf1: [16]u8

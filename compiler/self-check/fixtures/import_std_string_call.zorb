@@ -1,0 +1,5 @@
+import "../../../runtime/std/str.zorb"
+
+fn main() -> i64 {
+    return std.str.len("ok")
+}

@@ -1,0 +1,351 @@
+import "../../runtime/std/io.zorb"
+import "../json.zorb"
+import "model.zorb"
+
+export struct ZBackendIrSerialization {}
+
+fn zbackend_ir_write_separator(index: i64) {
+    if index > 0 { std.io.print(",") }
+}
+
+fn zbackend_ir_write_ids(values: *i64, count: i64) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < count {
+        zbackend_ir_write_separator(index)
+        std.io.print_i64(values[index])
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+fn zbackend_ir_write_target(target: ZBackendIrTarget) {
+    std.io.print("{\"triple\":")
+    ZJson.write_string(target.triple)
+    std.io.print(",\"cpu\":")
+    ZJson.write_string(target.cpu)
+    std.io.print(",\"features\":")
+    ZJson.write_string(target.features)
+    std.io.print(",\"optimize\":")
+    ZJson.write_string(target.optimize)
+    std.io.print("}")
+}
+
+fn zbackend_ir_write_types(types: *ZBackendIrType, count: i64) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < count {
+        zbackend_ir_write_separator(index)
+        item: ZBackendIrType = types[index]
+        std.io.print("{\"id\":")
+        std.io.print_i64(item.id)
+        std.io.print(",\"kind\":")
+        ZJson.write_string(item.kind)
+        if item.name != "" {
+            std.io.print(",\"name\":")
+            ZJson.write_string(item.name)
+        }
+        if item.kind == "scalar" {
+            std.io.print(",\"scalar\":")
+            ZJson.write_string(item.scalar)
+        }
+        if item.element_type > 0 {
+            std.io.print(",\"element_type\":")
+            std.io.print_i64(item.element_type)
+        }
+        if item.kind == "array" {
+            std.io.print(",\"length\":")
+            std.io.print_i64(item.length)
+        }
+        if item.field_count > 0 {
+            std.io.print(",\"fields\":[")
+            field_index: i64 = 0
+            while field_index < item.field_count {
+                zbackend_ir_write_separator(field_index)
+                field: ZBackendIrTypeField = item.fields[field_index]
+                std.io.print("{\"name\":")
+                ZJson.write_string(field.name)
+                std.io.print(",\"type\":")
+                std.io.print_i64(field.type_id)
+                std.io.print("}")
+                field_index = field_index + 1
+            }
+            std.io.print("]")
+        }
+        if item.is_packed {
+            std.io.print(",\"packed\":true")
+        }
+        std.io.print("}")
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+fn zbackend_ir_write_instructions(instructions: *ZBackendIrInstruction, count: i64) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < count {
+        zbackend_ir_write_separator(index)
+        instruction: ZBackendIrInstruction = instructions[index]
+        std.io.print("{\"id\":")
+        std.io.print_i64(instruction.id)
+        std.io.print(",\"op\":")
+        ZJson.write_string(instruction.op)
+        std.io.print(",\"type\":")
+        std.io.print_i64(instruction.type_id)
+        if instruction.op == "integer_constant" {
+            std.io.print(",\"integer\":")
+            std.io.print_i64(instruction.integer)
+        } else if instruction.op == "string_constant" {
+            std.io.print(",\"text\":")
+            ZJson.write_string(instruction.text)
+        } else if instruction.op == "binary" {
+            std.io.print(",\"binary_op\":")
+            ZJson.write_string(instruction.binary_op)
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+            std.io.print(",\"rhs\":")
+            std.io.print_i64(instruction.rhs)
+        } else if instruction.op == "compare" {
+            std.io.print(",\"compare_op\":")
+            ZJson.write_string(instruction.compare_op)
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+            std.io.print(",\"rhs\":")
+            std.io.print_i64(instruction.rhs)
+        } else if instruction.op == "cast" {
+            std.io.print(",\"cast_op\":")
+            ZJson.write_string(instruction.cast_op)
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+        } else if instruction.op == "call" {
+            std.io.print(",\"callee\":")
+            std.io.print_i64(instruction.callee)
+            std.io.print(",\"arguments\":")
+            zbackend_ir_write_ids(instruction.arguments, instruction.argument_count)
+        } else if instruction.op == "indirect_call" {
+            std.io.print(",\"source_type\":")
+            std.io.print_i64(instruction.source_type)
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+            std.io.print(",\"arguments\":")
+            zbackend_ir_write_ids(instruction.arguments, instruction.argument_count)
+        } else if instruction.op == "function_address" {
+            std.io.print(",\"callee\":")
+            std.io.print_i64(instruction.callee)
+        } else if instruction.op == "size_of" {
+            std.io.print(",\"source_type\":")
+            std.io.print_i64(instruction.source_type)
+        } else if instruction.op == "syscall" {
+            std.io.print(",\"arguments\":")
+            zbackend_ir_write_ids(instruction.arguments, instruction.argument_count)
+        } else if instruction.op == "inline_asm" {
+            std.io.print(",\"asm_template\":")
+            ZJson.write_string(instruction.asm_template)
+            std.io.print(",\"constraints\":")
+            ZJson.write_string(instruction.constraints)
+            std.io.print(",\"arguments\":")
+            zbackend_ir_write_ids(instruction.arguments, instruction.argument_count)
+            std.io.print(",\"output_types\":")
+            zbackend_ir_write_ids(instruction.output_types, instruction.output_count)
+            std.io.print(",\"output_addresses\":")
+            zbackend_ir_write_ids(instruction.output_addresses, instruction.output_count)
+        } else if instruction.op == "load" {
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+        } else if instruction.op == "store" {
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+            std.io.print(",\"rhs\":")
+            std.io.print_i64(instruction.rhs)
+        } else if instruction.op == "index_address" {
+            std.io.print(",\"source_type\":")
+            std.io.print_i64(instruction.source_type)
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+            std.io.print(",\"rhs\":")
+            std.io.print_i64(instruction.rhs)
+        } else if instruction.op == "field_address" {
+            std.io.print(",\"source_type\":")
+            std.io.print_i64(instruction.source_type)
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+            std.io.print(",\"field_index\":")
+            std.io.print_i64(instruction.field_index)
+        } else if instruction.op == "global_address" {
+            std.io.print(",\"global\":")
+            std.io.print_i64(instruction.global_id)
+        } else if instruction.op == "process_exit" {
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+        } else if instruction.op == "aggregate" {
+            std.io.print(",\"arguments\":")
+            zbackend_ir_write_ids(instruction.arguments, instruction.argument_count)
+        } else if instruction.op == "extract_value" {
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+            std.io.print(",\"field_index\":")
+            std.io.print_i64(instruction.field_index)
+        } else if instruction.op == "phi" {
+            std.io.print(",\"incoming_values\":")
+            zbackend_ir_write_ids(instruction.incoming_values, instruction.incoming_count)
+            std.io.print(",\"incoming_blocks\":")
+            zbackend_ir_write_ids(instruction.incoming_blocks, instruction.incoming_count)
+        }
+        std.io.print("}")
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+fn zbackend_ir_write_constant(constant: ZBackendIrConstant) {
+    std.io.print("{\"kind\":")
+    ZJson.write_string(constant.kind)
+    if constant.kind == "integer" || constant.kind == "pointer_integer" {
+        std.io.print(",\"integer\":")
+        std.io.print_i64(constant.integer)
+    } else if constant.kind == "string" {
+        std.io.print(",\"text\":")
+        ZJson.write_string(constant.text)
+    } else if constant.kind == "function" {
+        std.io.print(",\"function\":")
+        std.io.print_i64(constant.function_id)
+    } else if constant.kind == "aggregate" {
+        std.io.print(",\"elements\":[")
+        element_index: i64 = 0
+        while element_index < constant.element_count {
+            zbackend_ir_write_separator(element_index)
+            zbackend_ir_write_constant(constant.elements[element_index])
+            element_index = element_index + 1
+        }
+        std.io.print("]")
+    }
+    std.io.print("}")
+}
+
+fn zbackend_ir_write_globals(globals: *ZBackendIrGlobal, count: i64) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < count {
+        zbackend_ir_write_separator(index)
+        global: ZBackendIrGlobal = globals[index]
+        std.io.print("{\"id\":")
+        std.io.print_i64(global.id)
+        std.io.print(",\"name\":")
+        ZJson.write_string(global.name)
+        std.io.print(",\"type\":")
+        std.io.print_i64(global.type_id)
+        std.io.print(",\"linkage\":")
+        ZJson.write_string(global.linkage)
+        if global.is_constant {
+            std.io.print(",\"constant\":true")
+        } else {
+            std.io.print(",\"constant\":false")
+        }
+        std.io.print(",\"initializer\":")
+        zbackend_ir_write_constant(global.initializer)
+        std.io.print("}")
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+fn zbackend_ir_write_parameters(parameters: *ZBackendIrParameter, count: i64) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < count {
+        zbackend_ir_write_separator(index)
+        parameter: ZBackendIrParameter = parameters[index]
+        std.io.print("{\"id\":")
+        std.io.print_i64(parameter.id)
+        std.io.print(",\"name\":")
+        ZJson.write_string(parameter.name)
+        std.io.print(",\"type\":")
+        std.io.print_i64(parameter.type_id)
+        std.io.print("}")
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+fn zbackend_ir_write_blocks(blocks: *ZBackendIrBlock, count: i64) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < count {
+        zbackend_ir_write_separator(index)
+        block: ZBackendIrBlock = blocks[index]
+        std.io.print("{\"id\":")
+        std.io.print_i64(block.id)
+        std.io.print(",\"name\":")
+        ZJson.write_string(block.name)
+        std.io.print(",\"instructions\":")
+        zbackend_ir_write_instructions(block.instructions, block.instruction_count)
+        std.io.print(",\"terminator\":{\"op\":")
+        ZJson.write_string(block.terminator.op)
+        if block.terminator.op == "return_value" {
+            std.io.print(",\"value\":")
+            std.io.print_i64(block.terminator.value)
+        } else if block.terminator.op == "branch" {
+            std.io.print(",\"target\":")
+            std.io.print_i64(block.terminator.target)
+        } else if block.terminator.op == "conditional_branch" {
+            std.io.print(",\"condition\":")
+            std.io.print_i64(block.terminator.condition)
+            std.io.print(",\"true_target\":")
+            std.io.print_i64(block.terminator.true_target)
+            std.io.print(",\"false_target\":")
+            std.io.print_i64(block.terminator.false_target)
+        }
+        std.io.print("}}")
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+fn zbackend_ir_write_functions(functions: *ZBackendIrFunction, count: i64) {
+    std.io.print("[")
+    index: i64 = 0
+    while index < count {
+        zbackend_ir_write_separator(index)
+        function: ZBackendIrFunction = functions[index]
+        std.io.print("{\"id\":")
+        std.io.print_i64(function.id)
+        std.io.print(",\"name\":")
+        ZJson.write_string(function.name)
+        std.io.print(",\"linkage\":")
+        ZJson.write_string(function.linkage)
+        std.io.print(",\"return_type\":")
+        std.io.print_i64(function.return_type)
+        std.io.print(",\"parameters\":")
+        zbackend_ir_write_parameters(function.parameters, function.parameter_count)
+        std.io.print(",\"blocks\":")
+        zbackend_ir_write_blocks(function.blocks, function.block_count)
+        std.io.print("}")
+        index = index + 1
+    }
+    std.io.print("]")
+}
+
+export fn ZBackendIrSerialization.write_module(module: ZBackendIrModule) {
+    std.io.print("{\"schema_version\":")
+    std.io.print_i64(ZBackendIrSchemaVersion)
+    std.io.print(",\"module_name\":")
+    ZJson.write_string(module.module_name)
+    std.io.print(",\"target\":")
+    zbackend_ir_write_target(module.target)
+    std.io.print(",\"output_kind\":")
+    ZJson.write_string(module.output_kind)
+    std.io.print(",\"output_path\":")
+    ZJson.write_string(module.output_path)
+    std.io.print(",\"types\":")
+    zbackend_ir_write_types(module.types, module.type_count)
+    std.io.print(",\"globals\":")
+    zbackend_ir_write_globals(module.globals, module.global_count)
+    std.io.print(",\"functions\":")
+    zbackend_ir_write_functions(module.functions, module.function_count)
+    std.io.print("}\n")
+}
+
+export fn ZBackendIrSerialization.write_empty_module(module: ZBackendIrModule) {
+    ZBackendIrSerialization.write_module(module)
+}

@@ -1,0 +1,18 @@
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/os.zorb"
+
+union Result<T, E = bool> {
+    Ok: T,
+    Err: E
+}
+
+fn _start() {
+    value: Result<i64> = Result<i64>{ Ok: 9 }
+
+    if value.tag == Result<i64>.Tag.Ok {
+        std.io.print_i64(value.Ok)
+        std.io.print("\n")
+    }
+
+    std.os.exit(0)
+}

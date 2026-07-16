@@ -1,0 +1,29 @@
+struct Pair {
+    lhs: i64,
+    rhs: i64
+}
+
+struct Node {
+    value: i64,
+    next: *Node
+}
+
+fn make_pair(lhs: i64, rhs: i64) -> Pair {
+    return Pair{ rhs: rhs, lhs: lhs }
+}
+
+fn sum_pair(pair: Pair) -> i64 {
+    return pair.lhs + pair.rhs
+}
+
+fn copy_and_update() -> i64 {
+    original: Pair = make_pair(3, 4)
+    copied: Pair = original
+    copied.rhs = 9
+    pointer: *Pair = &copied
+    return original.rhs + (*pointer).rhs
+}
+
+fn recursive_pointer(node: *Node) -> i64 {
+    return (*node).value
+}

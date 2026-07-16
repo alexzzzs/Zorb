@@ -1,0 +1,8 @@
+fn std.math.identity(value: i64) -> i64 {
+    return value
+}
+
+fn main() -> i64 {
+    result: i64 = std.math.identity(42)
+    return result
+}

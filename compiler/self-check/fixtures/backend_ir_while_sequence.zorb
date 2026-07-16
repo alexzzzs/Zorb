@@ -1,0 +1,8 @@
+fn count_by_two(limit: i64) -> i64 {
+    value: i64 = 0
+    while value < limit {
+        value = value + 1
+        value = value + 1
+    }
+    return value
+}

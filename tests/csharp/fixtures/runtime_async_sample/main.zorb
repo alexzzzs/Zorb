@@ -1,0 +1,25 @@
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/os.zorb"
+import "../../../../runtime/std/mem.zorb"
+import "../../../../runtime/std/task.zorb"
+import "../../../../runtime/std/async.zorb"
+
+fn job(arg: *void) {
+    std.io.print("ok\n")
+}
+
+fn _start() {
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(131072) catch |init_err| {
+        std.io.print("init failed\n")
+        std.os.exit(init_err)
+        return
+    }
+    std.async.init()
+    spawn_result: i32 = std.task.spawn(&heap, job, cast(*void, 0)) catch |spawn_err| {
+        std.io.print("spawn failed\n")
+        std.os.exit(1)
+        return
+    }
+    std.async.loop()
+    std.os.exit(0)
+}

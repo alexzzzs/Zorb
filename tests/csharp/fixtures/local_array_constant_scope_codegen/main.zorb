@@ -1,0 +1,15 @@
+fn two() -> i64 {
+    const count: i64 = 2
+    values: [count]u8
+    return Builtin.sizeof([count]u8)
+}
+
+fn three() -> i64 {
+    const count: i64 = 3
+    values: [count]u8
+    return Builtin.sizeof([count]u8)
+}
+
+fn main() -> i64 {
+    return two() + three()
+}

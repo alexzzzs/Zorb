@@ -1,0 +1,36 @@
+fn identity_string(text: string) -> string {
+    return text
+}
+
+fn literal_string() -> string {
+    return "zorb"
+}
+
+fn identity_slice(values: []i64) -> []i64 {
+    return values
+}
+
+fn array_to_slice() -> []i64 {
+    values: [3]i64 = [3]i64{4, 5, 6}
+    return identity_slice(values)
+}
+
+fn inline_array_to_slice() -> []i64 {
+    return identity_slice([2]i64{7, 8})
+}
+
+fn slice_length(values: []i64) -> i64 {
+    return values.len
+}
+
+fn slice_pointer(values: []u8) -> *u8 {
+    return values.ptr
+}
+
+fn slice_index(values: []i64, index: i64) -> i64 {
+    return values[index]
+}
+
+fn slice_math(values: []i64, index: i64) -> i64 {
+    return values[index] + values.len
+}

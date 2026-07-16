@@ -41,7 +41,7 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-21-dev lld-21 g++
+          sudo apt-get install -y llvm-21-dev g++
           curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
           tar -xf zig.tar.xz
           echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
@@ -50,9 +50,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            Zorb.LlvmBackend/.zig-cache
+            backend/llvm/.zig-cache
             ~/.cache/zig
-          key: release-${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          key: release-${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
             release-${{ runner.os }}-zig-0.16.0-llvm21-
 
@@ -70,9 +70,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            Zorb.LlvmBackend/.zig-cache
+            backend/llvm/.zig-cache
             ~\AppData\Local\zig
-          key: release-${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('Zorb.LlvmBackend/build.zig', 'Zorb.LlvmBackend/src/**', 'Zorb.LlvmBackend/include/**') }}
+          key: release-${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
             release-${{ runner.os }}-zig-0.16.0-llvm21-
 
@@ -105,17 +105,11 @@ jobs:
 
       - name: Publish standalone compiler
         if: matrix.os == 'ubuntu-latest'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          INFORMATIONAL_VERSION: ${{ steps.version.outputs.version }}
         run: bash scripts/publish-compiler-linux.sh "${{ matrix.output_dir }}"
 
       - name: Publish standalone compiler
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          INFORMATIONAL_VERSION: ${{ steps.version.outputs.version }}
         run: ./scripts/publish-compiler-windows.ps1 "${{ matrix.output_dir }}"
 
       - name: Write version metadata
@@ -133,14 +127,18 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            compiler="${{ matrix.output_dir }}/Zorb.Compiler"
+            compiler="${{ matrix.output_dir }}/zorb"
+            executable="$RUNNER_TEMP/zorb-release-smoke"
           else
-            compiler="${{ matrix.output_dir }}/Zorb.Compiler.exe"
+            compiler="${{ matrix.output_dir }}/zorb.exe"
+            executable="$RUNNER_TEMP/zorb-release-smoke.exe"
           fi
-          "$compiler" --emit-llvm Zorb.Compiler.Tests/fixtures/runtime_hello_world/main.zorb -o "$RUNNER_TEMP/zorb-release-smoke.ll"
-          "$compiler" build Zorb.Compiler.Tests/fixtures/bare_metal_debug_port/main.zorb --target bare-metal-x86_64 -o "$RUNNER_TEMP/zorb-release-smoke.elf"
+          "$compiler" check compiler/driver/main.zorb
+          "$compiler" build tests/csharp/fixtures/runtime_hello_world/main.zorb --output-kind llvm-ir -o "$RUNNER_TEMP/zorb-release-smoke.ll"
+          "$compiler" build tests/csharp/fixtures/runtime_hello_world/main.zorb -o "$executable"
           test -s "$RUNNER_TEMP/zorb-release-smoke.ll"
-          test -s "$RUNNER_TEMP/zorb-release-smoke.elf"
+          test -s "$executable"
+          test "$("$executable")" = "ok"
 
       - name: Package release asset
         if: matrix.os == 'ubuntu-latest'

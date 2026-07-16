@@ -1,0 +1,6 @@
+fn main() -> i64 {
+    if !Builtin.IsLinux {
+        Builtin.CompileError("unsupported")
+    }
+    return 0
+}

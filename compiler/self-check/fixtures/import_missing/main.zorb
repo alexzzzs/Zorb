@@ -1,0 +1,5 @@
+import "not-found.zorb"
+
+fn main() -> i64 {
+    return 0
+}

@@ -1,5 +1,5 @@
-import "../../../std/errors.zorb"
-import "../../../std/io.zorb"
+import "../../../runtime/std/errors.zorb"
+import "../../../runtime/std/io.zorb"
 
 export const TokenEof: i64 = 0
 export const TokenIdentifier: i64 = 1

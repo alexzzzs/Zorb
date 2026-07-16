@@ -1,0 +1,5 @@
+fn update(lhs: i32, rhs: i32) -> i32 {
+    value: i32 = lhs + rhs
+    value = value * 2
+    return value
+}

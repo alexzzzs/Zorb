@@ -1,6 +1,6 @@
 import "math.zorb" as math
-import "../../../std/io.zorb"
-import "../../../std/os.zorb"
+import "../../../runtime/std/io.zorb"
+import "../../../runtime/std/os.zorb"
 
 fn _start() {
     sum: i64 = math.ops.add(20, 22)

@@ -1,0 +1,2 @@
+// This directory intentionally exists so nested/../main.zorb is a valid
+// filesystem path before lexical canonicalization collapses it.

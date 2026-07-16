@@ -1,0 +1,7 @@
+error Bad = 1
+
+fn wrong() -> i64 {
+    return error.Bad
+}
+
+fn _start() {}

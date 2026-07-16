@@ -1,0 +1,175 @@
+import "../../runtime/std/io.zorb"
+import "../ast.zorb"
+import "../lexer.zorb"
+import "../token.zorb"
+import "diagnostic.zorb"
+
+// JSON-lines serialization only renders already-owned frontend data. Parsing
+// and semantic checking remain independent from this machine-output layer.
+fn zserialize_text(text: ZAstText) {
+    ZDiagnostic.write_json_bytes(text.ptr, text.len)
+}
+
+fn zserialize_decl_kind(kind: i64) -> string {
+    if kind == ZAstDeclImport { return "import" }
+    if kind == ZAstDeclExternFunction { return "extern-function" }
+    if kind == ZAstDeclError { return "error" }
+    if kind == ZAstDeclConst { return "const" }
+    if kind == ZAstDeclGlobal { return "global" }
+    if kind == ZAstDeclStruct { return "struct" }
+    if kind == ZAstDeclEnum { return "enum" }
+    if kind == ZAstDeclUnion { return "union" }
+    if kind == ZAstDeclFunction { return "function" }
+    if kind == ZAstDeclExternType { return "extern-type" }
+    return "unknown"
+}
+
+fn zserialize_expr_kind(kind: i64) -> string {
+    if kind == ZAstExprMissing { return "missing" }
+    if kind == ZAstExprIdentifier { return "identifier" }
+    if kind == ZAstExprInteger { return "integer" }
+    if kind == ZAstExprString { return "string" }
+    if kind == ZAstExprBool { return "bool" }
+    if kind == ZAstExprBinary { return "binary" }
+    if kind == ZAstExprCall { return "call" }
+    if kind == ZAstExprUnary { return "unary" }
+    if kind == ZAstExprField { return "field" }
+    if kind == ZAstExprIndex { return "index" }
+    if kind == ZAstExprCast { return "cast" }
+    if kind == ZAstExprCatch { return "catch" }
+    if kind == ZAstExprError { return "error" }
+    if kind == ZAstExprStructLiteral { return "struct-literal" }
+    if kind == ZAstExprArrayLiteral { return "array-literal" }
+    return "unknown"
+}
+
+fn zserialize_stmt_kind(kind: i64) -> string {
+    if kind == ZAstStmtVar { return "var" }
+    if kind == ZAstStmtReturn { return "return" }
+    if kind == ZAstStmtExpr { return "expression" }
+    if kind == ZAstStmtBlock { return "block" }
+    if kind == ZAstStmtAssign { return "assign" }
+    if kind == ZAstStmtMatch { return "match" }
+    if kind == ZAstStmtCase { return "case" }
+    if kind == ZAstStmtElse { return "else" }
+    if kind == ZAstStmtFor { return "for" }
+    if kind == ZAstStmtIf { return "if" }
+    if kind == ZAstStmtWhile { return "while" }
+    if kind == ZAstStmtSwitch { return "switch" }
+    if kind == ZAstStmtBreak { return "break" }
+    if kind == ZAstStmtContinue { return "continue" }
+    if kind == ZAstStmtAsm { return "asm" }
+    return "unknown"
+}
+
+fn zserialize_span(span: ZAstSpan) {
+    std.io.print(",\"line\":")
+    std.io.print_i64(span.line)
+    std.io.print(",\"column\":")
+    std.io.print_i64(span.column)
+    std.io.print(",\"length\":")
+    std.io.print_i64(span.length)
+}
+
+export fn ZFrontendSerialization.write_tokens(file: string, tokens: *ZTokenList) {
+    index: i64 = 0
+    while index < tokens.len {
+        token: ZToken = tokens.ptr[index]
+        std.io.print("{\"kind\":\"token\",\"file\":")
+        ZDiagnostic.write_json_string(file)
+        std.io.print(",\"type\":")
+        ZDiagnostic.write_json_string(ZTokenKindName(token.kind))
+        std.io.print(",\"line\":")
+        std.io.print_i64(token.line)
+        std.io.print(",\"column\":")
+        std.io.print_i64(token.column)
+        std.io.print(",\"length\":")
+        std.io.print_i64(token.len)
+        std.io.print(",\"text\":")
+        ZDiagnostic.write_json_bytes(token.ptr, token.len)
+        std.io.print("}\n")
+        index = index + 1
+    }
+}
+
+export fn ZFrontendSerialization.write_ast(file: string, module: *ZAstModule) {
+    std.io.print("{\"kind\":\"ast-module\",\"file\":")
+    ZDiagnostic.write_json_string(file)
+    std.io.print(",\"declarationCount\":")
+    std.io.print_i64(module.len)
+    std.io.print(",\"typeCount\":")
+    std.io.print_i64(module.type_count)
+    std.io.print(",\"expressionCount\":")
+    std.io.print_i64(module.expr_count)
+    std.io.print("}\n")
+
+    index: i64 = 0
+    while index < module.len {
+        decl: ZAstDecl = module.decls[index]
+        std.io.print("{\"kind\":\"ast-declaration\",\"file\":")
+        ZDiagnostic.write_json_string(file)
+        std.io.print(",\"index\":")
+        std.io.print_i64(index)
+        std.io.print(",\"declarationKind\":")
+        ZDiagnostic.write_json_string(zserialize_decl_kind(decl.kind))
+        std.io.print(",\"name\":")
+        zserialize_text(decl.name)
+        std.io.print(",\"path\":")
+        zserialize_text(decl.path)
+        std.io.print(",\"alias\":")
+        zserialize_text(decl.alias)
+        std.io.print(",\"exported\":")
+        std.io.print_bool(decl.exported)
+        std.io.print(",\"imported\":")
+        std.io.print_bool(decl.is_imported)
+        std.io.print(",\"parameterCount\":")
+        std.io.print_i64(decl.param_count)
+        std.io.print(",\"memberCount\":")
+        std.io.print_i64(decl.member_count)
+        std.io.print(",\"statementCount\":")
+        std.io.print_i64(decl.stmt_count)
+        zserialize_span(decl.span)
+        std.io.print("}\n")
+        index = index + 1
+    }
+
+    index = 0
+    while index < module.stmt_count_total {
+        stmt: ZAstStmt = module.stmts[index]
+        std.io.print("{\"kind\":\"ast-statement\",\"file\":")
+        ZDiagnostic.write_json_string(file)
+        std.io.print(",\"index\":")
+        std.io.print_i64(index)
+        std.io.print(",\"statementKind\":")
+        ZDiagnostic.write_json_string(zserialize_stmt_kind(stmt.kind))
+        if stmt.type_index != ZAstNoIndex {
+            std.io.print(",\"type\":")
+            zserialize_text(module.types[stmt.type_index].text)
+        }
+        zserialize_span(stmt.span)
+        std.io.print("}\n")
+        index = index + 1
+    }
+
+    index = 0
+    while index < module.expr_count {
+        expr: ZAstExpr = module.exprs[index]
+        std.io.print("{\"kind\":\"ast-expression\",\"file\":")
+        ZDiagnostic.write_json_string(file)
+        std.io.print(",\"index\":")
+        std.io.print_i64(index)
+        std.io.print(",\"expressionKind\":")
+        ZDiagnostic.write_json_string(zserialize_expr_kind(expr.kind))
+        std.io.print(",\"left\":")
+        std.io.print_i64(expr.left)
+        std.io.print(",\"right\":")
+        std.io.print_i64(expr.right)
+        std.io.print(",\"argumentStart\":")
+        std.io.print_i64(expr.arg_start)
+        std.io.print(",\"argumentCount\":")
+        std.io.print_i64(expr.arg_count)
+        zserialize_span(expr.span)
+        std.io.print("}\n")
+        index = index + 1
+    }
+}

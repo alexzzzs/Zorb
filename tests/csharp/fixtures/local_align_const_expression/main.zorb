@@ -1,0 +1,7 @@
+const units: i64 = 8
+
+fn main() -> i64 {
+    [align(units * 2)]
+    value: i64 = 42
+    return value
+}

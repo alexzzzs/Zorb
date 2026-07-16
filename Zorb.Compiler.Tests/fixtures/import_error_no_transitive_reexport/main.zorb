@@ -1,5 +1,0 @@
-import "../../../std/mem.zorb"
-
-fn main() -> !i64 {
-    return error.InvalidSize
-}

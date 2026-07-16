@@ -1,6 +1,6 @@
-import "../../../std/io.zorb"
-import "../../../std/os.zorb"
-import "../../../std/str.zorb"
+import "../../../runtime/std/io.zorb"
+import "../../../runtime/std/os.zorb"
+import "../../../runtime/std/str.zorb"
 import "lexer.zorb"
 
 fn _start() {

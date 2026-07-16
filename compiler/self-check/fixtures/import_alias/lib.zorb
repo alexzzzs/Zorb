@@ -1,0 +1,7 @@
+export fn value() -> i64 {
+    return 7
+}
+
+fn private_value() -> i64 {
+    return 9
+}

@@ -1,0 +1,42 @@
+fn choose_switch(value: i64) -> i64 {
+    result: i64 = 0
+    switch value {
+        case 1 {
+            result = 10
+        }
+        case 2 {
+            result = 20
+        }
+        else {
+            result = 30
+        }
+    }
+    return result
+}
+
+fn choose_match(value: i64) -> i64 {
+    result: i64 = 0
+    match value {
+        case 1 {
+            result = 100
+        }
+        case 2 {
+            result = 200
+        }
+        else {
+            result = 300
+        }
+    }
+    return result
+}
+
+fn terminating_switch(value: i64) -> i64 {
+    switch value {
+        case 1 {
+            return 1
+        }
+        else {
+            return 2
+        }
+    }
+}

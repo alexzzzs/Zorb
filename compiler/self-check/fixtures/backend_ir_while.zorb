@@ -1,0 +1,7 @@
+fn count_to(limit: i64) -> i64 {
+    value: i64 = 0
+    while value < limit {
+        value = value + 1
+    }
+    return value
+}

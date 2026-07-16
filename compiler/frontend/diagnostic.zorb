@@ -1,0 +1,74 @@
+import "../../runtime/std/io.zorb"
+import "../../runtime/std/str.zorb"
+import "../json.zorb"
+
+export const ZDiagnosticSeverityError: i64 = 1
+export const ZDiagnosticSeverityWarning: i64 = 2
+
+export struct ZSourceId {
+    value: i64
+}
+
+export struct ZSourceSpan {
+    source: ZSourceId,
+    line: i64,
+    column: i64,
+    length: i64
+}
+
+export struct ZDiagnostic {
+    severity: i64,
+    phase: string,
+    code: string,
+    message: string,
+    span: ZSourceSpan
+}
+
+export fn ZDiagnostic.write_json_bytes(ptr: *u8, length: i64) {
+    ZJson.write_bytes(ptr, length)
+}
+
+export fn ZDiagnostic.write_json_string(value: string) {
+    ZJson.write_string(value)
+}
+
+// Rendering is intentionally separate from creation so a differential harness
+// can later write the same records as deterministic machine-readable output.
+export fn ZDiagnostic.render_human(self: ZDiagnostic, path: string) {
+    std.io.eprint(path)
+    std.io.eprint(":")
+    std.io.eprint_i64(self.span.line)
+    std.io.eprint(":")
+    std.io.eprint_i64(self.span.column)
+    std.io.eprint(": error[")
+    std.io.eprint(self.code)
+    std.io.eprint("]: ")
+    std.io.eprint(self.message)
+    std.io.eprint("\n")
+}
+
+// One JSON object per line keeps the machine stream appendable, deterministic,
+// and straightforward for the differential harness to consume.
+export fn ZDiagnostic.render_json(self: ZDiagnostic, path: string) {
+    std.io.print("{\"kind\":\"diagnostic\",\"severity\":")
+    if self.severity == ZDiagnosticSeverityWarning {
+        ZDiagnostic.write_json_string("warning")
+    } else {
+        ZDiagnostic.write_json_string("error")
+    }
+    std.io.print(",\"phase\":")
+    ZDiagnostic.write_json_string(self.phase)
+    std.io.print(",\"code\":")
+    ZDiagnostic.write_json_string(self.code)
+    std.io.print(",\"file\":")
+    ZDiagnostic.write_json_string(path)
+    std.io.print(",\"line\":")
+    std.io.print_i64(self.span.line)
+    std.io.print(",\"column\":")
+    std.io.print_i64(self.span.column)
+    std.io.print(",\"length\":")
+    std.io.print_i64(self.span.length)
+    std.io.print(",\"message\":")
+    ZDiagnostic.write_json_string(self.message)
+    std.io.print("}\n")
+}

@@ -3,12 +3,21 @@
 Zorb is a small ahead-of-time compiler for a systems language. Native
 compilation lowers through a Zig 0.16 backend over LLVM 21.
 
-The project already has:
+The normal compiler is a single `zorb` executable: a Zorb-written frontend
+paired with the Zig/LLVM backend through a static C ABI library. The C# project
+is retained as the stage-0 recovery bootstrap. See
+[Compiler architecture](docs/ARCHITECTURE.md) and
+[Bootstrapping Zorb](docs/BOOTSTRAPPING.md) for the roles and migration plan.
+Target-specific native frontend seed artifacts are built and resolved through
+[`scripts/build-bootstrap-seeds.sh`](scripts/build-bootstrap-seeds.sh) and
+[`scripts/resolve-bootstrap-seed.sh`](scripts/resolve-bootstrap-seed.sh).
 
-- a working `net8.0` frontend and Zig/LLVM native backend
+The project has:
+
+- a self-compiling Zorb frontend and in-process Zig/LLVM backend
 - a fixture-based regression suite with runtime tests
 - a draft language spec in `SEMANTICS.md`
-- a small standard library under `std/`
+- a small standard library under `runtime/std/`
 
 ## Current Status
 
@@ -110,27 +119,24 @@ Cross-platform stdlib helpers currently include:
 ## Build
 
 ```bash
-dotnet build Zorb.Compiler/Zorb.Compiler.csproj -c Release
-cd Zorb.LlvmBackend
-zig build test
-zig build
+./scripts/bootstrap-compiler.sh
+./build/zorb check compiler/self-check/fixtures/simple.zorb
 ```
 
 Backend development requires Zig 0.16 and LLVM 21 development headers and
-libraries. The release scripts package the backend and LLD with the compiler,
-so released archives do not require a separate Zig installation. Linux release
-builds statically link LLVM; Windows release builds bundle `LLVM-C.dll`.
+libraries. The development bootstrap links the local shared LLVM library. The
+Linux publisher statically links LLVM into one `zorb` executable; neither path
+launches a separate backend process.
+
+Executable `build` and `run` still use the host linker driver: `cc` on Linux and
+`clang-cl` on Windows. Those tools are development/runtime prerequisites and
+are not copied into compiler packages. LLVM IR, bitcode, assembly, and object
+output do not require a linker.
 
 Publish a standalone compiler package:
 
 ```bash
 ./scripts/publish-compiler-linux.sh
-```
-
-Publish a version-stamped standalone Linux compiler build:
-
-```bash
-VERSION=0.2.1 INFORMATIONAL_VERSION=0.2.1 ./scripts/publish-compiler-linux.sh
 ```
 
 On Windows PowerShell:
@@ -139,62 +145,59 @@ On Windows PowerShell:
 ./scripts/publish-compiler-windows.ps1
 ```
 
-Publish a version-stamped standalone Windows compiler build:
-
-```powershell
-$env:VERSION="0.2.1"
-$env:INFORMATIONAL_VERSION="0.2.1"
-./scripts/publish-compiler-windows.ps1
-```
-
-The GitHub Actions workflow builds and tests the .NET frontend, Zig backend, and
-packaged toolchain on Linux and Windows. Pushes to `master` publish standalone
-artifacts. Version tags such as `v0.1.0` create a GitHub Release with zipped
-compiler packages.
+The GitHub Actions workflow builds and tests the recovery seed, native frontend,
+Zig backend, and packaged toolchain on Linux and Windows. Pushes to `master`
+publish standalone artifacts. Version tags such as `v0.1.0` create a GitHub
+Release with zipped compiler packages.
 
 ## Run The Compiler
 
 Check a file without emitting output:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- main.zorb --check
-```
-
-Print the compiler version:
-
-```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- --version
-```
-
-Dump the token stream before parsing:
-
-```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- main.zorb --dump-tokens --check
+./build/zorb check main.zorb
 ```
 
 Emit verified LLVM IR:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- main.zorb -o out.ll
+./build/zorb build main.zorb --output-kind llvm-ir -o out.ll
 ```
 
 Build a native executable on the current host:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb -o out
+./build/zorb build main.zorb -o out
 ```
 
 Compile and run a program on the current host:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- run main.zorb
+./build/zorb run main.zorb
 ```
 
 Select an explicit build target:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target host-linux -o out
+./build/zorb build main.zorb --target x86_64-unknown-linux-gnu -o out
 ```
+
+Pass additional host-linker arguments (this terminal option consumes every
+remaining argument without shell parsing):
+
+```bash
+./build/zorb build main.zorb -o out --native-link-args path/to/library.a -lm
+```
+
+The integrated driver links executables for the current x86_64 Linux or Windows
+host. Explicit LLVM triples may be used with `llvm-ir`, `object`, `assembly`,
+and `bitcode` output. Cross-linking policies remain in the recovery seed while
+they migrate into the native driver.
+
+### Recovery seed target workflows
+
+The following commands use the C# recovery seed for cross-target and bare-metal
+workflows that the native driver does not yet link itself.
 
 Supported `--target` values are `host-linux`, `freestanding-linux`, `host-linux-aarch64`, `freestanding-linux-aarch64`, `bare-metal-x86_64`, and `host-windows`.
 On Linux, `build` and `run` default to `freestanding-linux`, which preserves `_start` and links a Linux executable without the usual C runtime startup files.
@@ -203,49 +206,52 @@ The legacy `-nostdlib` flag remains available as shorthand for `--target freesta
 Build a bare-metal x86_64 kernel ELF with the bundled linker script:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 -o kernel.elf
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 -o kernel.elf
 ```
 
 Use a custom linker script instead of the bundled one:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --linker-script kernel.ld -o kernel.elf
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --linker-script kernel.ld -o kernel.elf
 ```
 
 Emit the linker script used for the build so you can inspect or customize it:
 
 ```bash
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --emit-linker-script kernel.ld -o kernel.elf
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --emit-linker-script kernel.ld -o kernel.elf
 ```
 
 `bare-metal-x86_64` preserves `_start`, sets `Builtin.IsBareMetal`, routes
 `std.io.write(...)` to the x86_64 debug port `0xE9`, emits an ELF object through
-LLVM, and links a kernel ELF with packaged `ld.lld`. The target can be built
+LLVM, and links a kernel ELF with an available `ld.lld`. The target can be built
 from x86_64 Linux or Windows hosts with either the bundled linker script or the
 script passed to `--linker-script`.
 `run` is intentionally unsupported for bare-metal output.
 
 ## Windows Host Builds
 
-On Windows, the recommended hosted linker driver is `clang-cl`.
-It integrates with the normal Windows/MSVC link environment, which makes it the most convenient path for Zorb programs that use the Windows-facing standard library bindings in `std/io.zorb` and `std/os.zorb`.
+For recovery-seed Windows builds, the recommended hosted linker driver is
+`clang-cl`.
+It integrates with the normal Windows/MSVC link environment, which makes it
+the most convenient path for Zorb programs that use the Windows-facing
+standard-library bindings in `runtime/std/io.zorb` and `runtime/std/os.zorb`.
 
 Build a native Windows executable:
 
 ```powershell
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb -o out.exe
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb -o out.exe
 ```
 
 Compile and run a program on the current Windows host:
 
 ```powershell
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- run main.zorb
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- run main.zorb
 ```
 
 Select the hosted Windows target explicitly:
 
 ```powershell
-dotnet run --project Zorb.Compiler/Zorb.Compiler.csproj -- build main.zorb --target host-windows -o out.exe
+dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target host-windows -o out.exe
 ```
 
 Notes:
@@ -263,11 +269,14 @@ Notes:
 Run the full fixture suite:
 
 ```bash
-dotnet run --project Zorb.Compiler.Tests/Zorb.Compiler.Tests.csproj
+dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release
 ```
 
 Every semantically successful fixture and example is emitted through LLVM and
-verified. Runtime fixtures are built and executed through the LLVM backend.
+verified. The same successful corpus must also complete native Backend IR
+lowering through `zorb build --output-kind llvm-ir`; negative fixtures must be
+rejected by native `zorb check` with structured diagnostics. Runtime fixtures
+are built and executed through the LLVM backend.
 Focused `expect-llvm.txt` files may assert stable IR details where verifier and
 runtime coverage are not specific enough.
 
@@ -402,7 +411,7 @@ fn main() {
 
 Slice indexing is runtime-bounds-checked before reads or writes.
 
-Representative larger examples live in [`examples/`](./examples) and the executable fixture corpus under [`Zorb.Compiler.Tests/fixtures/`](./Zorb.Compiler.Tests/fixtures).
+Representative larger examples live in [`examples/`](./examples) and the executable fixture corpus under [`tests/csharp/fixtures/`](./tests/csharp/fixtures).
 
 Current checked-in examples:
 
@@ -422,7 +431,7 @@ Current checked-in examples:
 
 ## Project Shape
 
-- `Zorb.Compiler/`: lexer, parser, semantic checker, CLI, and LLVM backend IR emission
-- `Zorb.Compiler.Tests/`: fixture runner and regression fixtures
+- `seed/csharp/`: lexer, parser, semantic checker, CLI, and LLVM backend IR emission
+- `tests/csharp/`: fixture runner and regression fixtures
 - `std/`: standard library modules used by runtime-oriented examples
 - `SEMANTICS.md`: language behavior and current design constraints

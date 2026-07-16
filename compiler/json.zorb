@@ -1,0 +1,40 @@
+import "../runtime/std/io.zorb"
+import "../runtime/std/str.zorb"
+
+// Deterministic JSON string output shared by diagnostics, AST serialization,
+// and backend IR. This utility owns escaping only; callers own record shape.
+export struct ZJson {}
+
+export fn ZJson.write_bytes(ptr: *u8, length: i64) {
+    std.io.print("\"")
+    index: i64 = 0
+    while index < length {
+        ch: u8 = ptr[index]
+        if ch == 34 {
+            std.io.print("\\\"")
+        } else if ch == 92 {
+            std.io.print("\\\\")
+        } else if ch == 10 {
+            std.io.print("\\n")
+        } else if ch == 13 {
+            std.io.print("\\r")
+        } else if ch == 9 {
+            std.io.print("\\t")
+        } else if ch < 32 {
+            // Compiler-owned strings do not contain arbitrary control bytes.
+            // Replace them deterministically to keep emitted JSON valid.
+            std.io.print("?")
+        } else {
+            byte: [1]u8
+            byte[0] = ch
+            view: []u8 = byte
+            std.io.write_stdout(view)
+        }
+        index = index + 1
+    }
+    std.io.print("\"")
+}
+
+export fn ZJson.write_string(value: string) {
+    ZJson.write_bytes(cast(*u8, value), std.str.len(value))
+}

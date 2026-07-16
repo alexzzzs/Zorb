@@ -1,0 +1,4 @@
+fn main() {
+    for index: i64 = 0; index < 1; next: i64 = index + 1 {
+    }
+}

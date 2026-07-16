@@ -1,0 +1,9 @@
+fn first(values: []i64, index: u32) -> i64 {
+    return values[index]
+}
+
+fn main() -> i64 {
+    storage: [2]i64 = [2]i64{7, 9}
+    values: []i64 = storage
+    return first(values, cast(u32, 1))
+}

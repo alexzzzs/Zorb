@@ -1,0 +1,19 @@
+const global_increment: fn(i64) -> i64 = increment
+
+fn increment(value: i64) -> i64 {
+    return value + 1
+}
+
+fn apply(callback: fn(i64) -> i64, value: i64) -> i64 {
+    return callback(value)
+}
+
+fn choose_increment() -> fn(i64) -> i64 {
+    return increment
+}
+
+fn run_callbacks() -> i64 {
+    local: fn(i64) -> i64 = increment
+    chosen: fn(i64) -> i64 = choose_increment()
+    return apply(local, 40) + chosen(1) + global_increment(2)
+}

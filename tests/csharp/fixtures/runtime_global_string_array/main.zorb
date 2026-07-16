@@ -1,0 +1,14 @@
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/os.zorb"
+
+names: [3]string = [3]string{ "alpha", "beta", "gamma" }
+
+fn _start() {
+    std.io.print(names[0])
+    std.io.print("\n")
+    std.io.print(names[1])
+    std.io.print("\n")
+    std.io.print(names[2])
+    std.io.print("\n")
+    std.os.exit(0)
+}

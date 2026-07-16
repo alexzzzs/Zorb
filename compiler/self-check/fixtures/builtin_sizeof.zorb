@@ -1,0 +1,5 @@
+fn main() -> i64 {
+    new_capacity: i64 = 8
+    size: i64 = new_capacity * Builtin.sizeof(i64)
+    return size
+}

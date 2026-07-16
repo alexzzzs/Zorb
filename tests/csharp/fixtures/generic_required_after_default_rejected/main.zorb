@@ -1,0 +1,6 @@
+struct Bad<T = i64, U> {
+    first: T,
+    second: U,
+}
+
+fn _start() {}

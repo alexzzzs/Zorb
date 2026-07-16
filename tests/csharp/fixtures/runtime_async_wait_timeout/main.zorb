@@ -1,0 +1,125 @@
+import "../../../../runtime/std/async.zorb"
+import "../../../../runtime/std/errors.zorb"
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/mem.zorb"
+import "../../../../runtime/std/net.zorb"
+import "../../../../runtime/std/os.zorb"
+import "../../../../runtime/std/task.zorb"
+
+client_fd_global: i32 = 0
+conn_fd_global: i32 = 0
+
+fn bind_loopback_port(server_fd: i32, addr: *std.net.SockAddrV4) -> bool {
+    port: i64 = 21141
+    while port < 22141 {
+        candidate: std.net.SockAddrV4 = std.net.sockaddr_v4_loopback(cast(u16, port))
+        bind_result: i64 = std.net.bind_v4(server_fd, &candidate)
+        if bind_result >= 0 {
+            addr.family = candidate.family
+            addr.port = candidate.port
+            addr.addr = candidate.addr
+            i: i64 = 0
+            while i < 8 {
+                addr.zero[i] = candidate.zero[i]
+                i = i + 1
+            }
+            return true
+        }
+        port = port + 1
+    }
+
+    return false
+}
+
+fn waiter(arg: *void) {
+    std.async.wait_readable_timeout(conn_fd_global, 50) catch |wait_err| {
+        if wait_err == error.TimedOut {
+            std.io.print("fiber timeout\n")
+            return
+        }
+
+        std.os.exit(wait_err)
+        return
+    }
+
+    std.os.exit(31)
+}
+
+fn _start() {
+    if !std.net.is_supported() || !std.async.is_supported() {
+        std.io.print("unsupported\n")
+        std.os.exit(0)
+        return
+    }
+
+    heap: std.mem.HeapAllocator = std.mem.HeapAllocator.init(262144) catch |init_err| {
+        std.os.exit(init_err)
+        return
+    }
+
+    server_fd_raw: i64 = std.net.socket_tcp_v4()
+    client_fd_raw: i64 = std.net.socket_tcp_v4()
+    if server_fd_raw < 0 || client_fd_raw < 0 {
+        std.os.exit(1)
+        return
+    }
+
+    server_fd: i32 = cast(i32, server_fd_raw)
+    client_fd_global = cast(i32, client_fd_raw)
+
+    listen_addr: std.net.SockAddrV4
+    if !bind_loopback_port(server_fd, &listen_addr) {
+        std.net.close(client_fd_global)
+        std.net.close(server_fd)
+        std.os.exit(2)
+        return
+    }
+
+    if std.net.listen(server_fd, 1) < 0 {
+        std.net.close(client_fd_global)
+        std.net.close(server_fd)
+        std.os.exit(3)
+        return
+    }
+
+    if std.net.connect_v4(client_fd_global, &listen_addr) < 0 {
+        std.net.close(client_fd_global)
+        std.net.close(server_fd)
+        std.os.exit(4)
+        return
+    }
+
+    conn_fd_raw: i64 = std.net.accept(server_fd)
+    if conn_fd_raw < 0 {
+        std.net.close(client_fd_global)
+        std.net.close(server_fd)
+        std.os.exit(5)
+        return
+    }
+
+    conn_fd_global = cast(i32, conn_fd_raw)
+
+    std.async.wait_readable_timeout(conn_fd_global, 50) catch |wait_err| {
+        if wait_err == error.TimedOut {
+            std.io.print("direct timeout\n")
+        } else {
+            std.os.exit(wait_err)
+            return
+        }
+    }
+
+    std.async.init()
+    std.task.spawn(&heap, waiter, cast(*void, 0)) catch |spawn_err| {
+        std.net.close(conn_fd_global)
+        std.net.close(client_fd_global)
+        std.net.close(server_fd)
+        std.os.exit(spawn_err)
+        return
+    }
+
+    std.async.loop()
+    std.net.close(conn_fd_global)
+    std.net.close(client_fd_global)
+    std.net.close(server_fd)
+    std.os.exit(0)
+}

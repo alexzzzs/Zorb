@@ -1,0 +1,126 @@
+export const ZBackendIrSchemaVersion: i64 = 2
+
+export struct ZBackendIrTarget {
+    triple: string,
+    cpu: string,
+    features: string,
+    optimize: string
+}
+
+export fn ZBackendIrTarget.init(triple: string) -> ZBackendIrTarget {
+    return ZBackendIrTarget{
+        triple: triple,
+        cpu: "generic",
+        features: "",
+        optimize: "O0"
+    }
+}
+
+export struct ZBackendIrType {
+    id: i64,
+    kind: string,
+    name: string,
+    scalar: string,
+    element_type: i64,
+    length: i64,
+    fields: *ZBackendIrTypeField,
+    field_count: i64,
+    is_packed: bool
+}
+
+export struct ZBackendIrTypeField {
+    name: string,
+    type_id: i64
+}
+
+export struct ZBackendIrInstruction {
+    id: i64,
+    op: string,
+    type_id: i64,
+    integer: i64,
+    text: string,
+    binary_op: string,
+    compare_op: string,
+    cast_op: string,
+    lhs: i64,
+    rhs: i64,
+    callee: i64,
+    arguments: *i64,
+    argument_count: i64,
+    incoming_values: *i64,
+    incoming_blocks: *i64,
+    incoming_count: i64,
+    field_index: i64,
+    source_type: i64,
+    global_id: i64,
+    asm_template: string,
+    constraints: string,
+    output_types: *i64,
+    output_addresses: *i64,
+    output_count: i64
+}
+
+export struct ZBackendIrConstant {
+    kind: string,
+    integer: i64,
+    text: string,
+    function_id: i64,
+    elements: *ZBackendIrConstant,
+    element_count: i64
+}
+
+export struct ZBackendIrGlobal {
+    id: i64,
+    name: string,
+    type_id: i64,
+    linkage: string,
+    is_constant: bool,
+    initializer: ZBackendIrConstant
+}
+
+export struct ZBackendIrTerminator {
+    op: string,
+    value: i64,
+    target: i64,
+    condition: i64,
+    true_target: i64,
+    false_target: i64
+}
+
+export struct ZBackendIrBlock {
+    id: i64,
+    name: string,
+    instructions: *ZBackendIrInstruction,
+    instruction_count: i64,
+    terminator: ZBackendIrTerminator
+}
+
+export struct ZBackendIrParameter {
+    id: i64,
+    name: string,
+    type_id: i64
+}
+
+export struct ZBackendIrFunction {
+    id: i64,
+    name: string,
+    linkage: string,
+    return_type: i64,
+    parameters: *ZBackendIrParameter,
+    parameter_count: i64,
+    blocks: *ZBackendIrBlock,
+    block_count: i64
+}
+
+export struct ZBackendIrModule {
+    module_name: string,
+    target: ZBackendIrTarget,
+    output_kind: string,
+    output_path: string,
+    types: *ZBackendIrType,
+    type_count: i64,
+    globals: *ZBackendIrGlobal,
+    global_count: i64,
+    functions: *ZBackendIrFunction,
+    function_count: i64
+}

@@ -1,0 +1,3 @@
+fn same(lhs: bool, rhs: bool) -> bool {
+    return lhs == rhs
+}

@@ -1,0 +1,44 @@
+struct Pair {
+    left: i64,
+    right: i64
+}
+
+union Value {
+    Number: i64,
+    Flag: bool
+}
+
+export const answer: i64 = 42
+counter: i64 = 3
+const negative: i32 = -7
+const minimum: i64 = -9223372036854775808
+const label: string = "global"
+values: [3]i64 = [3]i64{ 10, 20, 30 }
+pair: Pair = Pair{ left: 4, right: 5 }
+value: Value = Value{ Number: 7 }
+
+fn read_answer() -> i64 {
+    return answer
+}
+
+fn bump_counter() -> i64 {
+    counter = counter + 1
+    return counter
+}
+
+fn read_negative() -> i32 {
+    return negative
+}
+
+fn read_label() -> string {
+    return label
+}
+
+fn update_array() -> i64 {
+    values[1] = 25
+    return values[0] + values[1] + values[2]
+}
+
+fn read_aggregates() -> i64 {
+    return pair.left + pair.right + value.Number
+}

@@ -1,0 +1,13 @@
+import c stdio.h
+import ../../../../runtime/std/io.zorb
+import pkg/math.zorb as math
+export error Bad
+export const answer
+global counter
+export struct Pair members 2
+enum Mode members 2
+union Value members 2
+extern fn puts params 1
+export fn add params 2 returns 1 locals 1
+fn main params 0 returns 1 locals 0
+summary imports 3 externs 1 errors 1 consts 1 globals 1 structs 1 enums 1 unions 1 functions 2

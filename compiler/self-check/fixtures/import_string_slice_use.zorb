@@ -1,0 +1,9 @@
+import "../../../runtime/std/str.zorb"
+
+fn main() -> i64 {
+    msg: string = "ok"
+    bytes: []u8
+    bytes.ptr = cast(*u8, msg)
+    bytes.len = std.str.len(msg)
+    return bytes.len
+}

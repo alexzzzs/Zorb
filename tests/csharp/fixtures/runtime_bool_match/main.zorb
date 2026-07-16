@@ -1,0 +1,21 @@
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/os.zorb"
+
+fn classify(flag: bool) -> i64 {
+    match flag {
+        case true {
+            return 10
+        }
+        case false {
+            return 20
+        }
+    }
+}
+
+fn _start() {
+    std.io.print_i64(classify(true))
+    std.io.print("\n")
+    std.io.print_i64(classify(false))
+    std.io.print("\n")
+    std.os.exit(0)
+}

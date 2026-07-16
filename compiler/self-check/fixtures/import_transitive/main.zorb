@@ -1,0 +1,5 @@
+import "b.zorb"
+
+fn main() -> i64 {
+    return value()
+}

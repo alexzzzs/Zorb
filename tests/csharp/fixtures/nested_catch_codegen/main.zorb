@@ -1,0 +1,19 @@
+error OuterFail = 1
+error InnerFail = 2
+
+fn fail_outer() !i64 {
+    return error.OuterFail
+}
+
+fn fail_inner() !i64 {
+    return error.InnerFail
+}
+
+fn main() -> i64 {
+    return fail_outer() catch |outer_err| {
+        return fail_inner() catch |inner_err| {
+            ignored_inner: i32 = inner_err
+            return 3
+        }
+    }
+}

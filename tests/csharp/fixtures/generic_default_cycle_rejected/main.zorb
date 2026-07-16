@@ -1,0 +1,9 @@
+struct Cycle<T = U, U = T> {
+    value: i64,
+}
+
+fn make() -> Cycle {
+    return Cycle{ value: 1 }
+}
+
+fn _start() {}
