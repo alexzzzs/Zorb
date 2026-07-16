@@ -15,6 +15,7 @@ $OutputDir = if ($args.Count -ge 1) {
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $Zig = if ($env:ZIG) { $env:ZIG } else { "zig" }
 $LlvmPrefix = if ($env:LLVM_PREFIX) { $env:LLVM_PREFIX } else { Join-Path $env:ProgramFiles "LLVM" }
+$ZigWindowsSystemLibraries = "ntdll.lib"
 if (-not (Test-Path -LiteralPath $LlvmPrefix -PathType Container)) {
     throw "LLVM prefix '$LlvmPrefix' does not exist. Install LLVM 21 or set LLVM_PREFIX."
 }
@@ -71,7 +72,7 @@ if (-not $BackendApi) {
     throw "Zig build did not produce the static zorb-llvm API library."
 }
 $LlvmImportLibrary = Join-Path $LlvmLibDir "LLVM-C.lib"
-$NativeFlags = "`"$BackendApi`" `"$LlvmImportLibrary`""
+$NativeFlags = "`"$BackendApi`" `"$LlvmImportLibrary`" $ZigWindowsSystemLibraries"
 $CompilerOutput = Join-Path $OutputDir "zorb.exe"
 & dotnet $Stage0Assembly build $DriverEntry --target host-windows -o $CompilerOutput --native-flags $NativeFlags
 if ($LASTEXITCODE -ne 0) {
