@@ -30,6 +30,11 @@ optimization selection. The development bootstrap dynamically links the local
 LLVM installation, while release packaging may statically link the same API
 library and LLVM component archives.
 
+The native driver also owns executable linking for `host-linux`,
+`freestanding-linux`, `host-linux-aarch64`, `freestanding-linux-aarch64`,
+`host-windows`, and `bare-metal-x86_64`. The C# stage is therefore needed for
+recovery bootstrap, not for ordinary cross-target or bare-metal workflows.
+
 Compiler or runtime sources that declare additional native symbols can append
 exact linker argv entries with the terminal `--native-link-args` option. It is
 terminal by design, so every following argument is passed directly to the host

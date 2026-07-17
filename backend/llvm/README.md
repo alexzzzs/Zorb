@@ -66,9 +66,15 @@ the integrated compiler.
 
 ## Supported Output Targets
 
-- Linux GNU x86_64 and AArch64 on matching Linux hosts.
+- Linux GNU x86_64 and AArch64 on Linux hosts, including AArch64 cross-linking
+  through `aarch64-linux-gnu-gcc` and QEMU-backed execution.
 - Windows MSVC x86_64 and AArch64 on matching Windows hosts.
 - Bare-metal x86_64 ELF from x86_64 Linux or Windows hosts.
+
+The integrated API receives a stable target policy name separately from the
+LLVM triple. This keeps target selection in the Zorb driver while the backend
+owns platform linker argv, bundled bare-metal linker scripts, environment
+overrides, and process execution.
 
 Hosted Windows GNU/MinGW output is not currently supported.
 

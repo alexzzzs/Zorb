@@ -16,6 +16,9 @@ extern fn zorb_llvm_process_id() -> i64
 extern fn zorb_llvm_link_object(
     object_path: *u8,
     output_path: *u8,
+    target_name: *u8,
+    linker_script_path: *u8,
+    emit_linker_script_path: *u8,
     run_after_link: i32,
     native_args: **u8,
     native_arg_count: i64
@@ -24,19 +27,55 @@ extern fn zorb_llvm_link_object(
 const ZORB_DRIVER_HEAP_BYTES: i64 = 1073741824
 
 fn zorb_default_target() -> string {
-    if Builtin.IsWindows { return "x86_64-pc-windows-msvc" }
-    return "x86_64-unknown-linux-gnu"
+    if Builtin.IsWindows { return "host-windows" }
+    return "host-linux"
 }
 
-fn zorb_can_link_target(target: string) -> bool {
-    if Builtin.IsWindows { return std.str.eql(target, "x86_64-pc-windows-msvc") }
-    return std.str.eql(target, "x86_64-unknown-linux-gnu")
+fn zorb_target_triple(target: string) -> string {
+    if std.str.eql(target, "host-linux") || std.str.eql(target, "freestanding-linux") {
+        if Builtin.IsAArch64 { return "aarch64-unknown-linux-gnu" }
+        return "x86_64-pc-linux-gnu"
+    }
+    if std.str.eql(target, "host-linux-aarch64") || std.str.eql(target, "freestanding-linux-aarch64") {
+        return "aarch64-unknown-linux-gnu"
+    }
+    if std.str.eql(target, "bare-metal-x86_64") { return "x86_64-unknown-none-elf" }
+    if std.str.eql(target, "host-windows") {
+        if Builtin.IsAArch64 { return "aarch64-pc-windows-msvc" }
+        return "x86_64-pc-windows-msvc"
+    }
+    return target
+}
+
+fn zorb_link_target(target: string) -> string {
+    if std.str.eql(target, "host-linux") {
+        if Builtin.IsAArch64 { return "host-linux-aarch64" }
+        return "host-linux"
+    }
+    if std.str.eql(target, "freestanding-linux") {
+        if Builtin.IsAArch64 { return "freestanding-linux-aarch64" }
+        return "freestanding-linux"
+    }
+    if std.str.eql(target, "x86_64-pc-linux-gnu") || std.str.eql(target, "x86_64-unknown-linux-gnu") {
+        return "host-linux"
+    }
+    if std.str.eql(target, "host-linux-aarch64") || std.str.eql(target, "aarch64-unknown-linux-gnu") {
+        return "host-linux-aarch64"
+    }
+    if std.str.eql(target, "freestanding-linux-aarch64") { return "freestanding-linux-aarch64" }
+    if std.str.eql(target, "bare-metal-x86_64") || std.str.eql(target, "x86_64-unknown-none-elf") {
+        return "bare-metal-x86_64"
+    }
+    if std.str.eql(target, "host-windows") || std.str.eql(target, "x86_64-pc-windows-msvc") || std.str.eql(target, "aarch64-pc-windows-msvc") {
+        return "host-windows"
+    }
+    return ""
 }
 
 fn zorb_usage() {
     std.io.eprint("usage: zorb check <input.zorb>\n")
-    std.io.eprint("       zorb build <input.zorb> [-o output] [--target triple] [--output-kind executable|llvm-ir|object|assembly|bitcode] [-O0|-O1|-O2|-O3] [--native-link-args <arg>...]\n")
-    std.io.eprint("       zorb run <input.zorb> [--target triple] [-O0|-O1|-O2|-O3]\n")
+    std.io.eprint("       zorb build <input.zorb> [-o output] [--target name-or-triple] [--output-kind executable|llvm-ir|object|assembly|bitcode] [--linker-script path] [--emit-linker-script path] [-O0|-O1|-O2|-O3] [--native-link-args <arg>...]\n")
+    std.io.eprint("       zorb run <input.zorb> [--target name-or-triple] [-O0|-O1|-O2|-O3]\n")
 }
 
 fn zorb_join_suffix(allocator: *std.mem.HeapAllocator, value: string, suffix: string) !string {
@@ -104,6 +143,9 @@ fn zorb_compile(
     input: string,
     output: string,
     target_triple: string,
+    link_target: string,
+    linker_script: string,
+    emit_linker_script: string,
     optimize: string,
     output_kind: string,
     run_after_link: bool,
@@ -172,7 +214,8 @@ fn zorb_compile(
         run_flag: i32 = 0
         if run_after_link { run_flag = 1 }
         result = cast(i64, zorb_llvm_link_object(
-            cast(*u8, backend_output), cast(*u8, compile_output), run_flag,
+            cast(*u8, backend_output), cast(*u8, compile_output), cast(*u8, link_target),
+            cast(*u8, linker_script), cast(*u8, emit_linker_script), run_flag,
             native_args, native_arg_count
         ))
     }
@@ -206,8 +249,11 @@ fn main(argc: i64, argv: **u8) -> i64 {
     }
 
     output: string = "out"
+    output_set: bool = false
     if is_run { output = ".zorb-run" }
     target: string = zorb_default_target()
+    linker_script: string = ""
+    emit_linker_script: string = ""
     optimize: string = "O0"
     output_kind: string = "executable"
     native_args: **u8 = argv
@@ -221,11 +267,22 @@ fn main(argc: i64, argv: **u8) -> i64 {
                 return 64
             }
             output = std.process.at(args, index + 1)
+            output_set = true
             index = index + 2
             continue
         }
         if std.str.eql(option, "--target") && index + 1 < std.process.len(args) {
             target = std.process.at(args, index + 1)
+            index = index + 2
+            continue
+        }
+        if std.str.eql(option, "--linker-script") && index + 1 < std.process.len(args) {
+            linker_script = std.process.at(args, index + 1)
+            index = index + 2
+            continue
+        }
+        if std.str.eql(option, "--emit-linker-script") && index + 1 < std.process.len(args) {
+            emit_linker_script = std.process.at(args, index + 1)
             index = index + 2
             continue
         }
@@ -282,12 +339,30 @@ fn main(argc: i64, argv: **u8) -> i64 {
         std.io.eprint("zorb: --native-link-args requires executable output\n")
         return 64
     }
-    if std.str.eql(output_kind, "executable") && !zorb_can_link_target(target) {
-        std.io.eprint("zorb: executable linking requires the current x86_64 host target\n")
+    link_target: string = zorb_link_target(target)
+    if std.str.eql(output_kind, "executable") && std.str.len(link_target) == 0 {
+        std.io.eprint("zorb: executable linking requires a supported named target or target triple\n")
         return 64
     }
+    is_bare_metal: bool = std.str.eql(link_target, "bare-metal-x86_64")
+    if is_run && is_bare_metal {
+        std.io.eprint("zorb: run does not support target bare-metal-x86_64\n")
+        return 64
+    }
+    if (std.str.len(linker_script) > 0 || std.str.len(emit_linker_script) > 0) && (!is_build || !is_bare_metal || !std.str.eql(output_kind, "executable")) {
+        std.io.eprint("zorb: linker script options require build --target bare-metal-x86_64 with executable output\n")
+        return 64
+    }
+    if is_build && !output_set && std.str.eql(output_kind, "executable") && is_bare_metal {
+        output = "out.elf"
+    }
+    if is_build && !output_set && std.str.eql(output_kind, "executable") &&
+        std.str.eql(link_target, "host-windows") {
+        output = "out.exe"
+    }
     return zorb_compile(
-        input, output, target, optimize, output_kind, is_run,
+        input, output, zorb_target_triple(target), link_target,
+        linker_script, emit_linker_script, optimize, output_kind, is_run,
         native_args, native_arg_count
     )
 }

@@ -48,6 +48,23 @@ internal static partial class Program
             "native_link_args_require_executable",
             () => nativeFixtureHarness.ValidateNativeLinkArgsRequireExecutable(
                 Path.Combine(fixtureRoot, "runtime_hello_world", "main.zorb")));
+        RunNamedTest(
+            failures,
+            "native_named_target_emission",
+            () => nativeFixtureHarness.ValidateNamedTargetEmission(
+                Path.Combine(fixtureRoot, "builtin_arch_codegen", "main.zorb")));
+        if (nativeFixtureHarness.CanValidateBareMetalLinking())
+        {
+            RunNamedTest(
+                failures,
+                "native_bare_metal_linking",
+                () => nativeFixtureHarness.ValidateBareMetalLinking(
+                    Path.Combine(fixtureRoot, "bare_metal_debug_port", "main.zorb")));
+        }
+        else
+        {
+            Console.WriteLine("SKIP native_bare_metal_linking");
+        }
 
         RunNamedTest(failures, "cli_workflow", () => RunCliWorkflowTests(fixtureRoot));
         RunNamedTest(failures, "fixture_parity_classification", RunFixtureParityClassificationTests);
