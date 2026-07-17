@@ -227,7 +227,8 @@ internal static partial class Program
 
         public void ValidateBareMetalLinking(string mainPath)
         {
-            if (!CanValidateBareMetalLinking())
+            var bareMetalLinker = FindBareMetalLinker();
+            if (bareMetalLinker == null)
                 throw new InvalidOperationException("Bare-metal linking is not available on this host.");
 
             var outputPath = Path.Combine(ownedTempDirectory, "native-kernel.elf");
@@ -239,7 +240,11 @@ internal static partial class Program
                     "-o", outputPath, "--emit-linker-script", linkerScriptPath
                 ],
                 projectRoot,
-                TimeSpan.FromSeconds(NativeFixtureCommandTimeoutSeconds));
+                TimeSpan.FromSeconds(NativeFixtureCommandTimeoutSeconds),
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["ZORB_LLD"] = bareMetalLinker
+                });
             if (result.ExitCode != 0 || !File.Exists(outputPath) || !File.Exists(linkerScriptPath))
             {
                 throw new Exception(

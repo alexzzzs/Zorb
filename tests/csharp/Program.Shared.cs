@@ -258,17 +258,20 @@ internal static partial class Program
         return false;
     }
 
-    private static bool IsBareMetalLinkerAvailable()
+    private static string? FindBareMetalLinker()
     {
         var configured = Environment.GetEnvironmentVariable("ZORB_LLD");
         if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
-            return true;
+            return Path.GetFullPath(configured);
 
-        if (ExternalTools.IsToolAvailable("ld.lld"))
-            return true;
+        var unversioned = ExternalTools.FindAvailableTool("ld.lld");
+        if (unversioned != null)
+            return unversioned;
 
-        return ExternalTools.FindAvailableToolByPrefix("ld.lld-") != null;
+        return ExternalTools.FindAvailableToolByPrefix("ld.lld-");
     }
+
+    private static bool IsBareMetalLinkerAvailable() => FindBareMetalLinker() != null;
 
     private static string? FindAArch64LinuxCompiler()
     {
@@ -352,11 +355,19 @@ internal static partial class Program
         return RuntimeInformation.ProcessArchitecture == Architecture.Arm64 || FindAArch64Qemu() != null;
     }
 
-    private static ProcessResult RunProcessWithTimeoutArgs(string fileName, IEnumerable<string> arguments, string workingDirectory, TimeSpan timeout)
+    private static ProcessResult RunProcessWithTimeoutArgs(
+        string fileName,
+        IEnumerable<string> arguments,
+        string workingDirectory,
+        TimeSpan timeout,
+        IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         try
         {
-            var result = ExternalTools.RunProcessWithTimeout(fileName, arguments, workingDirectory, timeout);
+            var result = environmentVariables == null
+                ? ExternalTools.RunProcessWithTimeout(fileName, arguments, workingDirectory, timeout)
+                : ExternalTools.RunProcessWithTimeout(
+                    fileName, arguments, workingDirectory, timeout, environmentVariables);
             return new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
         }
         catch (ZorbCompilerException ex)
