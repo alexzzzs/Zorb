@@ -226,7 +226,14 @@ jobs:
         shell: pwsh
         run: |
           $nativeCompilerDir = Join-Path $env:RUNNER_TEMP "zorb-native-fixture"
-          ./scripts/publish-compiler-windows.ps1 $nativeCompilerDir
+          try {
+            ./scripts/publish-compiler-windows.ps1 $nativeCompilerDir
+          }
+          catch {
+            $message = $_.Exception.Message.Replace("`r", "").Replace("`n", "%0A")
+            Write-Output "::error title=Windows native compiler publish failed::$message"
+            throw
+          }
 
           $nativeCompiler = Join-Path $nativeCompilerDir "zorb.exe"
           if (-not (Test-Path -LiteralPath $nativeCompiler -PathType Leaf)) {
