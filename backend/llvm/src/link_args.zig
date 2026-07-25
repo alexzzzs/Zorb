@@ -74,8 +74,7 @@ pub const LinkTarget = enum {
 
     pub fn supportsHost(target: LinkTarget) bool {
         return switch (target) {
-            .host_linux, .freestanding_linux =>
-                builtin.os.tag == .linux and builtin.cpu.arch == .x86_64,
+            .host_linux, .freestanding_linux => builtin.os.tag == .linux and builtin.cpu.arch == .x86_64,
             .host_linux_aarch64, .freestanding_linux_aarch64 => builtin.os.tag == .linux and
                 (builtin.cpu.arch == .x86_64 or builtin.cpu.arch == .aarch64),
             .bare_metal_x86_64 => (builtin.os.tag == .linux or builtin.os.tag == .windows) and builtin.cpu.arch == .x86_64,
@@ -90,7 +89,7 @@ pub fn baseArgCount(target: LinkTarget) usize {
         .host_linux, .host_linux_aarch64 => 5,
         .freestanding_linux, .freestanding_linux_aarch64 => 10,
         .bare_metal_x86_64 => 10,
-        .host_windows => 9,
+        .host_windows => 10,
     };
 }
 
@@ -163,9 +162,10 @@ pub fn populateWindowsBaseArgs(
     args[3] = output_arg;
     args[4] = "/link";
     args[5] = "/subsystem:console";
-    args[6] = "kernel32.lib";
-    args[7] = "ucrt.lib";
-    args[8] = "ws2_32.lib";
+    args[6] = "/Brepro";
+    args[7] = "kernel32.lib";
+    args[8] = "ucrt.lib";
+    args[9] = "ws2_32.lib";
 }
 
 pub fn prepareWindowsEntryRetry(
@@ -220,7 +220,7 @@ test "AArch64 arguments select the native or cross compiler for the host" {
     const expected_compiler = if (builtin.cpu.arch == .aarch64) "gcc" else "/toolchain/aarch64-gcc";
     try expectArgs(&.{
         expected_compiler, "-nostdlib",    "-fno-pie",  "-no-pie", "-z",
-        "execstack",      "-fno-builtin", "program.o", "-o",      "program",
+        "execstack",       "-fno-builtin", "program.o", "-o",      "program",
     }, &args);
 }
 
@@ -260,15 +260,15 @@ test "hosted Linux entry retry preserves target compiler and native arguments" {
 }
 
 test "Windows entry retry selects the Zorb start symbol" {
-    var initial_args: [10][]const u8 = undefined;
+    var initial_args: [11][]const u8 = undefined;
     try populateWindowsBaseArgs(&initial_args, "program.obj", "/Fe:program.exe");
-    initial_args[9] = "/debug";
+    initial_args[10] = "/debug";
     const retry_args = try prepareWindowsEntryRetry(std.testing.allocator, &initial_args);
     defer std.testing.allocator.free(retry_args);
 
     try expectArgs(&.{
-        "clang-cl",           "/nologo",       "program.obj",  "/Fe:program.exe", "/link",
-        "/subsystem:console", "/entry:_start", "kernel32.lib", "ucrt.lib",        "ws2_32.lib",
-        "/debug",
+        "clang-cl",           "/nologo",       "program.obj", "/Fe:program.exe", "/link",
+        "/subsystem:console", "/entry:_start", "/Brepro",     "kernel32.lib",    "ucrt.lib",
+        "ws2_32.lib",         "/debug",
     }, retry_args);
 }

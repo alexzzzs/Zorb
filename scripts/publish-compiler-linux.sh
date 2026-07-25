@@ -54,12 +54,43 @@ NATIVE_FLAGS="$BACKEND_DIR/zig-out/lib/libzorb-llvm.a \
 -L$LLVM_PREFIX/lib -Wl,--start-group $LLVM_LIBS -Wl,--end-group \
 $LLVM_SYSTEM_LIBS -lpthread -lquadmath -lstdc++"
 
-"$STAGE0" build "$DRIVER_ENTRY" --target host-linux -o "$OUTPUT_DIR/zorb" \
+read -r -a LLVM_LIB_ARGS <<< "$LLVM_LIBS"
+read -r -a LLVM_SYSTEM_LIB_ARGS <<< "$LLVM_SYSTEM_LIBS"
+NATIVE_LINK_ARGS=(
+  "$BACKEND_DIR/zig-out/lib/libzorb-llvm.a"
+  "-L$LLVM_PREFIX/lib"
+  -Wl,--start-group
+  "${LLVM_LIB_ARGS[@]}"
+  -Wl,--end-group
+  "${LLVM_SYSTEM_LIB_ARGS[@]}"
+  -lpthread
+  -lquadmath
+  -lstdc++
+)
+
+VERIFICATION_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zorb-release-fixed-point.XXXXXX")"
+trap 'rm -rf -- "$VERIFICATION_DIR"' EXIT
+GENERATION_1="$VERIFICATION_DIR/zorb-generation-1"
+GENERATION_2="$VERIFICATION_DIR/zorb-generation-2"
+GENERATION_3="$VERIFICATION_DIR/zorb-generation-3"
+
+"$STAGE0" build "$DRIVER_ENTRY" --target host-linux -o "$GENERATION_1" \
   --native-flags "$NATIVE_FLAGS"
+"$GENERATION_1" build "$DRIVER_ENTRY" --target host-linux -o "$GENERATION_2" \
+  --native-link-args "${NATIVE_LINK_ARGS[@]}"
+"$GENERATION_2" build "$DRIVER_ENTRY" --target host-linux -o "$GENERATION_3" \
+  --native-link-args "${NATIVE_LINK_ARGS[@]}"
+
+if ! cmp -s "$GENERATION_2" "$GENERATION_3"; then
+  echo "Generation-2 and generation-3 compilers are not byte-identical." >&2
+  exit 1
+fi
+install -m 0755 "$GENERATION_2" "$OUTPUT_DIR/zorb"
 
 if ldd "$OUTPUT_DIR/zorb" | grep -q 'libLLVM'; then
   echo "Published Linux compiler still depends on a shared LLVM library." >&2
   exit 1
 fi
 
+printf 'Verified byte-identical generation-2 and generation-3 compilers.\n'
 printf 'Published Linux compiler to %s\n' "$OUTPUT_DIR"

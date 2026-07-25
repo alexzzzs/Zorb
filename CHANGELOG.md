@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The recovery compiler version now advances to the `0.2.3-dev` line after the
+  `0.2.2` release.
+
+## [0.2.2] - July 25, 2026
+
+### Guarantees
+
+- The Zorb-written frontend and in-process Zig/LLVM backend are the normal
+  compiler path for the language subset documented in `README.md` and
+  `docs/SEMANTICS.md`.
+- `build` is supported for `host-linux`, `freestanding-linux`,
+  `host-linux-aarch64`, `freestanding-linux-aarch64`, `host-windows`, and
+  `bare-metal-x86_64`.
+- `run` is supported for hosted Linux and Windows targets, including the
+  optional AArch64 Linux lane when its cross-toolchain and QEMU prerequisites
+  are installed.
+- Generation-2 and generation-3 native compiler rebuilds must remain
+  byte-identical.
+
+### Non-Goals
+
+- Hosted Windows GNU/MinGW output is not supported.
+- `run` remains unsupported for bare-metal output.
+- The C# compiler remains a recovery bootstrap and is not a second production
+  frontend.
+
 ### Added
 
 - A production compiler driver written in Zorb with `check`, `build`, and
@@ -27,8 +55,6 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- The compiler version now advances to the `0.2.2-dev` line after the
-  `0.2.1` release.
 - The Zorb-written frontend and IR lowerer are now the normal compiler path;
   the C# compiler remains as the checked-in recovery stage used to bootstrap a
   native compiler from a source checkout.
@@ -58,6 +84,11 @@ All notable changes to this project will be documented in this file.
   verification path.
 - Native inline-assembly lowering now promotes narrow integer inputs and
   normalizes fixed-register constraints consistently with the recovery seed.
+- Backend builds now translate LLVM C declarations from the configured LLVM
+  prefix instead of using headers from a different LLVM release.
+- Release publishers now package the generation-2 self-hosted compiler only
+  after a byte-identical generation-3 rebuild; Windows links use reproducible
+  PE metadata for the same verification.
 
 ### Removed
 

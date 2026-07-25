@@ -20,6 +20,7 @@ if (-not (Test-Path -LiteralPath $LlvmPrefix -PathType Container)) {
     throw "LLVM prefix '$LlvmPrefix' does not exist. Install LLVM 21 or set LLVM_PREFIX."
 }
 $LlvmLibDir = if ($env:LLVM_LIB_DIR) { $env:LLVM_LIB_DIR } else { Join-Path $LlvmPrefix "lib" }
+$LlvmRuntimeDir = if ($env:LLVM_RUNTIME_DIR) { $env:LLVM_RUNTIME_DIR } else { Join-Path $LlvmPrefix "bin" }
 
 function Resolve-LlvmLibDir {
     param(
@@ -42,6 +43,15 @@ function Resolve-LlvmLibDir {
 }
 
 $LlvmLibDir = Resolve-LlvmLibDir -PreferredDir $LlvmLibDir -SearchRoot $LlvmPrefix
+$NormalizedLlvmPrefix = [System.IO.Path]::GetFullPath($LlvmPrefix).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+$NormalizedLlvmLibDir = [System.IO.Path]::GetFullPath($LlvmLibDir)
+$LlvmLibIsUnderPrefix = $NormalizedLlvmLibDir.StartsWith(
+    $NormalizedLlvmPrefix + [System.IO.Path]::DirectorySeparatorChar,
+    [System.StringComparison]::OrdinalIgnoreCase
+)
+if ($env:LLVM_LIB_DIR -and -not $LlvmLibIsUnderPrefix -and -not $env:LLVM_RUNTIME_DIR) {
+    throw "LLVM_LIB_DIR is outside LLVM_PREFIX; set LLVM_RUNTIME_DIR to the matching LLVM-C.dll directory."
+}
 
 New-Item -ItemType Directory -Force -Path $Stage0OutputDir | Out-Null
 dotnet build $ProjectPath --configuration Release --nologo --output $Stage0OutputDir
@@ -72,13 +82,49 @@ if (-not $BackendApi) {
     throw "Zig build did not produce the static zorb-llvm API library."
 }
 $LlvmImportLibrary = Join-Path $LlvmLibDir "LLVM-C.lib"
+$LlvmRuntimeLibrary = Join-Path $LlvmRuntimeDir "LLVM-C.dll"
+if (-not (Test-Path -LiteralPath $LlvmRuntimeLibrary -PathType Leaf)) {
+    throw "Unable to find LLVM-C.dll at '$LlvmRuntimeLibrary'. Set LLVM_RUNTIME_DIR to its directory."
+}
+$NativeLinkArgs = @($BackendApi, $LlvmImportLibrary, $ZigWindowsSystemLibraries)
 $NativeFlags = "`"$BackendApi`" `"$LlvmImportLibrary`" $ZigWindowsSystemLibraries"
 $CompilerOutput = Join-Path $OutputDir "zorb.exe"
-& dotnet $Stage0Assembly build $DriverEntry --target host-windows -o $CompilerOutput --native-flags $NativeFlags
-if ($LASTEXITCODE -ne 0) {
-    throw "Integrated Zorb compiler build failed with exit code $LASTEXITCODE."
+$VerificationDir = Join-Path ([System.IO.Path]::GetTempPath()) ("zorb-release-fixed-point-" + [guid]::NewGuid())
+$Generation1 = Join-Path $VerificationDir "zorb-generation-1.exe"
+$Generation2 = Join-Path $VerificationDir "zorb-generation-2.exe"
+$Generation3 = Join-Path $VerificationDir "zorb-generation-3.exe"
+
+New-Item -ItemType Directory -Force -Path $VerificationDir | Out-Null
+try {
+    Copy-Item $LlvmRuntimeLibrary $VerificationDir -Force
+
+    & dotnet $Stage0Assembly build $DriverEntry --target host-windows -o $Generation1 --native-flags $NativeFlags
+    if ($LASTEXITCODE -ne 0) {
+        throw "Generation-1 Zorb compiler build failed with exit code $LASTEXITCODE."
+    }
+
+    & $Generation1 build $DriverEntry --target host-windows -o $Generation2 --native-link-args @NativeLinkArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Generation-2 Zorb compiler build failed with exit code $LASTEXITCODE."
+    }
+
+    & $Generation2 build $DriverEntry --target host-windows -o $Generation3 --native-link-args @NativeLinkArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Generation-3 Zorb compiler build failed with exit code $LASTEXITCODE."
+    }
+
+    $Generation2Hash = (Get-FileHash -LiteralPath $Generation2 -Algorithm SHA256).Hash
+    $Generation3Hash = (Get-FileHash -LiteralPath $Generation3 -Algorithm SHA256).Hash
+    if ($Generation2Hash -ne $Generation3Hash) {
+        throw "Generation-2 and generation-3 compilers are not byte-identical."
+    }
+
+    Copy-Item $Generation2 $CompilerOutput -Force
+    Copy-Item $LlvmRuntimeLibrary $OutputDir -Force
+}
+finally {
+    Remove-Item -LiteralPath $VerificationDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Copy-Item (Join-Path $LlvmPrefix "bin/LLVM-C.dll") $OutputDir -Force
-
+Write-Host "Verified byte-identical generation-2 and generation-3 compilers."
 Write-Host "Published Windows compiler to $OutputDir"

@@ -20,7 +20,10 @@ zig build -Dllvm-prefix=/usr/lib/llvm-21
 ```
 
 The default build links against the shared LLVM C API for quick local
-iteration.
+iteration. C API declarations are translated from the configured LLVM prefix,
+so the headers and libraries come from the same LLVM 21 installation. Use
+`-Dllvm-include-dir=...` only when the headers are installed outside that
+prefix.
 
 ## Static LLVM Build
 
