@@ -89,7 +89,7 @@ pub fn baseArgCount(target: LinkTarget) usize {
         .host_linux, .host_linux_aarch64 => 5,
         .freestanding_linux, .freestanding_linux_aarch64 => 10,
         .bare_metal_x86_64 => 10,
-        .host_windows => 11,
+        .host_windows => 13,
     };
 }
 
@@ -165,8 +165,10 @@ pub fn populateWindowsBaseArgs(
     args[6] = "/subsystem:console";
     args[7] = "/Brepro";
     args[8] = "kernel32.lib";
-    args[9] = "ucrt.lib";
-    args[10] = "ws2_32.lib";
+    args[9] = "msvcrt.lib";
+    args[10] = "vcruntime.lib";
+    args[11] = "ucrt.lib";
+    args[12] = "ws2_32.lib";
 }
 
 pub fn prepareWindowsEntryRetry(
@@ -261,15 +263,15 @@ test "hosted Linux entry retry preserves target compiler and native arguments" {
 }
 
 test "Windows links with LLD and entry retry selects the Zorb start symbol" {
-    var initial_args: [12][]const u8 = undefined;
+    var initial_args: [14][]const u8 = undefined;
     try populateWindowsBaseArgs(&initial_args, "program.obj", "/Fe:program.exe");
-    initial_args[11] = "/debug";
+    initial_args[13] = "/debug";
     const retry_args = try prepareWindowsEntryRetry(std.testing.allocator, &initial_args);
     defer std.testing.allocator.free(retry_args);
 
     try expectArgs(&.{
-        "clang-cl", "/nologo",            "-fuse-ld=lld",  "program.obj", "/Fe:program.exe",
-        "/link",    "/subsystem:console", "/entry:_start", "/Brepro",     "kernel32.lib",
-        "ucrt.lib", "ws2_32.lib",         "/debug",
+        "clang-cl",   "/nologo",            "-fuse-ld=lld",  "program.obj", "/Fe:program.exe",
+        "/link",      "/subsystem:console", "/entry:_start", "/Brepro",     "kernel32.lib",
+        "msvcrt.lib", "vcruntime.lib",      "ucrt.lib",      "ws2_32.lib",  "/debug",
     }, retry_args);
 }
