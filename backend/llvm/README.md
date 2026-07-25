@@ -61,8 +61,9 @@ zorb.exe
 LLVM-C.dll
 ```
 
-Executable linking uses `clang-cl` from `PATH`, matching the MSVC target ABI;
-the compiler package does not bundle a host C/C++ toolchain. The standalone
+Executable linking uses `clang-cl` and LLVM's `lld-link` from `PATH`, matching
+the MSVC target ABI while accepting Zig's bundled compiler-runtime objects; the
+compiler package does not bundle a host C/C++ toolchain. The standalone
 `zorb-llvm-backend.exe` is a development protocol tool and is not required by
 the integrated compiler.
 

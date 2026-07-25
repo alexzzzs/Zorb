@@ -89,7 +89,7 @@ pub fn baseArgCount(target: LinkTarget) usize {
         .host_linux, .host_linux_aarch64 => 5,
         .freestanding_linux, .freestanding_linux_aarch64 => 10,
         .bare_metal_x86_64 => 10,
-        .host_windows => 10,
+        .host_windows => 11,
     };
 }
 
@@ -158,14 +158,15 @@ pub fn populateWindowsBaseArgs(
 
     args[0] = "clang-cl";
     args[1] = "/nologo";
-    args[2] = object_path;
-    args[3] = output_arg;
-    args[4] = "/link";
-    args[5] = "/subsystem:console";
-    args[6] = "/Brepro";
-    args[7] = "kernel32.lib";
-    args[8] = "ucrt.lib";
-    args[9] = "ws2_32.lib";
+    args[2] = "-fuse-ld=lld";
+    args[3] = object_path;
+    args[4] = output_arg;
+    args[5] = "/link";
+    args[6] = "/subsystem:console";
+    args[7] = "/Brepro";
+    args[8] = "kernel32.lib";
+    args[9] = "ucrt.lib";
+    args[10] = "ws2_32.lib";
 }
 
 pub fn prepareWindowsEntryRetry(
@@ -176,7 +177,7 @@ pub fn prepareWindowsEntryRetry(
         return error.InvalidArgument;
 
     const retry_args = try allocator.alloc([]const u8, initial_args.len + 1);
-    const entry_arg_index: usize = 6;
+    const entry_arg_index: usize = 7;
     for (0..entry_arg_index) |index| retry_args[index] = initial_args[index];
     retry_args[entry_arg_index] = "/entry:_start";
     for (entry_arg_index..initial_args.len) |index| retry_args[index + 1] = initial_args[index];
@@ -259,16 +260,16 @@ test "hosted Linux entry retry preserves target compiler and native arguments" {
     }, retry_args);
 }
 
-test "Windows entry retry selects the Zorb start symbol" {
-    var initial_args: [11][]const u8 = undefined;
+test "Windows links with LLD and entry retry selects the Zorb start symbol" {
+    var initial_args: [12][]const u8 = undefined;
     try populateWindowsBaseArgs(&initial_args, "program.obj", "/Fe:program.exe");
-    initial_args[10] = "/debug";
+    initial_args[11] = "/debug";
     const retry_args = try prepareWindowsEntryRetry(std.testing.allocator, &initial_args);
     defer std.testing.allocator.free(retry_args);
 
     try expectArgs(&.{
-        "clang-cl",           "/nologo",       "program.obj", "/Fe:program.exe", "/link",
-        "/subsystem:console", "/entry:_start", "/Brepro",     "kernel32.lib",    "ucrt.lib",
-        "ws2_32.lib",         "/debug",
+        "clang-cl", "/nologo",            "-fuse-ld=lld",  "program.obj", "/Fe:program.exe",
+        "/link",    "/subsystem:console", "/entry:_start", "/Brepro",     "kernel32.lib",
+        "ucrt.lib", "ws2_32.lib",         "/debug",
     }, retry_args);
 }
