@@ -152,10 +152,12 @@ jobs:
 
       - name: Package release asset
         if: matrix.platform == 'linux'
+        env:
+          ASSET_NAME: ${{ matrix.asset_name }}
         run: |
           mkdir -p release-assets
           cd "${{ matrix.output_dir }}"
-          zip -r "../../../release-assets/${{ matrix.asset_name }}" .
+          zip -r "../../../release-assets/$ASSET_NAME" .
 
       - name: Package release asset
         if: matrix.platform == 'windows'

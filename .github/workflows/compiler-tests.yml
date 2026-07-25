@@ -119,6 +119,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
 
+    permissions:
+      contents: read
+
     env:
       ZORB_AARCH64_LINUX_GCC: /zorb-native-arm64-must-not-use-cross-gcc
       ZORB_QEMU_AARCH64: /zorb-native-arm64-must-not-use-qemu
@@ -126,6 +129,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
