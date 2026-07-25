@@ -114,6 +114,83 @@ jobs:
       - name: Run Fixture Suite With AArch64 Lane
         run: dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release
 
+  linux-arm64-native-compiler:
+    name: linux-arm64-native-compiler
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    env:
+      ZORB_AARCH64_LINUX_GCC: /zorb-native-arm64-must-not-use-cross-gcc
+      ZORB_QEMU_AARCH64: /zorb-native-arm64-must-not-use-qemu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install native ARM64 release toolchain
+        run: |
+          test "$(uname -m)" = "aarch64"
+          . /etc/os-release
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y llvm-21-dev lld-21 g++ minisign
+          bash scripts/install-zig-linux.sh aarch64
+          echo "$PWD/zig-aarch64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Cache Zig build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            backend/llvm/.zig-cache
+            ~/.cache/zig
+          key: ${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-
+
+      - name: Publish native ARM64 compiler
+        run: |
+          set +e
+          bash scripts/publish-compiler-linux.sh "artifacts/compiler/linux-arm64" 2>&1 | tee "$RUNNER_TEMP/zorb-arm64-publisher.log"
+          publisher_status=${PIPESTATUS[0]}
+          set -e
+          if [[ $publisher_status -ne 0 ]]; then
+            details="$(tail -40 "$RUNNER_TEMP/zorb-arm64-publisher.log")"
+            details="${details//'%'/'%25'}"
+            details="${details//$'\r'/'%0D'}"
+            details="${details//$'\n'/'%0A'}"
+            echo "::error title=Native ARM64 compiler publish failed::$details"
+            exit "$publisher_status"
+          fi
+
+      - name: Smoke test native ARM64 compiler
+        run: |
+          set -euo pipefail
+          compiler="artifacts/compiler/linux-arm64/zorb"
+          executable="$RUNNER_TEMP/zorb-arm64-native-smoke"
+          readelf -h "$compiler" | grep -Eq 'Machine:[[:space:]]+AArch64'
+          "$compiler" check compiler/driver/main.zorb
+          "$compiler" build tests/csharp/fixtures/runtime_hello_world/main.zorb --target host-linux-aarch64 -o "$executable"
+          readelf -h "$executable" | grep -Eq 'Machine:[[:space:]]+AArch64'
+          test "$("$executable")" = "ok"
+          test "$("$compiler" run tests/csharp/fixtures/runtime_hello_world/main.zorb --target host-linux-aarch64)" = "ok"
+
+      - name: Upload native ARM64 compiler artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zorb-compiler-linux-arm64
+          path: artifacts/compiler/linux-arm64
+
   linux-native-parity:
     name: linux-native-frontend-parity
     runs-on: ubuntu-latest
@@ -255,6 +332,7 @@ jobs:
     needs:
       - test
       - linux-aarch64-cross
+      - linux-arm64-native-compiler
       - linux-native-parity
       - windows-hosted-smoke
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))

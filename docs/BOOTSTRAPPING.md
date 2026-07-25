@@ -79,6 +79,13 @@ Backend IR lowering, LLVM emission, embedded backend library, and linker
 orchestration. A hash mismatch is a release failure even when both binaries can
 compile ordinary fixtures.
 
+The Linux publisher detects the native host architecture. It performs native
+compiler generation with `host-linux` on x86_64 and `host-linux-aarch64` on
+AArch64, then performs the same generation-2/generation-3 reproducibility check
+on that host. Native AArch64 publishing uses the native host C++ toolchain and
+does not require an AArch64 cross-compiler or QEMU. The AArch64 smoke-test
+binaries are executed directly by `.github/workflows/compiler-tests.yml`.
+
 ## Recovery bootstrap
 
 A source checkout without a released `zorb` binary needs a pinned bootstrap

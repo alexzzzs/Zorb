@@ -15,15 +15,24 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            platform: linux
+            zig_arch: x86_64
             artifact_name: zorb-release-linux-x64
             output_dir: artifacts/compiler/linux-x64
             asset_name: zorb-compiler-linux-x64-${{ github.ref_name }}.zip
+          - os: ubuntu-24.04-arm
+            platform: linux
+            zig_arch: aarch64
+            artifact_name: zorb-release-linux-arm64
+            output_dir: artifacts/compiler/linux-arm64
+            asset_name: zorb-compiler-linux-arm64-${{ github.ref_name }}.zip
           - os: windows-latest
+            platform: windows
             artifact_name: zorb-release-win-x64
             output_dir: artifacts/compiler/win-x64
             asset_name: zorb-compiler-win-x64-${{ github.ref_name }}.zip
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -35,29 +44,29 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Install release toolchain
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'linux'
         run: |
           . /etc/os-release
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-21-dev g++
-          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+          sudo apt-get install -y llvm-21-dev g++ minisign
+          bash scripts/install-zig-linux.sh "${{ matrix.zig_arch }}"
+          echo "$PWD/zig-${{ matrix.zig_arch }}-linux-0.16.0" >> "$GITHUB_PATH"
 
       - name: Cache Zig build artifacts
+        if: matrix.platform == 'linux'
         uses: actions/cache@v4
         with:
           path: |
             backend/llvm/.zig-cache
             ~/.cache/zig
-          key: release-${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
+          key: release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
-            release-${{ runner.os }}-zig-0.16.0-llvm21-
+            release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-
 
       - name: Install release toolchain
-        if: matrix.os == 'windows-latest'
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           choco install llvm --version=21.1.8 -y --no-progress
@@ -67,17 +76,18 @@ jobs:
           "$env:ProgramFiles\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Cache Zig build artifacts
+        if: matrix.platform == 'windows'
         uses: actions/cache@v4
         with:
           path: |
             backend/llvm/.zig-cache
             ~\AppData\Local\zig
-          key: release-${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
+          key: release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
-            release-${{ runner.os }}-zig-0.16.0-llvm21-
+            release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-
 
       - name: Discover LLVM library paths
-        if: matrix.os == 'windows-latest'
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $llvmPrefix = if (Test-Path "$env:ProgramFiles\LLVM") {
@@ -104,11 +114,11 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Publish standalone compiler
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'linux'
         run: bash scripts/publish-compiler-linux.sh "${{ matrix.output_dir }}"
 
       - name: Publish standalone compiler
-        if: matrix.os == 'windows-latest'
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: ./scripts/publish-compiler-windows.ps1 "${{ matrix.output_dir }}"
 
@@ -126,7 +136,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+          if [[ "${{ matrix.platform }}" == "linux" ]]; then
             compiler="${{ matrix.output_dir }}/zorb"
             executable="$RUNNER_TEMP/zorb-release-smoke"
           else
@@ -141,14 +151,16 @@ jobs:
           test "$("$executable")" = "ok"
 
       - name: Package release asset
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'linux'
+        env:
+          ASSET_NAME: ${{ matrix.asset_name }}
         run: |
           mkdir -p release-assets
           cd "${{ matrix.output_dir }}"
-          zip -r "../../../release-assets/${{ matrix.asset_name }}" .
+          zip -r "../../../release-assets/$ASSET_NAME" .
 
       - name: Package release asset
-        if: matrix.os == 'windows-latest'
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null

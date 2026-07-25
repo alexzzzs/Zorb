@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Native Linux ARM64 compiler bootstrapping, CI smoke coverage, and release
+  packages. The ARM64 publisher uses the host compiler and executes generated
+  programs directly without a cross-compiler or QEMU.
+
 ### Changed
 
 - The recovery compiler version now advances to the `0.2.3-dev` line after the

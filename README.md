@@ -133,7 +133,7 @@ Executable `build` and `run` still use the host linker driver: `cc` on Linux and
 are not copied into compiler packages. LLVM IR, bitcode, assembly, and object
 output do not require a linker.
 
-Publish a standalone compiler package:
+Publish a standalone compiler package for the current Linux host architecture:
 
 ```bash
 ./scripts/publish-compiler-linux.sh
@@ -145,10 +145,12 @@ On Windows PowerShell:
 ./scripts/publish-compiler-windows.ps1
 ```
 
-The GitHub Actions workflow builds and tests the recovery seed, native frontend,
-Zig backend, and packaged toolchain on Linux and Windows. Pushes to `master`
-publish standalone artifacts. Version tags such as `v0.1.0` create a GitHub
-Release with zipped compiler packages.
+The Linux publisher supports native x86_64 and AArch64 hosts and selects
+`host-linux` or `host-linux-aarch64` automatically. The GitHub Actions workflow
+builds and tests the recovery seed, native frontend, Zig backend, and packaged
+toolchain on Linux x86_64, Linux ARM64, and Windows x86_64. Pushes to `master`
+publish standalone artifacts. Version tags create a GitHub Release with zipped
+compiler packages for all three hosts.
 
 ## Run The Compiler
 
@@ -200,9 +202,10 @@ Supported `--target` values are `host-linux`, `freestanding-linux`,
 `host-windows`. Linux and Windows default to their native hosted target.
 Freestanding Linux preserves `_start` and links without the host startup files.
 AArch64 builds on x86_64 Linux use `aarch64-linux-gnu-gcc`; override it with
-`ZORB_AARCH64_LINUX_GCC`. AArch64 `run` uses `qemu-aarch64` plus the
-`/usr/aarch64-linux-gnu` sysroot by default; override those with
-`ZORB_QEMU_AARCH64` and `ZORB_AARCH64_LINUX_SYSROOT`.
+`ZORB_AARCH64_LINUX_GCC`. On an AArch64 Linux host, the compiler uses native
+`gcc` and runs AArch64 programs directly without QEMU. Only cross-host AArch64
+`run` uses `qemu-aarch64` plus the `/usr/aarch64-linux-gnu` sysroot by default;
+override those with `ZORB_QEMU_AARCH64` and `ZORB_AARCH64_LINUX_SYSROOT`.
 
 Build a bare-metal x86_64 kernel ELF with the bundled linker script:
 
