@@ -42,6 +42,22 @@ function Resolve-LlvmLibDir {
     return Split-Path $discoveredLibrary.FullName -Parent
 }
 
+function Invoke-CheckedCommand {
+    param(
+        [string]$Description,
+        [string]$Command,
+        [string[]]$Arguments
+    )
+
+    $commandOutput = & $Command @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+    $commandOutput | ForEach-Object { Write-Host $_ }
+    if ($exitCode -ne 0) {
+        $details = ($commandOutput | ForEach-Object { $_.ToString() }) -join "`n"
+        throw "$Description failed with exit code $exitCode.`n$details"
+    }
+}
+
 $LlvmLibDir = Resolve-LlvmLibDir -PreferredDir $LlvmLibDir -SearchRoot $LlvmPrefix
 $NormalizedLlvmPrefix = [System.IO.Path]::GetFullPath($LlvmPrefix).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
 $NormalizedLlvmLibDir = [System.IO.Path]::GetFullPath($LlvmLibDir)
@@ -98,20 +114,22 @@ New-Item -ItemType Directory -Force -Path $VerificationDir | Out-Null
 try {
     Copy-Item $LlvmRuntimeLibrary $VerificationDir -Force
 
-    & dotnet $Stage0Assembly build $DriverEntry --target host-windows -o $Generation1 --native-flags $NativeFlags
-    if ($LASTEXITCODE -ne 0) {
-        throw "Generation-1 Zorb compiler build failed with exit code $LASTEXITCODE."
-    }
+    Invoke-CheckedCommand -Description "Generation-1 Zorb compiler build" -Command "dotnet" -Arguments @(
+        $Stage0Assembly, "build", $DriverEntry, "--target", "host-windows", "-o", $Generation1,
+        "--native-flags", $NativeFlags
+    )
 
-    & $Generation1 build $DriverEntry --target host-windows -o $Generation2 --native-link-args @NativeLinkArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Generation-2 Zorb compiler build failed with exit code $LASTEXITCODE."
-    }
+    $Generation2Arguments = @(
+        "build", $DriverEntry, "--target", "host-windows", "-o", $Generation2, "--native-link-args"
+    ) + $NativeLinkArgs
+    Invoke-CheckedCommand -Description "Generation-2 Zorb compiler build" `
+        -Command $Generation1 -Arguments $Generation2Arguments
 
-    & $Generation2 build $DriverEntry --target host-windows -o $Generation3 --native-link-args @NativeLinkArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Generation-3 Zorb compiler build failed with exit code $LASTEXITCODE."
-    }
+    $Generation3Arguments = @(
+        "build", $DriverEntry, "--target", "host-windows", "-o", $Generation3, "--native-link-args"
+    ) + $NativeLinkArgs
+    Invoke-CheckedCommand -Description "Generation-3 Zorb compiler build" `
+        -Command $Generation2 -Arguments $Generation3Arguments
 
     $Generation2Hash = (Get-FileHash -LiteralPath $Generation2 -Algorithm SHA256).Hash
     $Generation3Hash = (Get-FileHash -LiteralPath $Generation3 -Algorithm SHA256).Hash
