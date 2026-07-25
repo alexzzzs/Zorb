@@ -67,9 +67,14 @@ trap - EXIT
 LLVM_LIBS="$($LLVM_CONFIG --link-static --libs \
   core target nativecodegen aarch64 x86 passes bitwriter irreader)"
 LLVM_SYSTEM_LIBS="$($LLVM_CONFIG --link-static --system-libs)"
+QUADMATH_LINK_ARGS=()
+QUADMATH_LIBRARY="$(g++ -print-file-name=libquadmath.so)"
+if [[ "$QUADMATH_LIBRARY" != "libquadmath.so" && -f "$QUADMATH_LIBRARY" ]]; then
+  QUADMATH_LINK_ARGS=(-lquadmath)
+fi
 NATIVE_FLAGS="$BACKEND_DIR/zig-out/lib/libzorb-llvm.a \
 -L$LLVM_PREFIX/lib -Wl,--start-group $LLVM_LIBS -Wl,--end-group \
-$LLVM_SYSTEM_LIBS -lpthread -lquadmath -lstdc++"
+$LLVM_SYSTEM_LIBS -lpthread ${QUADMATH_LINK_ARGS[*]} -lstdc++"
 
 read -r -a LLVM_LIB_ARGS <<< "$LLVM_LIBS"
 read -r -a LLVM_SYSTEM_LIB_ARGS <<< "$LLVM_SYSTEM_LIBS"
@@ -81,7 +86,7 @@ NATIVE_LINK_ARGS=(
   -Wl,--end-group
   "${LLVM_SYSTEM_LIB_ARGS[@]}"
   -lpthread
-  -lquadmath
+  "${QUADMATH_LINK_ARGS[@]}"
   -lstdc++
 )
 
