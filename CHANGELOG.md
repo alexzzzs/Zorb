@@ -84,8 +84,8 @@ All notable changes to this project will be documented in this file.
   verification path.
 - Native inline-assembly lowering now promotes narrow integer inputs and
   normalizes fixed-register constraints consistently with the recovery seed.
-- Backend builds now translate LLVM C declarations from the configured LLVM
-  prefix instead of using headers from a different LLVM release.
+- The checked-in LLVM C header snapshot now matches the LLVM 21.1.8 libraries
+  used by development and release builds on Linux and Windows.
 - Release publishers now package the generation-2 self-hosted compiler only
   after a byte-identical generation-3 rebuild; Windows links use reproducible
   PE metadata for the same verification.
