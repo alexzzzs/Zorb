@@ -179,7 +179,7 @@ Compile and run a program on the current host:
 Select an explicit build target:
 
 ```bash
-./build/zorb build main.zorb --target x86_64-unknown-linux-gnu -o out
+./build/zorb build main.zorb --target freestanding-linux -o out
 ```
 
 Pass additional host-linker arguments (this terminal option consumes every
@@ -189,36 +189,37 @@ remaining argument without shell parsing):
 ./build/zorb build main.zorb -o out --native-link-args path/to/library.a -lm
 ```
 
-The integrated driver links executables for the current x86_64 Linux or Windows
-host. Explicit LLVM triples may be used with `llvm-ir`, `object`, `assembly`,
-and `bitcode` output. Cross-linking policies remain in the recovery seed while
-they migrate into the native driver.
+The integrated driver owns the link policies for all supported targets. Exact
+LLVM triples remain available for `llvm-ir`, `object`, `assembly`, and
+`bitcode` output; use the stable target names below when building executables.
 
-### Recovery seed target workflows
+### Target workflows
 
-The following commands use the C# recovery seed for cross-target and bare-metal
-workflows that the native driver does not yet link itself.
-
-Supported `--target` values are `host-linux`, `freestanding-linux`, `host-linux-aarch64`, `freestanding-linux-aarch64`, `bare-metal-x86_64`, and `host-windows`.
-On Linux, `build` and `run` default to `freestanding-linux`, which preserves `_start` and links a Linux executable without the usual C runtime startup files.
-The legacy `-nostdlib` flag remains available as shorthand for `--target freestanding-linux`.
+Supported `--target` values are `host-linux`, `freestanding-linux`,
+`host-linux-aarch64`, `freestanding-linux-aarch64`, `bare-metal-x86_64`, and
+`host-windows`. Linux and Windows default to their native hosted target.
+Freestanding Linux preserves `_start` and links without the host startup files.
+AArch64 builds on x86_64 Linux use `aarch64-linux-gnu-gcc`; override it with
+`ZORB_AARCH64_LINUX_GCC`. AArch64 `run` uses `qemu-aarch64` plus the
+`/usr/aarch64-linux-gnu` sysroot by default; override those with
+`ZORB_QEMU_AARCH64` and `ZORB_AARCH64_LINUX_SYSROOT`.
 
 Build a bare-metal x86_64 kernel ELF with the bundled linker script:
 
 ```bash
-dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 -o kernel.elf
+./build/zorb build main.zorb --target bare-metal-x86_64 -o kernel.elf
 ```
 
 Use a custom linker script instead of the bundled one:
 
 ```bash
-dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --linker-script kernel.ld -o kernel.elf
+./build/zorb build main.zorb --target bare-metal-x86_64 --linker-script kernel.ld -o kernel.elf
 ```
 
 Emit the linker script used for the build so you can inspect or customize it:
 
 ```bash
-dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target bare-metal-x86_64 --emit-linker-script kernel.ld -o kernel.elf
+./build/zorb build main.zorb --target bare-metal-x86_64 --emit-linker-script kernel.ld -o kernel.elf
 ```
 
 `bare-metal-x86_64` preserves `_start`, sets `Builtin.IsBareMetal`, routes
@@ -230,8 +231,7 @@ script passed to `--linker-script`.
 
 ## Windows Host Builds
 
-For recovery-seed Windows builds, the recommended hosted linker driver is
-`clang-cl`.
+For native Windows builds, the recommended hosted linker driver is `clang-cl`.
 It integrates with the normal Windows/MSVC link environment, which makes it
 the most convenient path for Zorb programs that use the Windows-facing
 standard-library bindings in `runtime/std/io.zorb` and `runtime/std/os.zorb`.
@@ -239,27 +239,25 @@ standard-library bindings in `runtime/std/io.zorb` and `runtime/std/os.zorb`.
 Build a native Windows executable:
 
 ```powershell
-dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb -o out.exe
+./build/zorb.exe build main.zorb -o out.exe
 ```
 
 Compile and run a program on the current Windows host:
 
 ```powershell
-dotnet run --project seed/csharp/Zorb.Compiler.csproj -- run main.zorb
+./build/zorb.exe run main.zorb
 ```
 
 Select the hosted Windows target explicitly:
 
 ```powershell
-dotnet run --project seed/csharp/Zorb.Compiler.csproj -- build main.zorb --target host-windows -o out.exe
+./build/zorb.exe build main.zorb --target host-windows -o out.exe
 ```
 
 Notes:
 
 - Windows `build` and `run` default to `host-windows` and use a generated hosted `main` shim when source defines `_start`.
-- `-nostdlib` build and run remain Linux-oriented and are not currently supported on Windows hosts.
 - `clang-cl` is the recommended Windows toolchain.
-- `cl.exe` may also work, but `clang-cl` is the preferred default.
 - Windows GNU/MinGW hosted output is not supported. LLVM removes the old C
   compiler restriction for bare-metal ELF output, but it does not implicitly
   provide a MinGW runtime, ABI, or standard-library binding layer.

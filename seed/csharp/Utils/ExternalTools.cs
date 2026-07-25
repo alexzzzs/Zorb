@@ -161,6 +161,22 @@ public static class ExternalTools
         return RunProcessCore(fileName, arguments, workingDirectory, (int)timeout.TotalMilliseconds);
     }
 
+    public static CommandResult RunProcessWithTimeout(
+        string fileName,
+        IEnumerable<string> arguments,
+        string workingDirectory,
+        TimeSpan timeout,
+        IReadOnlyDictionary<string, string> environmentVariables)
+    {
+        var startInfo = CreateProcessStartInfo(fileName, workingDirectory);
+        foreach (var argument in arguments)
+            startInfo.ArgumentList.Add(argument);
+        foreach (var (name, value) in environmentVariables)
+            startInfo.Environment[name] = value;
+
+        return RunProcessCore(startInfo, (int)timeout.TotalMilliseconds);
+    }
+
     private static CommandResult RunProcessCore(string fileName, IEnumerable<string> arguments, string workingDirectory, int? timeoutMilliseconds)
     {
         var startInfo = CreateProcessStartInfo(fileName, workingDirectory);

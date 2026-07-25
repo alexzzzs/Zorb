@@ -21,6 +21,9 @@ All notable changes to this project will be documented in this file.
   statically link LLVM; Windows packages include the required LLVM C API DLL.
 - Native Backend IR envelope and scalar-function runtime fixtures, plus
   expanded self-check coverage for the native lowerer.
+- Native driver link-policy support for hosted and freestanding Linux,
+  cross-compiled AArch64 Linux, hosted Windows, and bare-metal x86_64,
+  including bundled or custom linker scripts.
 
 ### Changed
 
@@ -36,6 +39,8 @@ All notable changes to this project will be documented in this file.
 - Bootstrap seed generation now emits portable checksums without performing an
   unrelated LLVM backend build, and seed resolution accepts a custom artifact
   directory.
+- Cross-target and bare-metal executable linking now runs through the native
+  driver and embedded backend instead of requiring the C# recovery CLI.
 
 ### Fixed
 
@@ -51,6 +56,8 @@ All notable changes to this project will be documented in this file.
 - Local bootstrap seeds are now rejected when their checksum is missing,
   malformed, or does not match the artifact; downloaded seeds use the same
   verification path.
+- Native inline-assembly lowering now promotes narrow integer inputs and
+  normalizes fixed-register constraints consistently with the recovery seed.
 
 ### Removed
 
