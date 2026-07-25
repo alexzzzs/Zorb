@@ -38,7 +38,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Setup .NET
+        if: matrix.platform == 'linux' && matrix.zig_arch == 'aarch64'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
@@ -115,12 +121,17 @@ jobs:
 
       - name: Publish standalone compiler
         if: matrix.platform == 'linux'
-        run: bash scripts/publish-compiler-linux.sh "${{ matrix.output_dir }}"
+        run: |
+          recovery_args=()
+          if [[ "${{ matrix.zig_arch }}" == "aarch64" ]]; then
+            recovery_args=(--recovery-csharp)
+          fi
+          python3 scripts/bootstrap_compiler.py publish "${{ matrix.output_dir }}" "${recovery_args[@]}"
 
       - name: Publish standalone compiler
         if: matrix.platform == 'windows'
         shell: pwsh
-        run: ./scripts/publish-compiler-windows.ps1 "${{ matrix.output_dir }}"
+        run: python scripts/bootstrap_compiler.py publish "${{ matrix.output_dir }}"
 
       - name: Write version metadata
         shell: bash

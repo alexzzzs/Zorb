@@ -27,9 +27,10 @@ is `runtime/std/`. `backend/llvm/` owns LLVM object emission and platform linkin
 
 ## Bootstrap roles
 
-`seed/csharp/` is the C# stage-0 recovery compiler. It can build the native
-compiler from a source checkout without a released seed, but it is not the
-normal release frontend or a competing user-facing compiler mode. The native
+`bootstrap/manifest.json` pins preceding integrated compiler releases used by
+the normal bootstrap. `seed/csharp/` is the explicit C# stage-0 recovery
+compiler for a new host target or disaster recovery; it is not the normal
+release frontend or a competing user-facing compiler mode. The native
 driver in `compiler/driver/` owns `check`, `build`, and `run`; it calls the
 static backend API in `backend/llvm/src/api.zig`.
 
@@ -38,12 +39,13 @@ The versioned frontend/backend boundary is documented in
 
 The bootstrap chain is:
 
-1. C# stage 0 builds a native Zorb compiler when no released seed is present.
-2. The native compiler emits the stable backend contract and builds programs
+1. The preceding verified Zorb release builds the candidate compiler.
+2. The candidate emits the stable backend contract and builds programs
    through the in-process LLVM API.
 3. The candidate recompiles the compiler graph until generation-2 and
    generation-3 driver executables are byte-identical.
-4. Releases use the preceding verified `zorb`; C# remains only for recovery.
+4. C# is used only when no seed exists for a new target or the release chain
+   must be recovered.
 
 ## Repository map
 
@@ -55,7 +57,8 @@ The bootstrap chain is:
 | `compiler/driver/` | Production `check`, `build`, and `run` entry | User-facing compiler |
 | `runtime/std/` | Zorb standard library/runtime-facing modules | Runtime core |
 | `backend/llvm/` | Zig/LLVM backend integration | Backend core |
-| `seed/csharp/` | C# stage-0 seed compiler | Frozen recovery seed after self-hosting |
+| `seed/csharp/` | C# stage-0 seed compiler | Frozen, explicit recovery path |
+| `bootstrap/` | Pinned integrated compiler seed contract | Normal bootstrap root |
 | `tests/csharp/` | Differential and runtime corpus | Test harness and corpus |
 | `scripts/` | Build, publish, and bootstrap entry points | Developer interface |
 

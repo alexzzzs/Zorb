@@ -1,5 +1,22 @@
 {
-  "schemaVersion": 1,
-  "purpose": "native-frontend-checker",
-  "artifacts": []
+  "schemaVersion": 2,
+  "purpose": "integrated-compiler",
+  "artifacts": [
+    {
+      "target": "host-linux",
+      "version": "0.2.2",
+      "format": "zip",
+      "executable": "zorb",
+      "url": "https://github.com/alexzzzs/Zorb/releases/download/v0.2.2/zorb-compiler-linux-x64-v0.2.2.zip",
+      "sha256": "a52af877f9d6a26c398dd7bcface34495ce4fb42897b052409c3c3b3e9289d20"
+    },
+    {
+      "target": "host-windows",
+      "version": "0.2.2",
+      "format": "zip",
+      "executable": "zorb.exe",
+      "url": "https://github.com/alexzzzs/Zorb/releases/download/v0.2.2/zorb-compiler-win-x64-v0.2.2.zip",
+      "sha256": "3af1fd09f85035e2ba898cd1663d4601c3c2ebeeee82325ef8184a072055956f"
+    }
+  ]
 }

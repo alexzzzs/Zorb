@@ -1,99 +1,120 @@
 # Bootstrapping Zorb
 
-## Current workflow
+## Normal workflow
 
-The C# recovery stage builds the native Zorb frontend checker:
-
-```bash
-./scripts/bootstrap-native-frontend.sh
-./build/zorb-self-check --json compiler/self-check/fixtures/simple.zorb
-```
-
-Pass an output path as the script's first argument to choose another location.
-The checker validates source, emits structured diagnostics, and can emit the
-versioned Backend IR used for fixed-point verification. It is a bootstrap probe,
-not the packaged end-user entry point.
-
-Build the integrated compiler driver and in-process LLVM backend with:
+The normal bootstrap resolves the preceding integrated compiler release from
+`bootstrap/manifest.json`, verifies its pinned SHA-256 digest, and uses it to
+build the current driver with the local Zig/LLVM backend:
 
 ```bash
-./scripts/bootstrap-compiler.sh
+python scripts/bootstrap_compiler.py bootstrap
 ./build/zorb check compiler/self-check/fixtures/simple.zorb
 ./build/zorb build compiler/self-check/fixtures/simple.zorb -o ./build/simple
 ./build/zorb run compiler/self-check/fixtures/simple.zorb
 ```
 
+The implementation requires Python 3.10 or newer, uses only the standard
+library, and supports Linux x64, Linux ARM64, and Windows x64. The shell and
+PowerShell scripts in `scripts/` are compatibility wrappers around the Python
+commands.
+
 The resulting `zorb` executable implements `check`, `build`, and `run` and does
 not invoke a separate backend executable. `--target`, `--output-kind`, and
 `-O0` through `-O3` are accepted by `build`; `run` accepts target and
-optimization selection. The development bootstrap dynamically links the local
-LLVM installation, while release packaging may statically link the same API
-library and LLVM component archives.
+optimization selection. Development bootstrap links the local shared LLVM
+installation. Release publication uses static LLVM on Linux and the packaged
+LLVM C API DLL on Windows.
 
-The native driver also owns executable linking for `host-linux`,
-`freestanding-linux`, `host-linux-aarch64`, `freestanding-linux-aarch64`,
-`host-windows`, and `bare-metal-x86_64`. The C# stage is therefore needed for
-recovery bootstrap, not for ordinary cross-target or bare-metal workflows.
-
-Compiler or runtime sources that declare additional native symbols can append
-exact linker argv entries with the terminal `--native-link-args` option. It is
-terminal by design, so every following argument is passed directly to the host
-linker without shell parsing. The self-hosting gate uses it to link the
-integrated LLVM API while rebuilding `compiler/driver/main.zorb`.
-
-## Seed artifacts
-
-Build a target-specific local seed artifact and checksum:
+Use an explicit local compiler instead of the manifest seed when needed:
 
 ```bash
-./scripts/build-bootstrap-seeds.sh --target host-linux
-./scripts/resolve-bootstrap-seed.sh host-linux
+python scripts/bootstrap_compiler.py bootstrap --seed /path/to/zorb
 ```
 
-Local artifacts are cached under `bootstrap/artifacts/<target>/` and are not
-committed. `bootstrap/manifest.json` is the checked-in contract for published
-artifacts; once release automation supplies an artifact URL and SHA-256, the
-resolver downloads and verifies it when no local seed exists. See
-[`bootstrap/README.md`](../bootstrap/README.md) for the artifact format.
-When seeds are built in another directory, pass the same location to the
-resolver with `--artifact-dir <directory>`. Both local and downloaded seeds are
-verified before use.
+## Seed resolution
 
-## Self-hosted release workflow
+Resolve a target-specific compiler package directly with:
 
-The normal release chain is:
+```bash
+python scripts/bootstrap_seed.py resolve
+python scripts/bootstrap_seed.py resolve host-windows
+```
+
+The resolver checks `bootstrap/artifacts/<target>/` first, requiring a matching
+`.sha256` file. Otherwise it downloads the immutable release ZIP declared in
+the manifest, verifies the archive before extraction, and caches the complete
+package under `build/bootstrap/<target>/<digest>/`. Keeping the whole package
+is required on Windows because `LLVM-C.dll` lives beside `zorb.exe`.
+
+Cache an existing integrated compiler for offline bootstrap:
+
+```bash
+python scripts/bootstrap_seed.py cache-local \
+  --target host-linux \
+  --compiler build/zorb
+```
+
+`ZORB_BOOTSTRAP_SEED`, `ZORB_BOOTSTRAP_MANIFEST`, and
+`ZORB_BOOTSTRAP_CACHE_DIR` override the compiler, manifest, and cache paths for
+automation. Command-line options take precedence where both are supplied.
+
+## Explicit C# recovery
+
+A source checkout should use C# only when there is no released compiler for a
+new host target or the release chain must be repaired:
+
+```bash
+python scripts/bootstrap_compiler.py bootstrap --recovery-csharp
+```
+
+The recovery option is mutually exclusive with `--seed`. Normal bootstrap and
+publishing fail with a clear error when a target has no manifest entry; they do
+not silently fall back to C#.
+
+Linux ARM64 is new in the 0.2.3 development line. Because v0.2.2 did not publish
+an ARM64 compiler, v0.2.3 performs one explicit C# recovery build on its native
+ARM64 runner. The resulting v0.2.3 package is the seed for subsequent ARM64
+releases.
+
+The native frontend checker remains available as a bootstrap probe:
+
+```bash
+python scripts/bootstrap_compiler.py self-check
+./build/zorb-self-check --json compiler/self-check/fixtures/simple.zorb
+```
+
+It validates source, emits structured diagnostics, and can emit Backend IR, but
+it is not the packaged end-user entry point.
+
+## Fixed-point release workflow
+
+Publish a standalone compiler for the current host with:
+
+```bash
+python scripts/bootstrap_compiler.py publish
+```
+
+The cross-platform publisher performs this chain:
 
 ```text
-released zorb N → builds zorb N+1 → rebuilds/verifies zorb N+1
+released zorb N → generation 1 → generation 2 → generation 3
 ```
 
-Each release should prove:
+Each release proves:
 
-1. the bootstrap compiler builds the candidate;
-2. the candidate passes the native fixture and differential corpus;
-3. the candidate rebuilds `compiler/driver/main.zorb`; and
-4. that rebuilt compiler rebuilds the driver byte-for-byte.
+1. the pinned seed builds the candidate;
+2. generation 1 rebuilds the production driver;
+3. generation 2 rebuilds it once more; and
+4. generation 2 and generation 3 are byte-identical.
 
-The generation-2/generation-3 binary comparison covers the frontend, native
-Backend IR lowering, LLVM emission, embedded backend library, and linker
-orchestration. A hash mismatch is a release failure even when both binaries can
-compile ordinary fixtures.
+The comparison covers the frontend, native Backend IR lowering, LLVM emission,
+embedded backend library, and linker orchestration. A hash mismatch is a release
+failure even when both binaries compile ordinary fixtures.
 
-The Linux publisher detects the native host architecture. It performs native
-compiler generation with `host-linux` on x86_64 and `host-linux-aarch64` on
-AArch64, then performs the same generation-2/generation-3 reproducibility check
-on that host. Native AArch64 publishing uses the native host C++ toolchain and
-does not require an AArch64 cross-compiler or QEMU. The AArch64 smoke-test
-binaries are executed directly by `.github/workflows/compiler-tests.yml`.
+Linux publishing detects x86_64 versus AArch64 and statically links LLVM.
+Windows publishing uses the MSVC ABI and copies the matching `LLVM-C.dll` into
+the package. CI includes a Linux x64 lane with a deliberately failing `dotnet`
+shim, proving the normal seed bootstrap does not touch the recovery compiler.
 
-## Recovery bootstrap
-
-A source checkout without a released `zorb` binary needs a pinned bootstrap
-toolchain. The C# seed in `seed/csharp/` is the checked-in recovery path;
-releases should publish a verified seed binary (or a bootstrap manifest that
-downloads one) for every supported host target. The C# seed need not implement
-new language features beyond the pinned bridge required to build current Zorb.
-
-The seed must only compile a pinned bridge compiler source; that bridge then
-builds the current compiler. This prevents future compiler source from being
-limited by the seed language subset.
+The C# recovery source need not implement new language features. It should stay
+frozen to the pinned bridge needed to repair the bootstrap chain.

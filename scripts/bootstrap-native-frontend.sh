@@ -1,23 +1,7 @@
 #!/usr/bin/env bash
-# Build the native Zorb frontend checker with the C# stage-0 compiler.
-#
-# This is a developer/bootstrap command, not the end-user compiler driver.
-# The resulting executable owns lexing, parsing, import loading, semantic
-# checking, structured diagnostics, and Backend IR emission. The production
-# check/build/run entry remains compiler/driver/main.zorb.
-
+# Compatibility entry point. Cross-platform implementation:
+#   python scripts/bootstrap_compiler.py self-check
 set -euo pipefail
 
-readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly STAGE0_PROJECT="$REPOSITORY_ROOT/seed/csharp/Zorb.Compiler.csproj"
-readonly FRONTEND_ENTRY="$REPOSITORY_ROOT/compiler/self-check/main.zorb"
-readonly DEFAULT_OUTPUT="$REPOSITORY_ROOT/build/zorb-self-check"
-
-output_path="${1:-$DEFAULT_OUTPUT}"
-
-mkdir -p "$(dirname "$output_path")"
-dotnet build "$STAGE0_PROJECT" --configuration Release --nologo
-"$REPOSITORY_ROOT/seed/csharp/bin/Release/net8.0/Zorb.Compiler" \
-    build "$FRONTEND_ENTRY" --target host-linux -o "$output_path"
-
-printf 'Native frontend checker built at %s\n' "$output_path"
+readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec "${PYTHON:-python3}" "$ROOT_DIR/scripts/bootstrap_compiler.py" self-check "$@"

@@ -9,11 +9,18 @@ All notable changes to this project will be documented in this file.
 - Native Linux ARM64 compiler bootstrapping, CI smoke coverage, and release
   packages. The ARM64 publisher uses the host compiler and executes generated
   programs directly without a cross-compiler or QEMU.
+- Cross-platform Python bootstrap and publishing tools that resolve preceding
+  integrated compiler releases from a versioned, SHA-256-pinned manifest.
+- A no-.NET Linux bootstrap CI lane that fails if the normal seed path attempts
+  to invoke the C# recovery compiler.
 
 ### Changed
 
 - The recovery compiler version now advances to the `0.2.3-dev` line after the
   `0.2.2` release.
+- Normal Linux x64 and Windows x64 bootstrap and publishing now start from the
+  pinned v0.2.2 integrated compiler packages. C# bootstrap is an explicit
+  recovery option; Linux ARM64 uses it once because v0.2.2 has no ARM64 asset.
 
 ## [0.2.2] - July 25, 2026
 
