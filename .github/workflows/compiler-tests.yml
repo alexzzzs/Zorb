@@ -154,7 +154,19 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-
 
       - name: Publish native ARM64 compiler
-        run: bash scripts/publish-compiler-linux.sh "artifacts/compiler/linux-arm64"
+        run: |
+          set +e
+          bash scripts/publish-compiler-linux.sh "artifacts/compiler/linux-arm64" 2>&1 | tee "$RUNNER_TEMP/zorb-arm64-publisher.log"
+          publisher_status=${PIPESTATUS[0]}
+          set -e
+          if [[ $publisher_status -ne 0 ]]; then
+            details="$(tail -40 "$RUNNER_TEMP/zorb-arm64-publisher.log")"
+            details="${details//'%'/'%25'}"
+            details="${details//$'\r'/'%0D'}"
+            details="${details//$'\n'/'%0A'}"
+            echo "::error title=Native ARM64 compiler publish failed::$details"
+            exit "$publisher_status"
+          fi
 
       - name: Smoke test native ARM64 compiler
         run: |
