@@ -6026,7 +6026,7 @@ fn zbackend_ir_cfg_lower_asm(
         } else {
             constraint = zbackend_ir_convert_asm_constraint(
                 context.allocator, constraint,
-                std.str.starts_with(context.type_layout.target_triple, "x86_64-")
+                std.str.starts_with(context.type_layout.target_triple, "x86_64")
             ) catch |err| { return err }
             std.collections.StringBuilder.append(
                 &constraint_builder, context.allocator, constraint

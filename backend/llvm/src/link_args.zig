@@ -74,9 +74,10 @@ pub const LinkTarget = enum {
 
     pub fn supportsHost(target: LinkTarget) bool {
         return switch (target) {
-            .host_linux, .freestanding_linux => builtin.os.tag == .linux and
+            .host_linux, .freestanding_linux =>
+                builtin.os.tag == .linux and builtin.cpu.arch == .x86_64,
+            .host_linux_aarch64, .freestanding_linux_aarch64 => builtin.os.tag == .linux and
                 (builtin.cpu.arch == .x86_64 or builtin.cpu.arch == .aarch64),
-            .host_linux_aarch64, .freestanding_linux_aarch64 => builtin.os.tag == .linux,
             .bare_metal_x86_64 => (builtin.os.tag == .linux or builtin.os.tag == .windows) and builtin.cpu.arch == .x86_64,
             .host_windows => builtin.os.tag == .windows and
                 (builtin.cpu.arch == .x86_64 or builtin.cpu.arch == .aarch64),
@@ -107,14 +108,20 @@ pub fn populateBaseArgs(args: [][]const u8, options: PopulateOptions) !void {
     if (args.len < baseArgCount(options.target)) return error.InvalidArgument;
     switch (options.target) {
         .host_linux, .host_linux_aarch64 => {
-            args[0] = if (options.target.isAarch64Linux()) options.aarch64_compiler else "gcc";
+            args[0] = if (options.target.isAarch64Linux() and builtin.cpu.arch != .aarch64)
+                options.aarch64_compiler
+            else
+                "gcc";
             args[1] = "-no-pie";
             args[2] = options.object_path;
             args[3] = "-o";
             args[4] = options.output_path;
         },
         .freestanding_linux, .freestanding_linux_aarch64 => {
-            args[0] = if (options.target.isAarch64Linux()) options.aarch64_compiler else "gcc";
+            args[0] = if (options.target.isAarch64Linux() and builtin.cpu.arch != .aarch64)
+                options.aarch64_compiler
+            else
+                "gcc";
             args[1] = "-nostdlib";
             args[2] = "-fno-pie";
             args[3] = "-no-pie";
@@ -202,7 +209,7 @@ test "supported target names map to link policies" {
     try std.testing.expectError(error.UnsupportedTarget, LinkTarget.parse("host-macos"));
 }
 
-test "freestanding AArch64 arguments use the cross compiler policy" {
+test "AArch64 arguments select the native or cross compiler for the host" {
     var args: [10][]const u8 = undefined;
     try populateBaseArgs(&args, .{
         .target = .freestanding_linux_aarch64,
@@ -210,10 +217,20 @@ test "freestanding AArch64 arguments use the cross compiler policy" {
         .output_path = "program",
         .aarch64_compiler = "/toolchain/aarch64-gcc",
     });
+    const expected_compiler = if (builtin.cpu.arch == .aarch64) "gcc" else "/toolchain/aarch64-gcc";
     try expectArgs(&.{
-        "/toolchain/aarch64-gcc", "-nostdlib",    "-fno-pie",  "-no-pie", "-z",
-        "execstack",              "-fno-builtin", "program.o", "-o",      "program",
+        expected_compiler, "-nostdlib",    "-fno-pie",  "-no-pie", "-z",
+        "execstack",      "-fno-builtin", "program.o", "-o",      "program",
     }, &args);
+}
+
+test "Linux link policies reject unsupported host architectures" {
+    if (builtin.os.tag != .linux) return;
+    try std.testing.expectEqual(builtin.cpu.arch == .x86_64, LinkTarget.host_linux.supportsHost());
+    try std.testing.expectEqual(
+        builtin.cpu.arch == .x86_64 or builtin.cpu.arch == .aarch64,
+        LinkTarget.host_linux_aarch64.supportsHost(),
+    );
 }
 
 test "bare-metal arguments include the linker script policy" {

@@ -57,6 +57,7 @@ fn zorb_link_target(target: string) -> string {
         return "freestanding-linux"
     }
     if std.str.eql(target, "x86_64-pc-linux-gnu") || std.str.eql(target, "x86_64-unknown-linux-gnu") {
+        if Builtin.IsAArch64 { return "" }
         return "host-linux"
     }
     if std.str.eql(target, "host-linux-aarch64") || std.str.eql(target, "aarch64-unknown-linux-gnu") {
@@ -103,6 +104,11 @@ fn zorb_run_output(allocator: *std.mem.HeapAllocator) !string {
     std.collections.StringBuilder.append_i64(
         &builder, allocator, zorb_llvm_process_id()
     ) catch |err| { return error.OutOfMemory }
+    if Builtin.IsWindows {
+        std.collections.StringBuilder.append(&builder, allocator, ".exe") catch |err| {
+            return error.OutOfMemory
+        }
+    }
     return cast(string, std.collections.StringBuilder.c_string(
         &builder, allocator
     ) catch |err| { return error.OutOfMemory })

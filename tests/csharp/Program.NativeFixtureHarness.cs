@@ -221,7 +221,7 @@ internal static partial class Program
         }
 
         public bool CanValidateBareMetalLinking() =>
-            OperatingSystem.IsLinux() &&
+            (OperatingSystem.IsLinux() || OperatingSystem.IsWindows()) &&
             RuntimeInformation.ProcessArchitecture == Architecture.X64 &&
             IsBareMetalLinkerAvailable();
 
