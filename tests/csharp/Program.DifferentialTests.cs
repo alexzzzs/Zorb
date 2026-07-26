@@ -137,10 +137,7 @@ internal static partial class Program
             code = "type.condition-not-bool";
         if (IsStageZeroUnknownNameDiagnostic(output))
             code = "name.unknown";
-        // `sizeof` resolves a named type operand, unlike a generic argument
-        // validation failure, so retain the native frontend's unknown-name
-        // category for that narrower Stage 0 wording.
-        if (output.Contains("Unknown type '", StringComparison.Ordinal) && output.Contains("Builtin.sizeof", StringComparison.Ordinal))
+        if (output.Contains("Unknown type '", StringComparison.Ordinal))
             code = "name.unknown";
         // Invalid error declarations can produce downstream undeclared-error
         // messages; Stage 0's primary diagnostic remains the declaration.

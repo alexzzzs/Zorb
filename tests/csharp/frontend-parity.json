@@ -1544,6 +1544,33 @@
       "expected": "semantic-failure",
       "gate": "frontend",
       "reason": "Verified string literals cannot implicitly convert to scalar call parameters."
+    },
+    {
+      "name": "generic_default_cycle_rejected",
+      "path": "tests/csharp/fixtures/generic_default_cycle_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.default-type-scope",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified cyclic generic defaults report the first out-of-scope type parameter."
+    },
+    {
+      "name": "generic_parameter_scope_rejected",
+      "path": "tests/csharp/fixtures/generic_parameter_scope_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.parameter-scope",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified generic type parameters do not escape their declaration scope."
+    },
+    {
+      "name": "generic_nested_unknown_type_argument",
+      "path": "tests/csharp/fixtures/generic_nested_unknown_type_argument/main.zorb",
+      "classification": "differential",
+      "feature": "generics.nested-type-resolution",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified nested generic arguments report their first unknown type."
     }
   ],
   "successInputs": [

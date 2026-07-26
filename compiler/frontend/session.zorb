@@ -460,7 +460,8 @@ fn zsession_check_file(self: *ZFrontendSession, path: string, missing_file_phase
         if retained_module.semantic_error_category == ZAstSemanticErrorUnionLiteralVariantCount {
             message = "union literal must initialize exactly one variant"
         }
-        if err == error.NotFound && retained_module.semantic_error_category != ZAstSemanticErrorGenericConstraint {
+        if retained_module.semantic_error_category == ZAstSemanticErrorUnknownName ||
+            (err == error.NotFound && retained_module.semantic_error_category != ZAstSemanticErrorGenericConstraint) {
             zsession_report_span(self, path, ZFrontendPhaseSemantic, line, column, length, "unknown name or type")
         } else {
             zsession_report_span(self, path, ZFrontendPhaseSemantic, line, column, length, message)

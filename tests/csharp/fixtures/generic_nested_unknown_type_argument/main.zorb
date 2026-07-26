@@ -1,0 +1,12 @@
+struct Box<T> {
+    value: T,
+}
+
+struct Wrapper<T> {
+    value: T,
+}
+
+fn main() -> i64 {
+    value: Wrapper<Box<Missing>>
+    return 0
+}

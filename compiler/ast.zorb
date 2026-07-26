@@ -62,6 +62,7 @@ export const ZAstSemanticErrorUnionLiteralVariantCount: i64 = 4
 // A constrained generic call was rejected before substitution can produce a
 // complete call type. This is a type-validation failure, not an unknown name.
 export const ZAstSemanticErrorGenericConstraint: i64 = 5
+export const ZAstSemanticErrorUnknownName: i64 = 6
 export const ZAstCallExplicitTypeArguments: i64 = 1
 
 export struct ZAstText {
@@ -602,6 +603,29 @@ fn zast_decl_generic_defaults_valid(self: *ZAstModule, decl: ZAstDecl) -> bool {
     return true
 }
 
+fn zast_generic_argument_type_known(self: *ZAstModule, decl: ZAstDecl, type_text: ZAstText) -> bool {
+    type_text = zast_type_text_unwrap(type_text)
+    base: ZAstText = zast_type_text_base(type_text)
+    if base.len == 0 { return false }
+    if !zast_is_builtin_type(base) && !zast_is_function_type(base) &&
+        !zast_decl_has_generic_param(self, decl, base) && ZAstModule.find_decl(self, base) == ZAstNoIndex {
+        return false
+    }
+    suffix: ZAstText = ZAstText.empty()
+    if base.len < type_text.len && type_text.ptr[base.len] == 60 {
+        suffix.ptr = type_text.ptr + base.len
+        suffix.len = type_text.len - base.len
+    }
+    argument_index: i64 = 0
+    argument: ZAstText = zast_generic_argument_at(suffix, argument_index)
+    while argument.len > 0 {
+        if !zast_generic_argument_type_known(self, decl, argument) { return false }
+        argument_index = argument_index + 1
+        argument = zast_generic_argument_at(suffix, argument_index)
+    }
+    return true
+}
+
 // Generic suffixes are retained in the type text. Validate their declaration
 // arity and direct argument names without allocating substituted types.
 fn zast_type_generic_arguments_valid(self: *ZAstModule, decl: ZAstDecl, type_index: i64) -> bool {
@@ -631,8 +655,8 @@ fn zast_type_generic_arguments_valid(self: *ZAstModule, decl: ZAstDecl, type_ind
     }
     argument_index: i64 = 0
     while argument_index < supplied_count {
-        argument: ZAstText = zast_type_text_base(zast_generic_argument_at(suffix, argument_index))
-        if argument.len == 0 || (!zast_is_builtin_type(argument) && !zast_decl_has_generic_param(self, decl, argument) && ZAstModule.find_decl(self, argument) == ZAstNoIndex) {
+        if !zast_generic_argument_type_known(self, decl, zast_generic_argument_at(suffix, argument_index)) {
+            self.semantic_error_category = ZAstSemanticErrorUnknownName
             return false
         }
         argument_index = argument_index + 1
@@ -4153,6 +4177,7 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
         }
 
         if !zast_type_known(self, self.decls[i], self.decls[i].type_index) {
+            self.semantic_error_span = self.decls[i].span
             return error.NotFound
         }
         if !zast_decl_generic_defaults_valid(self, self.decls[i]) {
@@ -4172,6 +4197,7 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
             return error.InvalidArgument
         }
         if !zast_type_known(self, self.decls[i], self.decls[i].return_type_index) {
+            self.semantic_error_span = self.decls[i].span
             return error.NotFound
         }
         if !zast_type_generic_arguments_valid(self, self.decls[i], self.decls[i].return_type_index) {
@@ -4220,6 +4246,7 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
         p: i64 = 0
         while p < self.decls[i].param_count {
             if !zast_type_known(self, self.decls[i], self.params[self.decls[i].param_start + p].type_index) {
+                self.semantic_error_span = self.params[self.decls[i].param_start + p].span
                 return error.NotFound
             }
             if !zast_type_generic_arguments_valid(self, self.decls[i], self.params[self.decls[i].param_start + p].type_index) {
@@ -4233,6 +4260,7 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
         while m < self.decls[i].member_count {
             member: ZAstMember = self.members[self.decls[i].member_start + m]
             if member.type_index != ZAstNoIndex && !zast_type_known(self, self.decls[i], member.type_index) {
+                self.semantic_error_span = member.span
                 return error.NotFound
             }
             if !zast_type_generic_arguments_valid(self, self.decls[i], member.type_index) {
