@@ -1,33 +1,36 @@
-# Bootstrap seed artifacts
+# Bootstrap compiler seeds
 
-This directory defines the verified seed-artifact contract. Local binaries are
-written under `bootstrap/artifacts/` and intentionally ignored by Git; release
-automation publishes them separately and updates `manifest.json` with their
-target, URL, and SHA-256 digest.
+This directory defines the verified seed contract for integrated Zorb compiler
+packages. A seed is the preceding released `zorb` compiler, including any
+runtime library shipped beside it. It can compile the current production driver;
+it is not the frontend-only `zorb-self-check` probe.
 
-Build local seed checkers with:
-
-```bash
-./scripts/build-bootstrap-seeds.sh --target host-linux
-```
-
-Resolve a cached or published seed with:
+`manifest.json` pins each package by immutable release URL and SHA-256 digest.
+The cross-platform Python 3.10+ resolver downloads the ZIP, verifies it before
+extraction, rejects unsafe archive paths, and caches the complete package by
+digest:
 
 ```bash
-./scripts/resolve-bootstrap-seed.sh host-linux
+python scripts/bootstrap_seed.py resolve
+python scripts/bootstrap_seed.py resolve host-windows
 ```
 
-For a custom seed output directory, pass that directory back to the resolver:
+Local seed packages live under `bootstrap/artifacts/<target>/` and remain
+ignored by Git. Cache an already-built integrated compiler for offline use:
 
 ```bash
-./scripts/build-bootstrap-seeds.sh --target host-linux --output-dir /tmp/zorb-seeds
-./scripts/resolve-bootstrap-seed.sh host-linux --artifact-dir /tmp/zorb-seeds
+python scripts/bootstrap_seed.py cache-local \
+  --target host-linux \
+  --compiler build/zorb
 ```
 
-The resolver verifies the SHA-256 checksum for both local and downloaded
-artifacts before returning a seed path.
+The compatibility wrapper `scripts/resolve-bootstrap-seed.sh` invokes the same
+Python implementation. The former frontend-only
+`scripts/build-bootstrap-seeds.sh` entry point was removed so it cannot be
+mistaken for the integrated compiler seed contract.
 
-The current artifacts are native frontend checkers used by the recovery and
-fixed-point workflow. They include native Backend IR emission, but intentionally
-do not contain the LLVM backend or the end-user `check`/`build`/`run` driver.
-Build the integrated end-user compiler with `scripts/bootstrap-compiler.sh`.
+Linux x64 currently uses the pinned v0.2.2 release package. Windows publishing
+uses the explicit C# recovery path until a portable Windows seed is available.
+Zorb v0.2.3 is the first release with a native Linux ARM64 compiler package, so
+that release performs the one-time ARM64 build through recovery. Its immutable
+package digest can become the ARM64 seed for later releases.

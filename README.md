@@ -4,13 +4,13 @@ Zorb is a small ahead-of-time compiler for a systems language. Native
 compilation lowers through a Zig 0.16 backend over LLVM 21.
 
 The normal compiler is a single `zorb` executable: a Zorb-written frontend
-paired with the Zig/LLVM backend through a static C ABI library. The C# project
-is retained as the stage-0 recovery bootstrap. See
+paired with the Zig/LLVM backend through a static C ABI library. A pinned
+preceding release is the normal bootstrap seed; the C# project is retained only
+as an explicit stage-0 recovery bootstrap. See
 [Compiler architecture](docs/ARCHITECTURE.md) and
 [Bootstrapping Zorb](docs/BOOTSTRAPPING.md) for the roles and migration plan.
-Target-specific native frontend seed artifacts are built and resolved through
-[`scripts/build-bootstrap-seeds.sh`](scripts/build-bootstrap-seeds.sh) and
-[`scripts/resolve-bootstrap-seed.sh`](scripts/resolve-bootstrap-seed.sh).
+Target-specific integrated compiler seeds are resolved by the cross-platform
+[`scripts/bootstrap_seed.py`](scripts/bootstrap_seed.py).
 
 The project has:
 
@@ -119,9 +119,14 @@ Cross-platform stdlib helpers currently include:
 ## Build
 
 ```bash
-./scripts/bootstrap-compiler.sh
+python scripts/bootstrap_compiler.py bootstrap
 ./build/zorb check compiler/self-check/fixtures/simple.zorb
 ```
+
+Linux x64 normally uses the pinned preceding release. On Windows, pass
+`--recovery-csharp` until a portable Windows seed is available. The legacy
+shell entry point `./scripts/bootstrap-compiler.sh` invokes the same Python
+implementation.
 
 Backend development requires Zig 0.16 and LLVM 21 development headers and
 libraries. The development bootstrap links the local shared LLVM library. The
@@ -136,14 +141,19 @@ output do not require a linker.
 Publish a standalone compiler package for the current Linux host architecture:
 
 ```bash
-./scripts/publish-compiler-linux.sh
+python scripts/bootstrap_compiler.py publish
 ```
 
 On Windows PowerShell:
 
 ```powershell
-./scripts/publish-compiler-windows.ps1
+python scripts/bootstrap_compiler.py publish --recovery-csharp
+# Legacy wrapper:
+./scripts/publish-compiler-windows.ps1 -RecoveryCSharp
 ```
+
+Windows publishing intentionally uses the C# recovery path until a portable
+Windows compiler seed is released.
 
 The Linux publisher supports native x86_64 and AArch64 hosts and selects
 `host-linux` or `host-linux-aarch64` automatically. The GitHub Actions workflow

@@ -14,6 +14,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -49,6 +54,9 @@ jobs:
           zig build test
           zig build -Dstatic-llvm=true -Dcxx-runtime="$(g++ -print-file-name=libstdc++.so)" -Doptimize=ReleaseSafe
 
+      - name: Test cross-platform bootstrap tooling
+        run: python3 -m unittest discover -s tests/python -v
+
       - name: Restore
         run: dotnet restore tests/csharp/Zorb.Compiler.Tests.csproj
 
@@ -69,6 +77,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -132,6 +145,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -161,7 +179,7 @@ jobs:
       - name: Publish native ARM64 compiler
         run: |
           set +e
-          bash scripts/publish-compiler-linux.sh "artifacts/compiler/linux-arm64" 2>&1 | tee "$RUNNER_TEMP/zorb-arm64-publisher.log"
+          python3 scripts/bootstrap_compiler.py publish "artifacts/compiler/linux-arm64" --recovery-csharp 2>&1 | tee "$RUNNER_TEMP/zorb-arm64-publisher.log"
           publisher_status=${PIPESTATUS[0]}
           set -e
           if [[ $publisher_status -ne 0 ]]; then
@@ -191,6 +209,58 @@ jobs:
           name: zorb-compiler-linux-arm64
           path: artifacts/compiler/linux-arm64
 
+  linux-seed-bootstrap:
+    name: linux-x64-bootstrap-without-dotnet
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bootstrap toolchains
+        run: |
+          . /etc/os-release
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y llvm-21-dev lld-21 g++
+          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Cache Zig and bootstrap artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            backend/llvm/.zig-cache
+            ~/.cache/zig
+            build/bootstrap
+          key: seed-bootstrap-${{ runner.os }}-${{ hashFiles('bootstrap/manifest.json', 'scripts/bootstrap_*.py', 'backend/llvm/build.zig', 'backend/llvm/src/**') }}
+
+      - name: Bootstrap without the C# recovery compiler
+        run: |
+          mkdir -p "$RUNNER_TEMP/no-dotnet"
+          cat > "$RUNNER_TEMP/no-dotnet/dotnet" <<'EOF'
+          #!/usr/bin/env bash
+          echo "dotnet must not be used by the normal bootstrap path" >&2
+          exit 97
+          EOF
+          chmod +x "$RUNNER_TEMP/no-dotnet/dotnet"
+          export PATH="$RUNNER_TEMP/no-dotnet:$PATH"
+          python3 scripts/bootstrap_compiler.py bootstrap build/zorb-seeded
+          build/zorb-seeded check compiler/driver/main.zorb
+
   linux-native-parity:
     name: linux-native-frontend-parity
     runs-on: ubuntu-latest
@@ -202,6 +272,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -240,6 +315,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -299,12 +379,37 @@ jobs:
       - name: Build Compiler
         run: dotnet build seed/csharp/Zorb.Compiler.csproj -c Release --no-restore
 
+      # v0.2.2's Windows backend was compiled for its release runner's native
+      # CPU. Build one baseline transition seed so this lane can still prove
+      # that the normal bootstrap path does not invoke dotnet.
+      - name: Build portable Windows transition seed
+        shell: pwsh
+        run: |
+          $transitionSeed = Join-Path $env:RUNNER_TEMP "zorb-windows-transition-seed.exe"
+          python scripts/bootstrap_compiler.py bootstrap $transitionSeed --recovery-csharp
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $transitionSeed -PathType Leaf)) {
+            throw "Portable Windows transition seed build failed with exit code $LASTEXITCODE."
+          }
+          "ZORB_WINDOWS_TRANSITION_SEED=$transitionSeed" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Build native fixture compiler
         shell: pwsh
         run: |
           $nativeCompilerDir = Join-Path $env:RUNNER_TEMP "zorb-native-fixture"
+          $noDotnetDir = Join-Path $env:RUNNER_TEMP "zorb-no-dotnet"
+          New-Item -ItemType Directory -Force -Path $noDotnetDir | Out-Null
+          @"
+          @echo off
+          echo dotnet must not be used by the normal bootstrap path 1>&2
+          exit /b 97
+          "@ | Set-Content -LiteralPath (Join-Path $noDotnetDir "dotnet.cmd") -Encoding ASCII
+          $env:PATH = "$noDotnetDir;$env:PATH"
           try {
-            ./scripts/publish-compiler-windows.ps1 $nativeCompilerDir
+            python scripts/bootstrap_compiler.py publish $nativeCompilerDir --seed $env:ZORB_WINDOWS_TRANSITION_SEED
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows native compiler publish failed with exit code $LASTEXITCODE."
+            }
           }
           catch {
             $message = $_.Exception.Message.Replace("`r", "").Replace("`n", "%0A")
@@ -333,6 +438,7 @@ jobs:
       - test
       - linux-aarch64-cross
       - linux-arm64-native-compiler
+      - linux-seed-bootstrap
       - linux-native-parity
       - windows-hosted-smoke
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
@@ -352,6 +458,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -423,12 +534,13 @@ jobs:
 
       - name: Publish standalone compiler
         if: matrix.os == 'ubuntu-latest'
-        run: bash scripts/publish-compiler-linux.sh "artifacts/compiler/linux-x64"
+        run: python3 scripts/bootstrap_compiler.py publish "artifacts/compiler/linux-x64"
 
       - name: Publish standalone compiler
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        run: ./scripts/publish-compiler-windows.ps1 "artifacts/compiler/win-x64"
+        # v0.2.2 is host-CPU-tuned; recovery creates the first baseline seed.
+        run: python scripts/bootstrap_compiler.py publish "artifacts/compiler/win-x64" --recovery-csharp
 
       - name: Record version metadata
         shell: bash

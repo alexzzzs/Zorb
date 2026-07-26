@@ -3,6 +3,9 @@ obj/
 artifacts/
 .zig-cache/
 zig-out/
+__pycache__/
+*.pyc
+/build/
 
 out
 out.c
