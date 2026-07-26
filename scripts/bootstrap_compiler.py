@@ -196,6 +196,7 @@ def build_backend(environment: BuildEnvironment, publish: bool) -> BackendArtifa
             runtime_library=runtime_library,
         )
 
+    llvm_lib_dir = environment.llvm_lib_dir or environment.llvm_prefix / "lib"
     if publish:
         llvm_config = require_command(environment.llvm_config, "locate static LLVM libraries")
         gxx = require_command("g++", "locate the LLVM C++ runtime")
@@ -220,7 +221,7 @@ def build_backend(environment: BuildEnvironment, publish: bool) -> BackendArtifa
         )
         link_args = (
             str(environment.backend_dir / "zig-out/lib/libzorb-llvm.a"),
-            f"-L{environment.llvm_prefix / 'lib'}",
+            f"-L{llvm_lib_dir}",
             "-Wl,--start-group",
             *llvm_libs,
             "-Wl,--end-group",
@@ -234,9 +235,9 @@ def build_backend(environment: BuildEnvironment, publish: bool) -> BackendArtifa
     run_checked("Build the shared Linux LLVM backend", zig_args, environment.backend_dir)
     link_args = (
         str(environment.backend_dir / "zig-out/lib/libzorb-llvm.a"),
-        f"-L{environment.llvm_prefix / 'lib'}",
+        f"-L{llvm_lib_dir}",
         "-lLLVM-21",
-        f"-Wl,-rpath,{environment.llvm_prefix / 'lib'}",
+        f"-Wl,-rpath,{llvm_lib_dir}",
         "-ldl",
         "-lpthread",
         "-lm",
@@ -413,6 +414,14 @@ def verify_linux_static_binary(compiler_path: Path) -> None:
     except OSError as error:
         raise BuildError(f"Inspect published compiler dependencies could not start: {error}") from error
     dependencies = result.stdout + result.stderr
+    if result.returncode != 0:
+        if "not a dynamic executable" in dependencies.lower():
+            return
+        details = dependencies.strip() or "no command output"
+        raise BuildError(
+            f"Inspect published compiler dependencies failed with exit code "
+            f"{result.returncode}: {details}"
+        )
     if "libLLVM" in dependencies:
         raise BuildError("Published Linux compiler still depends on a shared LLVM library.")
 

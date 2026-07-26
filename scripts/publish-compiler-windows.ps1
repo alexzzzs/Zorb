@@ -2,7 +2,9 @@ param(
     [Parameter(Position = 0)]
     [string]$OutputDir,
     [switch]$RecoveryCSharp,
-    [string]$Seed
+    [string]$Seed,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$RemainingArguments
 )
 
 Set-StrictMode -Version Latest
@@ -19,6 +21,9 @@ if ($RecoveryCSharp) {
 }
 if ($Seed) {
     $Arguments += @("--seed", $Seed)
+}
+if ($RemainingArguments) {
+    $Arguments += $RemainingArguments
 }
 
 & $Python @Arguments

@@ -18,9 +18,10 @@ All notable changes to this project will be documented in this file.
 
 - The recovery compiler version now advances to the `0.2.3-dev` line after the
   `0.2.2` release.
-- Normal Linux x64 and Windows x64 bootstrap and publishing now start from the
-  pinned v0.2.2 integrated compiler packages. C# bootstrap is an explicit
-  recovery option; Linux ARM64 uses it once because v0.2.2 has no ARM64 asset.
+- Normal Linux x64 bootstrap and publishing now start from the pinned v0.2.2
+  integrated compiler package. Windows x64 publishing intentionally uses the
+  C# recovery path until a portable Windows seed is available; Linux ARM64 uses
+  recovery once because v0.2.2 has no ARM64 asset.
 
 ## [0.2.2] - July 25, 2026
 

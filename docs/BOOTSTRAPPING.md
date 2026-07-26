@@ -71,6 +71,10 @@ The recovery option is mutually exclusive with `--seed`. Normal bootstrap and
 publishing fail with a clear error when a target has no manifest entry; they do
 not silently fall back to C#.
 
+Windows publishing currently selects `--recovery-csharp` explicitly because
+the v0.2.2 Windows package was tuned for its build host. This remains in place
+until a portable Windows compiler seed is available.
+
 Linux ARM64 is new in the 0.2.3 development line. Because v0.2.2 did not publish
 an ARM64 compiler, v0.2.3 performs one explicit C# recovery build on its native
 ARM64 runner. The resulting v0.2.3 package is the seed for subsequent ARM64
@@ -112,9 +116,10 @@ embedded backend library, and linker orchestration. A hash mismatch is a release
 failure even when both binaries compile ordinary fixtures.
 
 Linux publishing detects x86_64 versus AArch64 and statically links LLVM.
-Windows publishing uses the MSVC ABI and copies the matching `LLVM-C.dll` into
-the package. CI includes a Linux x64 lane with a deliberately failing `dotnet`
-shim, proving the normal seed bootstrap does not touch the recovery compiler.
+Windows publishing uses the explicit recovery path, the MSVC ABI, and copies
+the matching `LLVM-C.dll` into the package. CI includes Linux x64 and Windows
+x64 lanes with deliberately failing `dotnet` shims around their normal seeded
+bootstrap steps.
 
 The C# recovery source need not implement new language features. It should stay
 frozen to the pinned bridge needed to repair the bootstrap chain.

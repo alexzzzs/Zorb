@@ -123,9 +123,10 @@ python scripts/bootstrap_compiler.py bootstrap
 ./build/zorb check compiler/self-check/fixtures/simple.zorb
 ```
 
-Use `--recovery-csharp` only when no released seed exists for the current host.
-The legacy shell entry point `./scripts/bootstrap-compiler.sh` invokes the same
-Python implementation.
+Linux x64 normally uses the pinned preceding release. On Windows, pass
+`--recovery-csharp` until a portable Windows seed is available. The legacy
+shell entry point `./scripts/bootstrap-compiler.sh` invokes the same Python
+implementation.
 
 Backend development requires Zig 0.16 and LLVM 21 development headers and
 libraries. The development bootstrap links the local shared LLVM library. The
@@ -146,8 +147,13 @@ python scripts/bootstrap_compiler.py publish
 On Windows PowerShell:
 
 ```powershell
-python scripts/bootstrap_compiler.py publish
+python scripts/bootstrap_compiler.py publish --recovery-csharp
+# Legacy wrapper:
+./scripts/publish-compiler-windows.ps1 -RecoveryCSharp
 ```
+
+Windows publishing intentionally uses the C# recovery path until a portable
+Windows compiler seed is released.
 
 The Linux publisher supports native x86_64 and AArch64 hosts and selects
 `host-linux` or `host-linux-aarch64` automatically. The GitHub Actions workflow

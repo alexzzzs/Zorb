@@ -214,9 +214,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -402,6 +407,9 @@ jobs:
           $env:PATH = "$noDotnetDir;$env:PATH"
           try {
             python scripts/bootstrap_compiler.py publish $nativeCompilerDir --seed $env:ZORB_WINDOWS_TRANSITION_SEED
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows native compiler publish failed with exit code $LASTEXITCODE."
+            }
           }
           catch {
             $message = $_.Exception.Message.Replace("`r", "").Replace("`n", "%0A")

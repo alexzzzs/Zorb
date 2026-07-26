@@ -29,7 +29,8 @@ Python implementation. The former frontend-only
 `scripts/build-bootstrap-seeds.sh` entry point was removed so it cannot be
 mistaken for the integrated compiler seed contract.
 
-Linux x64 and Windows x64 currently use the pinned v0.2.2 release packages.
+Linux x64 currently uses the pinned v0.2.2 release package. Windows publishing
+uses the explicit C# recovery path until a portable Windows seed is available.
 Zorb v0.2.3 is the first release with a native Linux ARM64 compiler package, so
-that release performs the one-time ARM64 build through the explicit C# recovery
-path. Its immutable package digest can become the ARM64 seed for later releases.
+that release performs the one-time ARM64 build through recovery. Its immutable
+package digest can become the ARM64 seed for later releases.

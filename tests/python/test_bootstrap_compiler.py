@@ -41,6 +41,26 @@ class BootstrapCompilerTests(unittest.TestCase):
         command = run_checked.call_args.args[1]
         self.assertIn("-Dcpu=baseline", command)
 
+    def test_shared_backend_uses_configured_llvm_library_directory(self) -> None:
+        environment = BuildEnvironment(
+            root=Path("/repo"),
+            backend_dir=Path("/repo/backend/llvm"),
+            driver_entry=Path("/repo/compiler/driver/main.zorb"),
+            target="host-linux",
+            zig="zig",
+            llvm_prefix=Path("/usr/lib/llvm-21"),
+            llvm_config="llvm-config-21",
+            llvm_lib_dir=Path("/custom/llvm/lib"),
+            llvm_runtime_dir=None,
+        )
+        with patch("bootstrap_compiler.require_command", return_value="/tools/zig"):
+            with patch("bootstrap_compiler.run_checked"):
+                with patch("bootstrap_compiler.optional_quadmath_link_args", return_value=()):
+                    backend = build_backend(environment, publish=False)
+
+        self.assertIn("-L/custom/llvm/lib", backend.link_args)
+        self.assertIn("-Wl,-rpath,/custom/llvm/lib", backend.link_args)
+
     def test_seed_and_recovery_are_mutually_exclusive(self) -> None:
         options = SimpleNamespace(seed=Path("seed"), recovery_csharp=True)
         with self.assertRaisesRegex(BuildError, "mutually exclusive"):
@@ -67,6 +87,18 @@ class BootstrapCompilerTests(unittest.TestCase):
         with patch("bootstrap_compiler.require_command", return_value="ldd"):
             with patch("bootstrap_compiler.subprocess.run", return_value=result):
                 with self.assertRaisesRegex(BuildError, "shared LLVM"):
+                    verify_linux_static_binary(Path("zorb"))
+
+    def test_unexpected_ldd_failure_is_rejected(self) -> None:
+        result = subprocess.CompletedProcess(
+            args=("ldd", "zorb"),
+            returncode=2,
+            stdout="",
+            stderr="permission denied\n",
+        )
+        with patch("bootstrap_compiler.require_command", return_value="ldd"):
+            with patch("bootstrap_compiler.subprocess.run", return_value=result):
+                with self.assertRaisesRegex(BuildError, "exit code 2: permission denied"):
                     verify_linux_static_binary(Path("zorb"))
 
 

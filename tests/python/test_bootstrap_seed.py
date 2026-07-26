@@ -95,6 +95,36 @@ class BootstrapSeedTests(unittest.TestCase):
             with self.assertRaisesRegex(SeedError, "unsafe path"):
                 safe_extract_zip(archive_path, root / "output")
 
+    def test_published_windows_package_requires_llvm_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            package = root / "seed.zip"
+            with zipfile.ZipFile(package, "w") as archive:
+                archive.writestr("zorb.exe", b"compiler")
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 2,
+                        "purpose": "integrated-compiler",
+                        "artifacts": [
+                            {
+                                "target": "host-windows",
+                                "version": "0.2.2",
+                                "format": "zip",
+                                "executable": "zorb.exe",
+                                "url": package.as_uri(),
+                                "sha256": sha256(package),
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(SeedError, "missing required runtime: LLVM-C.dll"):
+                resolve_seed("host-windows", manifest, root / "local", root / "cache")
+
     def test_manifest_rejects_duplicate_target_entries(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             manifest = Path(temporary_dir) / "manifest.json"

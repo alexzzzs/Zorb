@@ -246,6 +246,7 @@ def resolve_published_seed(artifact: SeedArtifact, cache_dir: Path) -> Path:
     if executable_path.is_file() and archive_is_valid and extracted_package_matches_archive(
         archive_path, package_dir
     ):
+        require_windows_runtime(package_dir, artifact.target)
         make_executable(executable_path)
         return executable_path.resolve()
 
@@ -275,12 +276,23 @@ def resolve_published_seed(artifact: SeedArtifact, cache_dir: Path) -> Path:
                 f"Published bootstrap package for {artifact.target} does not contain "
                 f"{artifact.executable}."
             )
+        require_windows_runtime(extracted_package, artifact.target)
         if package_dir.exists():
             shutil.rmtree(package_dir)
         shutil.move(str(extracted_package), package_dir)
 
     make_executable(executable_path)
     return executable_path.resolve()
+
+
+def require_windows_runtime(package_dir: Path, target: str) -> None:
+    if target != "host-windows":
+        return
+    runtime_library = package_dir / "LLVM-C.dll"
+    if not runtime_library.is_file():
+        raise SeedError(
+            f"Published Windows bootstrap package is missing required runtime: {runtime_library.name}."
+        )
 
 
 def resolve_seed(
