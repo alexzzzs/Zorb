@@ -28,6 +28,7 @@ LLVM_COMPONENTS = (
     "irreader",
 )
 WINDOWS_SYSTEM_LIBRARIES = ("ntdll.lib",)
+PORTABLE_BACKEND_CPU = "baseline"
 
 
 class BuildError(RuntimeError):
@@ -169,6 +170,7 @@ def build_backend(environment: BuildEnvironment, publish: bool) -> BackendArtifa
         "--prefix",
         "zig-out",
         "-Doptimize=ReleaseSafe",
+        f"-Dcpu={PORTABLE_BACKEND_CPU}",
         f"-Dllvm-prefix={environment.llvm_prefix}",
     ]
 

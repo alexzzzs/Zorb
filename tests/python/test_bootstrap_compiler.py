@@ -12,13 +12,35 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from bootstrap_compiler import (  # noqa: E402
+    BuildEnvironment,
     BuildError,
+    build_backend,
     validate_seed_selection,
     verify_linux_static_binary,
 )
 
 
 class BootstrapCompilerTests(unittest.TestCase):
+    def test_backend_build_targets_portable_baseline_cpu(self) -> None:
+        environment = BuildEnvironment(
+            root=Path("/repo"),
+            backend_dir=Path("/repo/backend/llvm"),
+            driver_entry=Path("/repo/compiler/driver/main.zorb"),
+            target="host-linux",
+            zig="zig",
+            llvm_prefix=Path("/usr/lib/llvm-21"),
+            llvm_config="llvm-config-21",
+            llvm_lib_dir=None,
+            llvm_runtime_dir=None,
+        )
+        with patch("bootstrap_compiler.require_command", return_value="/tools/zig"):
+            with patch("bootstrap_compiler.run_checked") as run_checked:
+                with patch("bootstrap_compiler.optional_quadmath_link_args", return_value=()):
+                    build_backend(environment, publish=False)
+
+        command = run_checked.call_args.args[1]
+        self.assertIn("-Dcpu=baseline", command)
+
     def test_seed_and_recovery_are_mutually_exclusive(self) -> None:
         options = SimpleNamespace(seed=Path("seed"), recovery_csharp=True)
         with self.assertRaisesRegex(BuildError, "mutually exclusive"):

@@ -44,7 +44,9 @@ jobs:
           python-version: "3.12"
 
       - name: Setup .NET
-        if: matrix.platform == 'linux' && matrix.zig_arch == 'aarch64'
+        # Windows needs recovery for the first release after the host-tuned
+        # v0.2.2 seed. Future baseline seeds can use the normal released path.
+        if: matrix.platform == 'windows' || (matrix.platform == 'linux' && matrix.zig_arch == 'aarch64')
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
@@ -131,7 +133,7 @@ jobs:
       - name: Publish standalone compiler
         if: matrix.platform == 'windows'
         shell: pwsh
-        run: python scripts/bootstrap_compiler.py publish "${{ matrix.output_dir }}"
+        run: python scripts/bootstrap_compiler.py publish "${{ matrix.output_dir }}" --recovery-csharp
 
       - name: Write version metadata
         shell: bash

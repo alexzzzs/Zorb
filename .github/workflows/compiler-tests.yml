@@ -374,6 +374,20 @@ jobs:
       - name: Build Compiler
         run: dotnet build seed/csharp/Zorb.Compiler.csproj -c Release --no-restore
 
+      # v0.2.2's Windows backend was compiled for its release runner's native
+      # CPU. Build one baseline transition seed so this lane can still prove
+      # that the normal bootstrap path does not invoke dotnet.
+      - name: Build portable Windows transition seed
+        shell: pwsh
+        run: |
+          $transitionSeed = Join-Path $env:RUNNER_TEMP "zorb-windows-transition-seed.exe"
+          python scripts/bootstrap_compiler.py bootstrap $transitionSeed --recovery-csharp
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $transitionSeed -PathType Leaf)) {
+            throw "Portable Windows transition seed build failed with exit code $LASTEXITCODE."
+          }
+          "ZORB_WINDOWS_TRANSITION_SEED=$transitionSeed" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Build native fixture compiler
         shell: pwsh
         run: |
@@ -387,7 +401,7 @@ jobs:
           "@ | Set-Content -LiteralPath (Join-Path $noDotnetDir "dotnet.cmd") -Encoding ASCII
           $env:PATH = "$noDotnetDir;$env:PATH"
           try {
-            python scripts/bootstrap_compiler.py publish $nativeCompilerDir
+            python scripts/bootstrap_compiler.py publish $nativeCompilerDir --seed $env:ZORB_WINDOWS_TRANSITION_SEED
           }
           catch {
             $message = $_.Exception.Message.Replace("`r", "").Replace("`n", "%0A")
@@ -517,7 +531,8 @@ jobs:
       - name: Publish standalone compiler
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        run: python scripts/bootstrap_compiler.py publish "artifacts/compiler/win-x64"
+        # v0.2.2 is host-CPU-tuned; recovery creates the first baseline seed.
+        run: python scripts/bootstrap_compiler.py publish "artifacts/compiler/win-x64" --recovery-csharp
 
       - name: Record version metadata
         shell: bash
