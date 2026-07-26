@@ -63,6 +63,7 @@ export const ZAstSemanticErrorUnionLiteralVariantCount: i64 = 4
 // complete call type. This is a type-validation failure, not an unknown name.
 export const ZAstSemanticErrorGenericConstraint: i64 = 5
 export const ZAstSemanticErrorUnknownName: i64 = 6
+export const ZAstSemanticErrorNotAssignable: i64 = 7
 export const ZAstCallExplicitTypeArguments: i64 = 1
 
 export struct ZAstText {
@@ -239,6 +240,12 @@ export struct ZAstModule {
     function_count: i64
     semantic_error_span: ZAstSpan
     semantic_error_category: i64
+}
+
+fn zast_mark_not_assignable(self: *ZAstModule) {
+    if self.semantic_error_category == ZAstSemanticErrorNone {
+        self.semantic_error_category = ZAstSemanticErrorNotAssignable
+    }
 }
 
 export fn ZAstText.from_token(token: ZToken) -> ZAstText {
@@ -3333,10 +3340,12 @@ fn zast_validate_call_argument_types(self: *ZAstModule, decl: ZAstDecl, expr_ind
                         expected_type: ZAstText = zast_decl_type_text(self, expected_type_index)
                         if zast_is_function_type(expected_type) && !zast_expr_type_matches(self, decl, self.expr_args[expr.arg_start + argument_index], expected_type_index, through_stmt) {
                             self.semantic_error_span = self.exprs[expr.left].span
+                            zast_mark_not_assignable(self)
                             return error.InvalidArgument
                         }
                         if expected_type.len > 0 && expected_type.ptr[0] == 42 && !zast_pointer_argument_matches(self, decl, self.expr_args[expr.arg_start + argument_index], expected_type, through_stmt) {
                             self.semantic_error_span = self.exprs[expr.left].span
+                            zast_mark_not_assignable(self)
                             return error.InvalidArgument
                         }
                         argument: ZAstExpr = self.exprs[self.expr_args[expr.arg_start + argument_index]]
@@ -3345,12 +3354,14 @@ fn zast_validate_call_argument_types(self: *ZAstModule, decl: ZAstDecl, expr_ind
                         // conversion to scalar parameters.
                         if argument.kind == ZAstExprString && !zast_expr_type_matches(self, decl, self.expr_args[expr.arg_start + argument_index], expected_type_index, through_stmt) {
                             self.semantic_error_span = self.exprs[expr.left].span
+                            zast_mark_not_assignable(self)
                             return error.InvalidArgument
                         }
                         if argument.kind == ZAstExprIdentifier && zast_is_scalar_integer_type(expected_type) {
                             actual_type: ZAstText = zast_comparison_operand_type(self, decl, self.expr_args[expr.arg_start + argument_index], through_stmt)
                             if zast_is_scalar_integer_type(actual_type) && !zast_integer_call_argument_matches(expected_type, actual_type) {
                                 self.semantic_error_span = self.exprs[expr.left].span
+                                zast_mark_not_assignable(self)
                                 return error.InvalidArgument
                             }
                         }
@@ -3957,11 +3968,13 @@ fn zast_check_stmt_node(self: *ZAstModule, decl: ZAstDecl, stmt_index: i64) !i64
             }
             if self.exprs[stmt.expr_index].kind == ZAstExprInteger && !zast_positive_integer_literal_fits_type(self.exprs[stmt.expr_index].literal, zast_decl_type_text(self, stmt.type_index)) {
                 self.semantic_error_span = stmt.span
+                zast_mark_not_assignable(self)
                 return error.InvalidArgument
             }
             if !zast_expr_type_matches(self, decl, stmt.expr_index, stmt.type_index, through_stmt) {
                 if self.semantic_error_span.line == 0 {
                     self.semantic_error_span = stmt.span
+                    zast_mark_not_assignable(self)
                 }
                 return error.InvalidArgument
             }
@@ -3989,6 +4002,7 @@ fn zast_check_stmt_node(self: *ZAstModule, decl: ZAstDecl, stmt_index: i64) !i64
             if self.semantic_error_span.line == 0 {
                 self.semantic_error_span = stmt.span
             }
+            zast_mark_not_assignable(self)
             return error.InvalidArgument
         }
     }
@@ -4045,6 +4059,7 @@ fn zast_check_stmt_node(self: *ZAstModule, decl: ZAstDecl, stmt_index: i64) !i64
         }
         if !zast_expr_types_compatible(self, decl, stmt.expr_index, stmt.value_expr, through_stmt) {
             self.semantic_error_span = stmt.span
+            zast_mark_not_assignable(self)
             return error.InvalidArgument
         }
     }
@@ -4107,6 +4122,7 @@ fn zast_check_catch_expression(self: *ZAstModule, decl: ZAstDecl, catch_index: i
     }
     if !zast_expr_type_matches(self, decl, last.expr_index, expected_type_index, last.expr_index - decl.stmt_start) {
         self.semantic_error_span = self.exprs[last.expr_index].span
+        zast_mark_not_assignable(self)
         return error.InvalidArgument
     }
     return 0
@@ -4239,6 +4255,7 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
                 return error.NotFound
             }
             if !zast_expr_type_matches(self, self.decls[i], self.decls[i].init_expr, self.decls[i].type_index, 0) {
+                zast_mark_not_assignable(self)
                 return error.InvalidArgument
             }
         }
@@ -4276,6 +4293,7 @@ export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
                     return error.NotFound
                 }
                 if member.type_index != ZAstNoIndex && !zast_expr_type_matches(self, self.decls[i], member.value_expr, member.type_index, 0) {
+                    zast_mark_not_assignable(self)
                     return error.InvalidArgument
                 }
             }

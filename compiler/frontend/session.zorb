@@ -296,6 +296,7 @@ fn zsession_diagnostic_code(phase: i64, message: string) -> string {
         return "import.invalid"
     }
     if std.str.eql(message, "unknown name or type") { return "name.unknown" }
+    if std.str.eql(message, "value is not assignable") { return "type.not-assignable" }
     if std.str.eql(message, "array literal element count mismatch") { return "type.array-element-count" }
     if std.str.eql(message, "match is not exhaustive") { return "flow.match-not-exhaustive" }
     if std.str.eql(message, "condition must be bool") { return "type.condition-not-bool" }
@@ -459,6 +460,9 @@ fn zsession_check_file(self: *ZFrontendSession, path: string, missing_file_phase
         }
         if retained_module.semantic_error_category == ZAstSemanticErrorUnionLiteralVariantCount {
             message = "union literal must initialize exactly one variant"
+        }
+        if retained_module.semantic_error_category == ZAstSemanticErrorNotAssignable {
+            message = "value is not assignable"
         }
         if retained_module.semantic_error_category == ZAstSemanticErrorUnknownName ||
             (err == error.NotFound && retained_module.semantic_error_category != ZAstSemanticErrorGenericConstraint) {

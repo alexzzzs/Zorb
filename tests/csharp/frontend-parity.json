@@ -1571,6 +1571,15 @@
       "expected": "semantic-failure",
       "gate": "frontend",
       "reason": "Verified nested generic arguments report their first unknown type."
+    },
+    {
+      "name": "error_return_from_non_error_union_rejected",
+      "path": "tests/csharp/fixtures/error_return_from_non_error_union_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "types.return-assignability",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified an error value cannot be returned from a non-error-union function."
     }
   ],
   "successInputs": [

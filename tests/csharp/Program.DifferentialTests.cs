@@ -120,6 +120,7 @@ internal static partial class Program
         // The native frontend uses `type.invalid` as its stable fallback for
         // semantic errors that do not yet have a narrower category.
         var code = phase == "parse" ? "parse.invalid-syntax" : "type.invalid";
+        var primaryMessage = PrimaryStageZeroDiagnosticMessage(output);
         if (output.Contains("Unsupported escape sequence", StringComparison.Ordinal) || output.Contains("Unterminated string literal", StringComparison.Ordinal))
         {
             phase = "lexical";
@@ -139,6 +140,8 @@ internal static partial class Program
             code = "name.unknown";
         if (output.Contains("Unknown type '", StringComparison.Ordinal))
             code = "name.unknown";
+        if (IsStageZeroNotAssignableDiagnostic(primaryMessage))
+            code = "type.not-assignable";
         // Invalid error declarations can produce downstream undeclared-error
         // messages; Stage 0's primary diagnostic remains the declaration.
         if (output.Contains("Error declaration '", StringComparison.Ordinal))
@@ -165,6 +168,24 @@ internal static partial class Program
         output.Contains("Use of undeclared identifier", StringComparison.Ordinal) ||
         output.Contains("Use of undeclared error", StringComparison.Ordinal) ||
         output.Contains("is not visible from this file", StringComparison.Ordinal);
+
+    private static bool IsStageZeroNotAssignableDiagnostic(string output) =>
+        output.Contains("is not assignable to", StringComparison.Ordinal) ||
+        output.Contains("Cannot initialize", StringComparison.Ordinal) ||
+        output.Contains("Cannot assign expression of type", StringComparison.Ordinal) ||
+        output.Contains("expects type", StringComparison.Ordinal) ||
+        output.Contains("Type Mismatch: Cannot pass", StringComparison.Ordinal) ||
+        output.Contains("this return expression has type", StringComparison.Ordinal) ||
+        output.Contains("does not return an error union", StringComparison.Ordinal);
+
+    private static string PrimaryStageZeroDiagnosticMessage(string output)
+    {
+        var match = Regex.Match(
+            output,
+            @"^.+?:\d+:\d+:\s+error:\s+(?<message>.+)$",
+            RegexOptions.Multiline);
+        return match.Success ? match.Groups["message"].Value : output;
+    }
 
     private static NormalizedDiagnostic? NormalizeNativeDiagnostic(ProcessResult result)
     {
