@@ -37,20 +37,34 @@ has focused native self-check fixtures for aggregate types, control flow,
 errors, generics, globals, casts, function values, builtins, and platform
 branches.
 
-Exact cross-frontend diagnostic equivalence is intentionally narrower. Rich
-span agreement, recovery ordering, and diagnostic-category parity are admitted
-case-by-case through `tests/csharp/frontend-parity.json`; they should not be
-confused with the broader native compilation gate. `zorb-self-check --json`
+The differential gate covers all 374 catalog inputs that are eligible for
+cross-frontend comparison, including successful programs and lexical, parse,
+import, and semantic failures. For failures it compares phase, stable code,
+canonical source path, and overlapping source span. `zorb-self-check --json`
 emits one result or diagnostic object, while `--dump-tokens` and `--dump-ast`
 use the same JSON-lines protocol for stable source-order records.
 
 ## Fixture classification
 
-`tests/csharp/frontend-parity.json` is the machine-readable fixture catalog. It deliberately gives every stage-0 fixture, checked-in example, and native bootstrap input a classification: `deferred`, `native-verified`, or `differential`. Directory scopes classify the unadmitted inventory; explicit records override those defaults with a feature group, expected outcome, rationale, and optional `frontend` gate membership. The executable `fixture_parity_classification` test rejects malformed entries, missing paths, duplicate records, and source inputs left outside every scope.
+`tests/csharp/frontend-parity.json` is the machine-readable fixture catalog. It
+deliberately gives every stage-0 fixture, checked-in example, and native
+bootstrap input an explicit feature group, expected outcome, classification,
+and optional gate membership. The current catalog has 374 `differential`
+entries, seven focused `native-verified` bootstrap probes, and no `deferred`
+entries. The executable `fixture_parity_classification` test rejects malformed
+entries, missing paths, duplicate records, and source inputs missing from the
+catalog.
 
-Only explicit `differential` records with `gate: "frontend"` may enter the parity harness. This makes promotion a reviewable metadata change: first add or retain a `native-verified` record, verify normalized output, then promote it to `differential`. Runtime, LLVM-emission, target, linker, and CLI workflow assertions are outside this frontend gate.
+Only explicit `differential` records with `gate: "frontend"` enter the parity
+harness. The seven `native-verified` records are compiler self-check probes
+whose purpose is native parser or Backend IR coverage rather than equivalent
+stage-0 frontend behavior. Runtime, LLVM-emission, target, linker, and CLI
+workflow assertions are also outside this frontend gate.
 
-The Linux bootstrap gate is `frontend_differential`. Its current cases mirror the catalog's deliberately narrow, verified set of success, aliased-import, parse, and missing-import inputs; `LoadFrontendParityCases` is the catalog API for making that membership data-driven. For a failure it normalizes and compares phase, stable code, canonical file path, and overlapping one-based spans. Semantic fixtures remain classified but are not enabled until native semantic spans and category coverage are complete. Set `ZORB_FRONTEND_PARITY_CASE=<catalog-name>` locally to run one enabled case while debugging; CI leaves it unset and runs the complete enabled set.
+The Linux bootstrap gate is `frontend_differential`.
+`LoadFrontendParityCases` reads its 374 cases directly from the catalog. Set
+`ZORB_FRONTEND_PARITY_CASE=<catalog-name>` locally to run one enabled case while
+debugging; CI leaves it unset and runs the complete differential set.
 
 GitHub Actions runs this contract in the dedicated `linux-native-frontend-parity` job. It sets `ZORB_FRONTEND_PARITY_ONLY=1`, builds stage 0 and the native backend, then runs catalog validation, repeated-session bootstrap coverage, and the differential gate without waiting on the wider runtime suite.
 

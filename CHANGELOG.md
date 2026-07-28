@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The recovery compiler version now advances to the `0.2.4-dev` line after the
+  `0.2.3` release.
+
+## [0.2.3] - July 28, 2026
+
+### Guarantees
+
+- The Zorb-written frontend and in-process Zig/LLVM backend remain the normal
+  compiler path for the language subset documented in `README.md` and
+  `docs/SEMANTICS.md`.
+- Standalone compiler packages are published for Linux x64, Linux ARM64, and
+  Windows x64.
+- Every frontend input admitted to the differential catalog agrees across the
+  recovery and native frontends on outcome and structured diagnostics.
+- Generation-2 and generation-3 native compiler rebuilds must remain
+  byte-identical.
+
+### Non-Goals
+
+- Hosted Windows GNU/MinGW output is not supported.
+- `run` remains unsupported for bare-metal output.
+- This is the transition release for portable Windows x64 and Linux ARM64
+  seeds; their release builds still use the explicit C# recovery path once.
+
 ### Added
 
 - Native Linux ARM64 compiler bootstrapping, CI smoke coverage, and release
@@ -13,11 +39,13 @@ All notable changes to this project will be documented in this file.
   integrated compiler releases from a versioned, SHA-256-pinned manifest.
 - A no-.NET Linux bootstrap CI lane that fails if the normal seed path attempts
   to invoke the C# recovery compiler.
+- Complete cross-frontend diagnostic parity across 374 catalog inputs,
+  including lexical, parse, import, and semantic failures. The differential
+  gate now compares stable diagnostic categories, canonical source paths, and
+  overlapping spans with no deferred catalog entries.
 
 ### Changed
 
-- The recovery compiler version now advances to the `0.2.3-dev` line after the
-  `0.2.2` release.
 - Normal Linux x64 bootstrap and publishing now start from the pinned v0.2.2
   integrated compiler package. Windows x64 publishing intentionally uses the
   C# recovery path until a portable Windows seed is available; Linux ARM64 uses
