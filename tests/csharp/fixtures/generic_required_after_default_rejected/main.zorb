@@ -1,4 +1,4 @@
-struct Bad<T = i64, U> {
+struct Bad<T = i64, U: i64> {
     first: T,
     second: U,
 }
