@@ -574,6 +574,7 @@ fn zparser_parse_generic_params(self: *ZParser, allocator: *std.mem.HeapAllocato
         name: ZToken = zparser_expect_name(self) catch |err| {
             return error.InvalidArgument
         }
+        name_index: i64 = self.index - 1
         existing_index: i64 = 0
         while existing_index < decl.generic_param_count {
             if ZAstText.eql(module.generic_params[decl.generic_param_start + existing_index], ZAstText.from_token(name)) {
@@ -607,6 +608,9 @@ fn zparser_parse_generic_params(self: *ZParser, allocator: *std.mem.HeapAllocato
         module.generic_default_types[decl.generic_param_start + decl.generic_param_count - 1] = default_type_index
         if default_type_index == ZAstNoIndex {
             if saw_default {
+                // `expect_name` consumed the required parameter; anchor the
+                // diagnostic at that name, matching Stage 0.
+                self.index = name_index
                 return error.InvalidArgument
             }
             decl.generic_required_param_count = decl.generic_required_param_count + 1

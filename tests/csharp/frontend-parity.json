@@ -1,28 +1,5 @@
 {
-  "version": 1,
-  "scopes": [
-    {
-      "root": "tests/csharp/fixtures",
-      "kind": "fixture",
-      "classification": "deferred",
-      "feature": "stage0.fixture",
-      "reason": "Awaiting native parser, semantic, and diagnostic-span coverage."
-    },
-    {
-      "root": "examples",
-      "kind": "example",
-      "classification": "deferred",
-      "feature": "stage0.example",
-      "reason": "Examples remain stage-0 compilation coverage until their required frontend features are parity-ready."
-    },
-    {
-      "root": "compiler/self-check/fixtures",
-      "kind": "native-bootstrap",
-      "classification": "deferred",
-      "feature": "native.bootstrap",
-      "reason": "Native bootstrap probes are not differential cases until their stage-0 outcome and normalized diagnostic contract are verified."
-    }
-  ],
+  "version": 2,
   "entries": [
     {
       "name": "simple",
@@ -1544,137 +1521,1907 @@
       "expected": "semantic-failure",
       "gate": "frontend",
       "reason": "Verified string literals cannot implicitly convert to scalar call parameters."
+    },
+    {
+      "name": "generic_default_cycle_rejected",
+      "path": "tests/csharp/fixtures/generic_default_cycle_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.default-type-scope",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified cyclic generic defaults report the first out-of-scope type parameter."
+    },
+    {
+      "name": "generic_parameter_scope_rejected",
+      "path": "tests/csharp/fixtures/generic_parameter_scope_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "generics.parameter-scope",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified generic type parameters do not escape their declaration scope."
+    },
+    {
+      "name": "generic_nested_unknown_type_argument",
+      "path": "tests/csharp/fixtures/generic_nested_unknown_type_argument/main.zorb",
+      "classification": "differential",
+      "feature": "generics.nested-type-resolution",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified nested generic arguments report their first unknown type."
+    },
+    {
+      "name": "generic_nested_non_type_argument",
+      "path": "tests/csharp/fixtures/generic_nested_non_type_argument/main.zorb",
+      "classification": "differential",
+      "feature": "generics.nested-type-resolution",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified nested generic arguments reject value declarations used as types."
+    },
+    {
+      "name": "error_return_from_non_error_union_rejected",
+      "path": "tests/csharp/fixtures/error_return_from_non_error_union_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "types.return-assignability",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified an error value cannot be returned from a non-error-union function."
+    },
+    {
+      "name": "bare_metal_debug_port",
+      "path": "tests/csharp/fixtures/bare_metal_debug_port/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "block_scope_shadowing",
+      "path": "tests/csharp/fixtures/block_scope_shadowing/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "bool_condition_literal",
+      "path": "tests/csharp/fixtures/bool_condition_literal/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "bool_equality_codegen",
+      "path": "tests/csharp/fixtures/bool_equality_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "builtin_arch_codegen",
+      "path": "tests/csharp/fixtures/builtin_arch_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "builtin_platform_codegen",
+      "path": "tests/csharp/fixtures/builtin_platform_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "c_header_and_extern",
+      "path": "tests/csharp/fixtures/c_header_and_extern/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "c_keyword_local_codegen",
+      "path": "tests/csharp/fixtures/c_keyword_local_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "c_keyword_member_codegen",
+      "path": "tests/csharp/fixtures/c_keyword_member_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "c_keyword_name_codegen",
+      "path": "tests/csharp/fixtures/c_keyword_name_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "c_name_collision_codegen",
+      "path": "tests/csharp/fixtures/c_name_collision_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "call_preserves_pointer_return",
+      "path": "tests/csharp/fixtures/call_preserves_pointer_return/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "catch_call_argument_codegen",
+      "path": "tests/csharp/fixtures/catch_call_argument_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "catch_nested_cast_codegen",
+      "path": "tests/csharp/fixtures/catch_nested_cast_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "codegen_catch_expression_statement",
+      "path": "tests/csharp/fixtures/codegen_catch_expression_statement/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "comparison_result_bool_assignment",
+      "path": "tests/csharp/fixtures/comparison_result_bool_assignment/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "condition_catch_codegen",
+      "path": "tests/csharp/fixtures/condition_catch_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "const_local_codegen",
+      "path": "tests/csharp/fixtures/const_local_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "error_declared_expression",
+      "path": "tests/csharp/fixtures/error_declared_expression/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "error_distinct_values_ok",
+      "path": "tests/csharp/fixtures/error_distinct_values_ok/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "error_keyword_declaration",
+      "path": "tests/csharp/fixtures/error_keyword_declaration/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "error_union_bool_codegen",
+      "path": "tests/csharp/fixtures/error_union_bool_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "error_union_codegen",
+      "path": "tests/csharp/fixtures/error_union_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "export_const_direct_import",
+      "path": "tests/csharp/fixtures/export_const_direct_import/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "export_direct_import",
+      "path": "tests/csharp/fixtures/export_direct_import/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "function_pointer_field_call",
+      "path": "tests/csharp/fixtures/function_pointer_field_call/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "generic_layout_codegen",
+      "path": "tests/csharp/fixtures/generic_layout_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "generic_nested_layout_codegen",
+      "path": "tests/csharp/fixtures/generic_nested_layout_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "global_array_size_const_expression_codegen",
+      "path": "tests/csharp/fixtures/global_array_size_const_expression_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "global_const_expression_codegen",
+      "path": "tests/csharp/fixtures/global_const_expression_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "global_folded_const_dependency_codegen",
+      "path": "tests/csharp/fixtures/global_folded_const_dependency_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "hosted_start_reserved_names_codegen",
+      "path": "tests/csharp/fixtures/hosted_start_reserved_names_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "if_both_branches_return",
+      "path": "tests/csharp/fixtures/if_both_branches_return/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "import_alias_enum_member",
+      "path": "tests/csharp/fixtures/import_alias_enum_member/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "import_alias_qualified_call",
+      "path": "tests/csharp/fixtures/import_alias_qualified_call/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "import_alias_type_reference",
+      "path": "tests/csharp/fixtures/import_alias_type_reference/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "import_alias_union_member",
+      "path": "tests/csharp/fixtures/import_alias_union_member/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "import_dedup_canonicalized",
+      "path": "tests/csharp/fixtures/import_dedup_canonicalized/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "local_array_copy_succeeds",
+      "path": "tests/csharp/fixtures/local_array_copy_succeeds/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "logical_short_circuit_canonical_bool_codegen",
+      "path": "tests/csharp/fixtures/logical_short_circuit_canonical_bool_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "logical_short_circuit_runtime",
+      "path": "tests/csharp/fixtures/logical_short_circuit_runtime/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "multilevel_pointer_error_union_codegen",
+      "path": "tests/csharp/fixtures/multilevel_pointer_error_union_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "nested_imports",
+      "path": "tests/csharp/fixtures/nested_imports/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "nested_struct_return_codegen",
+      "path": "tests/csharp/fixtures/nested_struct_return_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "numeric_explicit_narrowing_cast_codegen",
+      "path": "tests/csharp/fixtures/numeric_explicit_narrowing_cast_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "numeric_literal_assignment_fits",
+      "path": "tests/csharp/fixtures/numeric_literal_assignment_fits/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "numeric_mixed_comparison_codegen",
+      "path": "tests/csharp/fixtures/numeric_mixed_comparison_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "numeric_unsigned_to_signed_widening_codegen",
+      "path": "tests/csharp/fixtures/numeric_unsigned_to_signed_widening_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "platform_if_scope_codegen",
+      "path": "tests/csharp/fixtures/platform_if_scope_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_array_value_copy",
+      "path": "tests/csharp/fixtures/runtime_array_value_copy/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_break_loop",
+      "path": "tests/csharp/fixtures/runtime_break_loop/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_condition_catch",
+      "path": "tests/csharp/fixtures/runtime_condition_catch/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_continue_loop",
+      "path": "tests/csharp/fixtures/runtime_continue_loop/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_dogfood_lexer",
+      "path": "tests/csharp/fixtures/runtime_dogfood_lexer/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_dogfood_lexer_edges",
+      "path": "tests/csharp/fixtures/runtime_dogfood_lexer_edges/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_enum_switch",
+      "path": "tests/csharp/fixtures/runtime_enum_switch/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_for_break_empty_clauses",
+      "path": "tests/csharp/fixtures/runtime_for_break_empty_clauses/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_generic_enum",
+      "path": "tests/csharp/fixtures/runtime_generic_enum/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_generic_union",
+      "path": "tests/csharp/fixtures/runtime_generic_union/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_generic_union_tag_default",
+      "path": "tests/csharp/fixtures/runtime_generic_union_tag_default/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_global_string_array",
+      "path": "tests/csharp/fixtures/runtime_global_string_array/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_heap_init_invalid_size",
+      "path": "tests/csharp/fixtures/runtime_heap_init_invalid_size/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_hello_world",
+      "path": "tests/csharp/fixtures/runtime_hello_world/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_host_import_alias",
+      "path": "tests/csharp/fixtures/runtime_host_import_alias/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_host_nonzero_exit",
+      "path": "tests/csharp/fixtures/runtime_host_nonzero_exit/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_host_platform_branch",
+      "path": "tests/csharp/fixtures/runtime_host_platform_branch/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_host_platform_catch",
+      "path": "tests/csharp/fixtures/runtime_host_platform_catch/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_host_stderr_write",
+      "path": "tests/csharp/fixtures/runtime_host_stderr_write/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_local_string_start",
+      "path": "tests/csharp/fixtures/runtime_local_string_start/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_numeric_match",
+      "path": "tests/csharp/fixtures/runtime_numeric_match/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_repeated_catch_names",
+      "path": "tests/csharp/fixtures/runtime_repeated_catch_names/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_slice_index_oob",
+      "path": "tests/csharp/fixtures/runtime_slice_index_oob/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_slice_indexing",
+      "path": "tests/csharp/fixtures/runtime_slice_indexing/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_src_zorb_ast_module",
+      "path": "tests/csharp/fixtures/runtime_src_zorb_ast_module/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_src_zorb_lexer",
+      "path": "tests/csharp/fixtures/runtime_src_zorb_lexer/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_src_zorb_parser",
+      "path": "tests/csharp/fixtures/runtime_src_zorb_parser/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_src_zorb_semantics",
+      "path": "tests/csharp/fixtures/runtime_src_zorb_semantics/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_statement_catch",
+      "path": "tests/csharp/fixtures/runtime_statement_catch/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_statement_catch_fallthrough",
+      "path": "tests/csharp/fixtures/runtime_statement_catch_fallthrough/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_stdlib_collections",
+      "path": "tests/csharp/fixtures/runtime_stdlib_collections/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_stdlib_cross_platform",
+      "path": "tests/csharp/fixtures/runtime_stdlib_cross_platform/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_stdlib_fs",
+      "path": "tests/csharp/fixtures/runtime_stdlib_fs/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_stdlib_fs_errors",
+      "path": "tests/csharp/fixtures/runtime_stdlib_fs_errors/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_stdlib_fs_truncate",
+      "path": "tests/csharp/fixtures/runtime_stdlib_fs_truncate/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_stdlib_helpers",
+      "path": "tests/csharp/fixtures/runtime_stdlib_helpers/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_string_escapes",
+      "path": "tests/csharp/fixtures/runtime_string_escapes/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_switch_evaluated_once",
+      "path": "tests/csharp/fixtures/runtime_switch_evaluated_once/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_switch_match",
+      "path": "tests/csharp/fixtures/runtime_switch_match/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "slice_parameter_codegen",
+      "path": "tests/csharp/fixtures/slice_parameter_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "snapshot_minimal_program",
+      "path": "tests/csharp/fixtures/snapshot_minimal_program/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "stdlib_io_windows_codegen",
+      "path": "tests/csharp/fixtures/stdlib_io_windows_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "stdlib_str_usage",
+      "path": "tests/csharp/fixtures/stdlib_str_usage/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "string_escape_codegen",
+      "path": "tests/csharp/fixtures/string_escape_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "struct_error_union_return_codegen",
+      "path": "tests/csharp/fixtures/struct_error_union_return_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "struct_field_array_size_const_expression_codegen",
+      "path": "tests/csharp/fixtures/struct_field_array_size_const_expression_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "struct_forward_reference_codegen",
+      "path": "tests/csharp/fixtures/struct_forward_reference_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "struct_literal_array_field_copy_codegen",
+      "path": "tests/csharp/fixtures/struct_literal_array_field_copy_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "struct_literal_array_field_inline_codegen",
+      "path": "tests/csharp/fixtures/struct_literal_array_field_inline_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "struct_literal_codegen",
+      "path": "tests/csharp/fixtures/struct_literal_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "struct_return_through_local_codegen",
+      "path": "tests/csharp/fixtures/struct_return_through_local_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "symbol_lookup_prefers_local_shadow",
+      "path": "tests/csharp/fixtures/symbol_lookup_prefers_local_shadow/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "unary_not_bool_codegen",
+      "path": "tests/csharp/fixtures/unary_not_bool_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "union_tag_c_name_collision_codegen",
+      "path": "tests/csharp/fixtures/union_tag_c_name_collision_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "warning_unreachable_after_loop_control",
+      "path": "tests/csharp/fixtures/warning_unreachable_after_loop_control/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "warning_unreachable_after_return",
+      "path": "tests/csharp/fixtures/warning_unreachable_after_return/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "windows_exit_process_signature",
+      "path": "tests/csharp/fixtures/windows_exit_process_signature/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "example_baremetal_hello_kernel",
+      "path": "examples/baremetal/hello_kernel.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "example_basics_enum_switch",
+      "path": "examples/basics/enum_switch.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "example_basics_error_catch",
+      "path": "examples/basics/error_catch.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "example_basics_generic_adts",
+      "path": "examples/basics/generic_adts.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "example_basics_import_alias",
+      "path": "examples/basics/import_alias/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "example_basics_literals",
+      "path": "examples/basics/literals.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "example_basics_platform_info",
+      "path": "examples/basics/platform_info.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "example_basics_stdlib_helpers",
+      "path": "examples/basics/stdlib_helpers.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "example_basics_switch_for",
+      "path": "examples/basics/switch_for.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "example_basics_tagged_union",
+      "path": "examples/basics/tagged_union.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "example_dogfood_lexer",
+      "path": "examples/dogfood/lexer/main.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_builtin_compile_error",
+      "path": "compiler/self-check/fixtures/builtin_compile_error.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_builtin_platform",
+      "path": "compiler/self-check/fixtures/builtin_platform.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_extern_call",
+      "path": "compiler/self-check/fixtures/extern_call.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_import_std_string",
+      "path": "compiler/self-check/fixtures/import_std_string.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_import_std_string_call",
+      "path": "compiler/self-check/fixtures/import_std_string_call.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_import_string_slice_use",
+      "path": "compiler/self-check/fixtures/import_string_slice_use.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_qualified_call",
+      "path": "compiler/self-check/fixtures/qualified_call.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_qualified_empty_call",
+      "path": "compiler/self-check/fixtures/qualified_empty_call.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_qualified_empty_params",
+      "path": "compiler/self-check/fixtures/qualified_empty_params.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_slice_ptr_assignment",
+      "path": "compiler/self-check/fixtures/slice_ptr_assignment.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_string_len",
+      "path": "compiler/self-check/fixtures/string_len.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_string_reverse",
+      "path": "compiler/self-check/fixtures/string_reverse.zorb",
+      "classification": "differential",
+      "feature": "baseline.success",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified successful input through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_add",
+      "path": "compiler/self-check/fixtures/backend_ir_add.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_assignment",
+      "path": "compiler/self-check/fixtures/backend_ir_assignment.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_builtins_platform",
+      "path": "compiler/self-check/fixtures/backend_ir_builtins_platform.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_casts",
+      "path": "compiler/self-check/fixtures/backend_ir_casts.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_comparison",
+      "path": "compiler/self-check/fixtures/backend_ir_comparison.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_direct_call",
+      "path": "compiler/self-check/fixtures/backend_ir_direct_call.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_enums",
+      "path": "compiler/self-check/fixtures/backend_ir_enums.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_error_union_catch",
+      "path": "compiler/self-check/fixtures/backend_ir_error_union_catch.zorb",
+      "classification": "native-verified",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "reason": "Native self-check accepts direct error-union forwarding, while Stage 0 rejects the return expression."
+    },
+    {
+      "name": "self_check_backend_ir_error_union_i32",
+      "path": "compiler/self-check/fixtures/backend_ir_error_union_i32.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_for",
+      "path": "compiler/self-check/fixtures/backend_ir_for.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_function_values",
+      "path": "compiler/self-check/fixtures/backend_ir_function_values.zorb",
+      "classification": "native-verified",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "reason": "Native self-check accepts the frontend input, while Stage 0 fails later during backend lowering of global_increment."
+    },
+    {
+      "name": "self_check_backend_ir_generics",
+      "path": "compiler/self-check/fixtures/backend_ir_generics.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_globals_constants",
+      "path": "compiler/self-check/fixtures/backend_ir_globals_constants.zorb",
+      "classification": "native-verified",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "reason": "Native self-check accepts the constants fixture, while Stage 0 rejects its large unsigned literal during parsing."
+    },
+    {
+      "name": "self_check_backend_ir_if_else",
+      "path": "compiler/self-check/fixtures/backend_ir_if_else.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_if_fallthrough",
+      "path": "compiler/self-check/fixtures/backend_ir_if_fallthrough.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_local",
+      "path": "compiler/self-check/fixtures/backend_ir_local.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_mixed_scalars",
+      "path": "compiler/self-check/fixtures/backend_ir_mixed_scalars.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_multiple_functions",
+      "path": "compiler/self-check/fixtures/backend_ir_multiple_functions.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_multiple_locals",
+      "path": "compiler/self-check/fixtures/backend_ir_multiple_locals.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_negation",
+      "path": "compiler/self-check/fixtures/backend_ir_negation.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_nested_control",
+      "path": "compiler/self-check/fixtures/backend_ir_nested_control.zorb",
+      "classification": "native-verified",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "reason": "Native self-check accepts nested control flow that Stage 0 cannot parse."
+    },
+    {
+      "name": "self_check_backend_ir_nested_expression",
+      "path": "compiler/self-check/fixtures/backend_ir_nested_expression.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_parameters",
+      "path": "compiler/self-check/fixtures/backend_ir_parameters.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_pointers_arrays",
+      "path": "compiler/self-check/fixtures/backend_ir_pointers_arrays.zorb",
+      "classification": "native-verified",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "reason": "Native self-check accepts pointer and array expressions that Stage 0 cannot parse."
+    },
+    {
+      "name": "self_check_backend_ir_scalar",
+      "path": "compiler/self-check/fixtures/backend_ir_scalar.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_signed_div",
+      "path": "compiler/self-check/fixtures/backend_ir_signed_div.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_slices_strings",
+      "path": "compiler/self-check/fixtures/backend_ir_slices_strings.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_structs",
+      "path": "compiler/self-check/fixtures/backend_ir_structs.zorb",
+      "classification": "native-verified",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "reason": "Native self-check accepts pointer-based struct expressions that Stage 0 cannot parse."
+    },
+    {
+      "name": "self_check_backend_ir_switch_match",
+      "path": "compiler/self-check/fixtures/backend_ir_switch_match.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_unions",
+      "path": "compiler/self-check/fixtures/backend_ir_unions.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_unsigned",
+      "path": "compiler/self-check/fixtures/backend_ir_unsigned.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_while",
+      "path": "compiler/self-check/fixtures/backend_ir_while.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_while_break",
+      "path": "compiler/self-check/fixtures/backend_ir_while_break.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_while_continue",
+      "path": "compiler/self-check/fixtures/backend_ir_while_continue.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_backend_ir_while_sequence",
+      "path": "compiler/self-check/fixtures/backend_ir_while_sequence.zorb",
+      "classification": "differential",
+      "feature": "native.bootstrap",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "self_check_for_update_declaration_invalid",
+      "path": "compiler/self-check/fixtures/for_update_declaration_invalid.zorb",
+      "classification": "native-verified",
+      "feature": "native.bootstrap",
+      "expected": "parse-failure",
+      "reason": "Native parser rejects a declaration in the for-update clause, while Stage 0 accepts it."
+    },
+    {
+      "name": "example_advanced_stress_pipeline",
+      "path": "examples/advanced/stress_pipeline.zorb",
+      "classification": "differential",
+      "feature": "stage0.example",
+      "expected": "success",
+      "reason": "Verified slice pointer field assignment preserves the slice element type.",
+      "gate": "frontend"
+    },
+    {
+      "name": "example_advanced_threads",
+      "path": "examples/advanced/threads.zorb",
+      "classification": "differential",
+      "feature": "stage0.example",
+      "expected": "success",
+      "reason": "Verified typed pointers convert to void pointers in call arguments.",
+      "gate": "frontend"
+    },
+    {
+      "name": "example_basics_generics",
+      "path": "examples/basics/generics.zorb",
+      "classification": "differential",
+      "feature": "stage0.example",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "example_basics_net_socket",
+      "path": "examples/basics/net_socket.zorb",
+      "classification": "differential",
+      "feature": "stage0.example",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "array_size_parenthesized_expression_codegen",
+      "path": "tests/csharp/fixtures/array_size_parenthesized_expression_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "enum_member_c_name_collision_codegen",
+      "path": "tests/csharp/fixtures/enum_member_c_name_collision_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "error_union_return_identifier_named_error_ok",
+      "path": "tests/csharp/fixtures/error_union_return_identifier_named_error_ok/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "explicit_layout_wrapped_types_codegen",
+      "path": "tests/csharp/fixtures/explicit_layout_wrapped_types_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "generic_forwarding_monomorphization_codegen",
+      "path": "tests/csharp/fixtures/generic_forwarding_monomorphization_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "generic_function_value_inference_rejected",
+      "path": "tests/csharp/fixtures/generic_function_value_inference_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "generic_required_after_default_rejected",
+      "path": "tests/csharp/fixtures/generic_required_after_default_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "parse-failure",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "global_c_name_collision_codegen",
+      "path": "tests/csharp/fixtures/global_c_name_collision_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "import_alias_call_arity_rejected",
+      "path": "tests/csharp/fixtures/import_alias_call_arity_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "semantic-failure",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "import_alias_callable_variable_call",
+      "path": "tests/csharp/fixtures/import_alias_callable_variable_call/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "import_exported_error_direct",
+      "path": "tests/csharp/fixtures/import_exported_error_direct/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "local_array_constant_scope_codegen",
+      "path": "tests/csharp/fixtures/local_array_constant_scope_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "match_union_binding_redeclaration_rejected",
+      "path": "tests/csharp/fixtures/match_union_binding_redeclaration_rejected/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "semantic-failure",
+      "reason": "Verified match bindings participate in duplicate-local validation.",
+      "gate": "frontend"
+    },
+    {
+      "name": "match_union_foreign_variant_not_exhaustive",
+      "path": "tests/csharp/fixtures/match_union_foreign_variant_not_exhaustive/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "semantic-failure",
+      "reason": "Verified foreign union variants are rejected before exhaustiveness analysis.",
+      "gate": "frontend"
+    },
+    {
+      "name": "nested_catch_codegen",
+      "path": "tests/csharp/fixtures/nested_catch_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_asm_increment",
+      "path": "tests/csharp/fixtures/runtime_asm_increment/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_async_many_waiters",
+      "path": "tests/csharp/fixtures/runtime_async_many_waiters/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_async_reinit_safe",
+      "path": "tests/csharp/fixtures/runtime_async_reinit_safe/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_async_sample",
+      "path": "tests/csharp/fixtures/runtime_async_sample/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_async_socket_wait",
+      "path": "tests/csharp/fixtures/runtime_async_socket_wait/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_async_wait_timeout",
+      "path": "tests/csharp/fixtures/runtime_async_wait_timeout/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_native_backend_ir_envelope",
+      "path": "tests/csharp/fixtures/runtime_native_backend_ir_envelope/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_native_backend_ir_scalar_function",
+      "path": "tests/csharp/fixtures/runtime_native_backend_ir_scalar_function/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_net_line_protocol",
+      "path": "tests/csharp/fixtures/runtime_net_line_protocol/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_net_tcp_lifecycle",
+      "path": "tests/csharp/fixtures/runtime_net_tcp_lifecycle/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_spawn_invalid_argument",
+      "path": "tests/csharp/fixtures/runtime_spawn_invalid_argument/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_spawn_oom",
+      "path": "tests/csharp/fixtures/runtime_spawn_oom/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_stdlib_support_checks",
+      "path": "tests/csharp/fixtures/runtime_stdlib_support_checks/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_task_many_yields",
+      "path": "tests/csharp/fixtures/runtime_task_many_yields/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_task_round_robin",
+      "path": "tests/csharp/fixtures/runtime_task_round_robin/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_task_yield_without_fiber",
+      "path": "tests/csharp/fixtures/runtime_task_yield_without_fiber/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "section_and_struct_layout_attributes",
+      "path": "tests/csharp/fixtures/section_and_struct_layout_attributes/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "slice_integer_width_index_codegen",
+      "path": "tests/csharp/fixtures/slice_integer_width_index_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "stdlib_linux_arch_syscall_codegen",
+      "path": "tests/csharp/fixtures/stdlib_linux_arch_syscall_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "stdlib_mem_allocator",
+      "path": "tests/csharp/fixtures/stdlib_mem_allocator/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "stdlib_task_aarch64_codegen",
+      "path": "tests/csharp/fixtures/stdlib_task_aarch64_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "volatile_and_abi_attributes",
+      "path": "tests/csharp/fixtures/volatile_and_abi_attributes/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "warning_pointer_alignment",
+      "path": "tests/csharp/fixtures/warning_pointer_alignment/main.zorb",
+      "classification": "differential",
+      "feature": "stage0.fixture",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified expected outcome through the native frontend differential gate."
     }
-  ],
-  "successInputs": [
-      "tests/csharp/fixtures/bare_metal_debug_port/main.zorb",
-      "tests/csharp/fixtures/block_scope_shadowing/main.zorb",
-      "tests/csharp/fixtures/bool_condition_literal/main.zorb",
-      "tests/csharp/fixtures/bool_equality_codegen/main.zorb",
-      "tests/csharp/fixtures/builtin_arch_codegen/main.zorb",
-      "tests/csharp/fixtures/builtin_platform_codegen/main.zorb",
-      "tests/csharp/fixtures/c_header_and_extern/main.zorb",
-      "tests/csharp/fixtures/c_keyword_local_codegen/main.zorb",
-      "tests/csharp/fixtures/c_keyword_member_codegen/main.zorb",
-      "tests/csharp/fixtures/c_keyword_name_codegen/main.zorb",
-      "tests/csharp/fixtures/c_name_collision_codegen/main.zorb",
-      "tests/csharp/fixtures/call_preserves_pointer_return/main.zorb",
-      "tests/csharp/fixtures/catch_call_argument_codegen/main.zorb",
-      "tests/csharp/fixtures/catch_nested_cast_codegen/main.zorb",
-      "tests/csharp/fixtures/codegen_catch_expression_statement/main.zorb",
-      "tests/csharp/fixtures/comparison_result_bool_assignment/main.zorb",
-      "tests/csharp/fixtures/condition_catch_codegen/main.zorb",
-      "tests/csharp/fixtures/const_local_codegen/main.zorb",
-      "tests/csharp/fixtures/error_declared_expression/main.zorb",
-      "tests/csharp/fixtures/error_distinct_values_ok/main.zorb",
-      "tests/csharp/fixtures/error_keyword_declaration/main.zorb",
-      "tests/csharp/fixtures/error_union_bool_codegen/main.zorb",
-      "tests/csharp/fixtures/error_union_codegen/main.zorb",
-      "tests/csharp/fixtures/export_const_direct_import/main.zorb",
-      "tests/csharp/fixtures/export_direct_import/main.zorb",
-      "tests/csharp/fixtures/function_pointer_field_call/main.zorb",
-      "tests/csharp/fixtures/generic_layout_codegen/main.zorb",
-      "tests/csharp/fixtures/generic_nested_layout_codegen/main.zorb",
-      "tests/csharp/fixtures/global_array_size_const_expression_codegen/main.zorb",
-      "tests/csharp/fixtures/global_const_expression_codegen/main.zorb",
-      "tests/csharp/fixtures/global_folded_const_dependency_codegen/main.zorb",
-      "tests/csharp/fixtures/hosted_start_reserved_names_codegen/main.zorb",
-      "tests/csharp/fixtures/if_both_branches_return/main.zorb",
-      "tests/csharp/fixtures/import_alias_enum_member/main.zorb",
-      "tests/csharp/fixtures/import_alias_qualified_call/main.zorb",
-      "tests/csharp/fixtures/import_alias_type_reference/main.zorb",
-      "tests/csharp/fixtures/import_alias_union_member/main.zorb",
-      "tests/csharp/fixtures/import_dedup_canonicalized/main.zorb",
-      "tests/csharp/fixtures/local_array_copy_succeeds/main.zorb",
-      "tests/csharp/fixtures/logical_short_circuit_canonical_bool_codegen/main.zorb",
-      "tests/csharp/fixtures/logical_short_circuit_runtime/main.zorb",
-      "tests/csharp/fixtures/multilevel_pointer_error_union_codegen/main.zorb",
-      "tests/csharp/fixtures/nested_imports/main.zorb",
-      "tests/csharp/fixtures/nested_struct_return_codegen/main.zorb",
-      "tests/csharp/fixtures/numeric_explicit_narrowing_cast_codegen/main.zorb",
-      "tests/csharp/fixtures/numeric_literal_assignment_fits/main.zorb",
-      "tests/csharp/fixtures/numeric_mixed_comparison_codegen/main.zorb",
-      "tests/csharp/fixtures/numeric_unsigned_to_signed_widening_codegen/main.zorb",
-      "tests/csharp/fixtures/platform_if_scope_codegen/main.zorb",
-      "tests/csharp/fixtures/runtime_array_value_copy/main.zorb",
-      "tests/csharp/fixtures/runtime_break_loop/main.zorb",
-      "tests/csharp/fixtures/runtime_condition_catch/main.zorb",
-      "tests/csharp/fixtures/runtime_continue_loop/main.zorb",
-      "tests/csharp/fixtures/runtime_dogfood_lexer/main.zorb",
-      "tests/csharp/fixtures/runtime_dogfood_lexer_edges/main.zorb",
-      "tests/csharp/fixtures/runtime_enum_switch/main.zorb",
-      "tests/csharp/fixtures/runtime_for_break_empty_clauses/main.zorb",
-      "tests/csharp/fixtures/runtime_generic_enum/main.zorb",
-      "tests/csharp/fixtures/runtime_generic_union/main.zorb",
-      "tests/csharp/fixtures/runtime_generic_union_tag_default/main.zorb",
-      "tests/csharp/fixtures/runtime_global_string_array/main.zorb",
-      "tests/csharp/fixtures/runtime_heap_init_invalid_size/main.zorb",
-      "tests/csharp/fixtures/runtime_hello_world/main.zorb",
-      "tests/csharp/fixtures/runtime_host_import_alias/main.zorb",
-      "tests/csharp/fixtures/runtime_host_nonzero_exit/main.zorb",
-      "tests/csharp/fixtures/runtime_host_platform_branch/main.zorb",
-      "tests/csharp/fixtures/runtime_host_platform_catch/main.zorb",
-      "tests/csharp/fixtures/runtime_host_stderr_write/main.zorb",
-      "tests/csharp/fixtures/runtime_local_string_start/main.zorb",
-      "tests/csharp/fixtures/runtime_numeric_match/main.zorb",
-      "tests/csharp/fixtures/runtime_repeated_catch_names/main.zorb",
-      "tests/csharp/fixtures/runtime_slice_index_oob/main.zorb",
-      "tests/csharp/fixtures/runtime_slice_indexing/main.zorb",
-      "tests/csharp/fixtures/runtime_src_zorb_ast_module/main.zorb",
-      "tests/csharp/fixtures/runtime_src_zorb_lexer/main.zorb",
-      "tests/csharp/fixtures/runtime_src_zorb_parser/main.zorb",
-      "tests/csharp/fixtures/runtime_src_zorb_semantics/main.zorb",
-      "tests/csharp/fixtures/runtime_statement_catch/main.zorb",
-      "tests/csharp/fixtures/runtime_statement_catch_fallthrough/main.zorb",
-      "tests/csharp/fixtures/runtime_stdlib_collections/main.zorb",
-      "tests/csharp/fixtures/runtime_stdlib_cross_platform/main.zorb",
-      "tests/csharp/fixtures/runtime_stdlib_fs/main.zorb",
-      "tests/csharp/fixtures/runtime_stdlib_fs_errors/main.zorb",
-      "tests/csharp/fixtures/runtime_stdlib_fs_truncate/main.zorb",
-      "tests/csharp/fixtures/runtime_stdlib_helpers/main.zorb",
-      "tests/csharp/fixtures/runtime_string_escapes/main.zorb",
-      "tests/csharp/fixtures/runtime_switch_evaluated_once/main.zorb",
-      "tests/csharp/fixtures/runtime_switch_match/main.zorb",
-      "tests/csharp/fixtures/slice_parameter_codegen/main.zorb",
-      "tests/csharp/fixtures/snapshot_minimal_program/main.zorb",
-      "tests/csharp/fixtures/stdlib_io_windows_codegen/main.zorb",
-      "tests/csharp/fixtures/stdlib_str_usage/main.zorb",
-      "tests/csharp/fixtures/string_escape_codegen/main.zorb",
-      "tests/csharp/fixtures/struct_error_union_return_codegen/main.zorb",
-      "tests/csharp/fixtures/struct_field_array_size_const_expression_codegen/main.zorb",
-      "tests/csharp/fixtures/struct_forward_reference_codegen/main.zorb",
-      "tests/csharp/fixtures/struct_literal_array_field_copy_codegen/main.zorb",
-      "tests/csharp/fixtures/struct_literal_array_field_inline_codegen/main.zorb",
-      "tests/csharp/fixtures/struct_literal_codegen/main.zorb",
-      "tests/csharp/fixtures/struct_return_through_local_codegen/main.zorb",
-      "tests/csharp/fixtures/symbol_lookup_prefers_local_shadow/main.zorb",
-      "tests/csharp/fixtures/unary_not_bool_codegen/main.zorb",
-      "tests/csharp/fixtures/union_tag_c_name_collision_codegen/main.zorb",
-      "tests/csharp/fixtures/warning_unreachable_after_loop_control/main.zorb",
-      "tests/csharp/fixtures/warning_unreachable_after_return/main.zorb",
-      "tests/csharp/fixtures/windows_exit_process_signature/main.zorb",
-      "examples/baremetal/hello_kernel.zorb",
-      "examples/basics/enum_switch.zorb",
-      "examples/basics/error_catch.zorb",
-      "examples/basics/generic_adts.zorb",
-      "examples/basics/import_alias/main.zorb",
-      "examples/basics/literals.zorb",
-      "examples/basics/platform_info.zorb",
-      "examples/basics/stdlib_helpers.zorb",
-      "examples/basics/switch_for.zorb",
-      "examples/basics/tagged_union.zorb",
-      "examples/dogfood/lexer/main.zorb",
-      "compiler/self-check/fixtures/builtin_compile_error.zorb",
-      "compiler/self-check/fixtures/builtin_platform.zorb",
-      "compiler/self-check/fixtures/extern_call.zorb",
-      "compiler/self-check/fixtures/import_std_string.zorb",
-      "compiler/self-check/fixtures/import_std_string_call.zorb",
-      "compiler/self-check/fixtures/import_string_slice_use.zorb",
-      "compiler/self-check/fixtures/qualified_call.zorb",
-      "compiler/self-check/fixtures/qualified_empty_call.zorb",
-      "compiler/self-check/fixtures/qualified_empty_params.zorb",
-      "compiler/self-check/fixtures/slice_ptr_assignment.zorb",
-      "compiler/self-check/fixtures/string_len.zorb",
-      "compiler/self-check/fixtures/string_reverse.zorb"
   ]
 }
