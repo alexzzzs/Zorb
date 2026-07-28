@@ -128,11 +128,11 @@ internal static partial class Program
         }
         if (output.Contains("Array literal for type", StringComparison.Ordinal))
             code = "type.array-element-count";
-        if (output.Contains("Match over bool must cover both values", StringComparison.Ordinal))
+        if (primaryMessage.Contains("Match over bool must cover both values", StringComparison.Ordinal))
             code = "flow.match-not-exhaustive";
-        if (output.Contains("Match over enum", StringComparison.Ordinal))
+        if (primaryMessage.Contains("Match over enum", StringComparison.Ordinal))
             code = "flow.match-not-exhaustive";
-        if (output.Contains("Match over union", StringComparison.Ordinal))
+        if (primaryMessage.Contains("Match over union", StringComparison.Ordinal))
             code = "flow.match-not-exhaustive";
         if (output.Contains("Condition must have type 'bool'", StringComparison.Ordinal))
             code = "type.condition-not-bool";
@@ -184,7 +184,7 @@ internal static partial class Program
             output,
             @"^.+?:\d+:\d+:\s+error:\s+(?<message>.+)$",
             RegexOptions.Multiline);
-        return match.Success ? match.Groups["message"].Value : output;
+        return match.Success ? match.Groups["message"].Value : string.Empty;
     }
 
     private static NormalizedDiagnostic? NormalizeNativeDiagnostic(ProcessResult result)

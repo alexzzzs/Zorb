@@ -615,8 +615,14 @@ fn zast_generic_argument_type_known(self: *ZAstModule, decl: ZAstDecl, type_text
     base: ZAstText = zast_type_text_base(type_text)
     if base.len == 0 { return false }
     if !zast_is_builtin_type(base) && !zast_is_function_type(base) &&
-        !zast_decl_has_generic_param(self, decl, base) && ZAstModule.find_decl(self, base) == ZAstNoIndex {
-        return false
+        !zast_decl_has_generic_param(self, decl, base) {
+        declaration_index: i64 = ZAstModule.find_decl(self, base)
+        if declaration_index == ZAstNoIndex { return false }
+        kind: i64 = self.decls[declaration_index].kind
+        if kind != ZAstDeclStruct && kind != ZAstDeclEnum &&
+            kind != ZAstDeclUnion && kind != ZAstDeclExternType {
+            return false
+        }
     }
     suffix: ZAstText = ZAstText.empty()
     if base.len < type_text.len && type_text.ptr[base.len] == 60 {
@@ -2284,6 +2290,20 @@ fn zast_expr_is_constant_target(self: *ZAstModule, decl: ZAstDecl, expr_index: i
 }
 
 fn zast_expr_types_compatible(self: *ZAstModule, decl: ZAstDecl, lhs_expr: i64, rhs_expr: i64, through_stmt: i64) -> bool {
+    lhs_node: ZAstExpr = self.exprs[lhs_expr]
+    if lhs_node.kind == ZAstExprField && lhs_node.left != ZAstNoIndex &&
+        ZAstText.eql_string(lhs_node.name, "ptr") {
+        target_type: ZAstText = zast_text_skip_ws(zast_expr_type_text(
+            self, decl, lhs_node.left, through_stmt
+        ))
+        rhs_pointer_type: ZAstText = zast_text_skip_ws(zast_expr_type_text(
+            self, decl, rhs_expr, through_stmt
+        ))
+        if target_type.len > 0 && target_type.ptr[0] == 91 {
+            return rhs_pointer_type.len > 1 && rhs_pointer_type.ptr[0] == 42 &&
+                zast_array_decays_to_pointer(rhs_pointer_type, target_type)
+        }
+    }
     raw_lhs_type: ZAstText = zast_text_skip_ws(zast_expr_type_text(self, decl, lhs_expr, through_stmt))
     lhs_type: ZAstText = zast_type_text_unwrap(raw_lhs_type)
     rhs_type: ZAstText = zast_type_text_unwrap(zast_expr_type_text(self, decl, rhs_expr, through_stmt))
@@ -2816,6 +2836,33 @@ fn zast_stmt_scope_container(self: *ZAstModule, decl: ZAstDecl, stmt_index: i64)
     return container_index
 }
 
+fn zast_case_pattern_binds_name(self: *ZAstModule, case_stmt: ZAstStmt, name: ZAstText) -> bool {
+    if case_stmt.kind != ZAstStmtCase || case_stmt.expr_index == ZAstNoIndex {
+        return false
+    }
+    pattern: ZAstExpr = self.exprs[case_stmt.expr_index]
+    if pattern.kind != ZAstExprCall || pattern.left == ZAstNoIndex {
+        return false
+    }
+    callee: ZAstExpr = self.exprs[pattern.left]
+    if callee.kind != ZAstExprField || callee.left == ZAstNoIndex {
+        return false
+    }
+    union_index: i64 = zast_qualified_decl_index(self, callee.left)
+    if union_index == ZAstNoIndex || self.decls[union_index].kind != ZAstDeclUnion {
+        return false
+    }
+    argument_index: i64 = 0
+    while argument_index < pattern.arg_count {
+        binding: ZAstExpr = self.exprs[self.expr_args[pattern.arg_start + argument_index]]
+        if binding.kind == ZAstExprIdentifier && zast_text_same(binding.name, name) {
+            return true
+        }
+        argument_index = argument_index + 1
+    }
+    return false
+}
+
 export fn ZAstModule.local_constant_expression(
     self: *ZAstModule,
     scope_declaration_start: i64,
@@ -2874,6 +2921,11 @@ fn zast_decl_has_duplicate_locals(self: *ZAstModule, decl: ZAstDecl) -> bool {
         left: ZAstStmt = self.stmts[left_index]
         if left.kind == ZAstStmtVar {
             left_scope: i64 = zast_stmt_scope_container(self, decl, left_index)
+            if left_scope != ZAstNoIndex &&
+                zast_case_pattern_binds_name(self, self.stmts[left_scope], left.name) {
+                self.semantic_error_span = left.span
+                return true
+            }
             left_catch_owner: i64 = left.catch_owner
             right_index: i64 = left_index + 1
             while right_index < statement_end {
@@ -3454,6 +3506,15 @@ fn zast_validate_error_union_casts(self: *ZAstModule, decl: ZAstDecl, expr_index
 // compact inferred representation does not retain the complete pointer text.
 fn zast_pointer_argument_matches(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, expected_type: ZAstText, through_stmt: i64) -> bool {
     expected_type = zast_text_skip_ws(expected_type)
+    expected_is_void_pointer: bool = false
+    if expected_type.len > 1 && expected_type.ptr[0] == 42 {
+        expected_pointee: ZAstText
+        expected_pointee.ptr = expected_type.ptr + 1
+        expected_pointee.len = expected_type.len - 1
+        expected_is_void_pointer = ZAstText.eql_string(
+            zast_text_skip_ws(expected_pointee), "void"
+        )
+    }
     argument: ZAstExpr = self.exprs[expr_index]
     if argument.kind == ZAstExprUnary && argument.op == ZTokenAmp {
         if expected_type.len <= 1 {
@@ -3463,6 +3524,9 @@ fn zast_pointer_argument_matches(self: *ZAstModule, decl: ZAstDecl, expr_index: 
         expected_pointee.ptr = expected_type.ptr + 1
         expected_pointee.len = expected_type.len - 1
         actual_pointee: ZAstText = zast_text_skip_ws(zast_expr_type_text(self, decl, argument.left, through_stmt))
+        if expected_is_void_pointer && actual_pointee.len > 0 {
+            return true
+        }
         if actual_pointee.len > 0 && actual_pointee.ptr[0] == 91 {
             return true
         }
@@ -3474,6 +3538,9 @@ fn zast_pointer_argument_matches(self: *ZAstModule, decl: ZAstDecl, expr_index: 
     // coercions are represented explicitly in the hosted type resolver.
     if actual_type.len > 0 && actual_type.ptr[0] == 91 {
         return zast_array_decays_to_pointer(expected_type, actual_type)
+    }
+    if expected_is_void_pointer && actual_type.len > 0 && actual_type.ptr[0] == 42 {
+        return true
     }
     return actual_type.len > 0 && zast_text_same(expected_type, actual_type)
 }
@@ -3640,6 +3707,71 @@ fn zast_union_tag_case_matches(self: *ZAstModule, case_expr_index: i64, match_ty
     return zast_expr_matches_qualified_name(self, owner_index, zast_type_text_base(match_type))
 }
 
+fn zast_union_case_variant_index(self: *ZAstModule, case_expr_index: i64) -> i64 {
+    if case_expr_index == ZAstNoIndex { return ZAstNoIndex }
+    case_expr: ZAstExpr = self.exprs[case_expr_index]
+    if case_expr.kind == ZAstExprCall {
+        return case_expr.left
+    }
+    if case_expr.kind == ZAstExprField {
+        return case_expr_index
+    }
+    return ZAstNoIndex
+}
+
+fn zast_union_case_owner_matches(self: *ZAstModule, variant_index: i64, match_type: ZAstText) -> bool {
+    if variant_index == ZAstNoIndex { return false }
+    variant: ZAstExpr = self.exprs[variant_index]
+    if variant.kind != ZAstExprField || variant.left == ZAstNoIndex { return false }
+    owner_index: i64 = variant.left
+    owner: ZAstExpr = self.exprs[owner_index]
+    if owner.kind == ZAstExprField && ZAstText.eql_string(owner.name, "Tag") &&
+        owner.left != ZAstNoIndex {
+        owner_index = owner.left
+    }
+    if zast_expr_generic_specializes_type(self, owner_index, match_type) { return true }
+    return zast_expr_matches_qualified_name(
+        self, owner_index, zast_type_text_base(match_type)
+    )
+}
+
+fn zast_union_case_matches(self: *ZAstModule, case_expr_index: i64, match_type: ZAstText, member_name: ZAstText) -> bool {
+    variant_index: i64 = zast_union_case_variant_index(self, case_expr_index)
+    if variant_index == ZAstNoIndex { return false }
+    variant: ZAstExpr = self.exprs[variant_index]
+    return zast_text_same(variant.name, member_name) &&
+        zast_union_case_owner_matches(self, variant_index, match_type)
+}
+
+fn zast_union_match_cases_valid(self: *ZAstModule, decl: ZAstDecl, stmt: ZAstStmt, through_stmt: i64) -> bool {
+    match_type: ZAstText = zast_expr_type_text(self, decl, stmt.expr_index, through_stmt)
+    union_index: i64 = ZAstModule.find_owning_decl(
+        self, zast_type_text_base(match_type)
+    )
+    if union_index == ZAstNoIndex || self.decls[union_index].kind != ZAstDeclUnion {
+        return true
+    }
+    child_index: i64 = stmt.child_start
+    child_end: i64 = stmt.child_start + stmt.child_count
+    while child_index < child_end {
+        child: ZAstStmt = self.stmts[child_index]
+        if child.kind == ZAstStmtCase && child.expr_index != ZAstNoIndex {
+            variant_index: i64 = zast_union_case_variant_index(self, child.expr_index)
+            if variant_index != ZAstNoIndex &&
+                !zast_union_case_owner_matches(self, variant_index, match_type) {
+                self.semantic_error_span = self.exprs[variant_index].span
+                return false
+            }
+        }
+        if zast_stmt_has_children(child.kind) {
+            child_index = child.child_start + child.child_count
+        } else {
+            child_index = child_index + 1
+        }
+    }
+    return true
+}
+
 // The first flow slice covers boolean matches. Enum and union coverage needs
 // nominal variant tracking and is deliberately deferred to the full match
 // semantic pass rather than guessed from names.
@@ -3690,13 +3822,7 @@ fn zast_match_is_exhaustive(self: *ZAstModule, decl: ZAstDecl, stmt: ZAstStmt, t
             while child_index < child_end {
                 child: ZAstStmt = self.stmts[child_index]
                 if child.kind == ZAstStmtCase && child.expr_index != ZAstNoIndex {
-                    case_expr: ZAstExpr = self.exprs[child.expr_index]
-                    if case_expr.kind == ZAstExprCall && case_expr.left != ZAstNoIndex {
-                        case_callee: ZAstExpr = self.exprs[case_expr.left]
-                        if case_callee.kind == ZAstExprField && zast_text_same(case_callee.name, member.name) {
-                            found = true
-                        }
-                    }
+                    if zast_union_case_matches(self, child.expr_index, match_type, member.name) { found = true }
                     if zast_union_tag_case_matches(self, child.expr_index, match_type, member.name) {
                         found = true
                     }
@@ -3881,6 +4007,11 @@ fn zast_check_stmt_node(self: *ZAstModule, decl: ZAstDecl, stmt_index: i64) !i64
 
     if (stmt.kind == ZAstStmtBreak || stmt.kind == ZAstStmtContinue) && !zast_stmt_has_enclosing_loop(self, decl, stmt_index) {
         self.semantic_error_span = stmt.span
+        return error.InvalidArgument
+    }
+
+    if stmt.kind == ZAstStmtMatch &&
+        !zast_union_match_cases_valid(self, decl, stmt, through_stmt) {
         return error.InvalidArgument
     }
 

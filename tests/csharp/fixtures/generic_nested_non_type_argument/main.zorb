@@ -1,0 +1,16 @@
+struct Box<T> {
+    value: T,
+}
+
+struct Wrapper<T> {
+    value: T,
+}
+
+fn Value() -> i64 {
+    return 1
+}
+
+fn main() -> i64 {
+    value: Wrapper<Box<Value>>
+    return 0
+}

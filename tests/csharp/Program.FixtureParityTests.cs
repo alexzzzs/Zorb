@@ -3,19 +3,13 @@ using System.Text.Json;
 internal static partial class Program
 {
     private const string FrontendParityManifestFileName = "frontend-parity.json";
+    private const int FrontendParityManifestVersion = 2;
 
     internal sealed record FixtureParityCase(
         string Name,
         string InputPath,
         string Expected,
         string Feature);
-
-    private sealed record FixtureParityScope(
-        string Root,
-        string Kind,
-        string Classification,
-        string Feature,
-        string Reason);
 
     private sealed record FixtureParityEntry(
         string Name,
@@ -28,15 +22,13 @@ internal static partial class Program
 
     private sealed record FixtureParityManifest(
         int Version,
-        IReadOnlyList<FixtureParityScope> Scopes,
-        IReadOnlyList<FixtureParityEntry> Entries,
-        IReadOnlyList<string>? SuccessInputs);
+        IReadOnlyList<FixtureParityEntry> Entries);
 
     private static void RunFixtureParityClassificationTests()
     {
         var projectRoot = GetProjectRoot();
         var manifest = LoadFixtureParityManifest(projectRoot);
-        if (manifest.Version != 1)
+        if (manifest.Version != FrontendParityManifestVersion)
             throw new Exception($"Unsupported frontend parity manifest version {manifest.Version}.");
 
         var sourceEntries = EnumerateParitySources(projectRoot).ToArray();
@@ -48,6 +40,12 @@ internal static partial class Program
         if (explicitEntries.Count != manifest.Entries.Count)
             throw new Exception("frontend parity manifest contains duplicate paths.");
 
+        foreach (var explicitPath in explicitEntries.Keys)
+        {
+            if (!sourcePaths.Contains(explicitPath))
+                throw new Exception($"frontend parity manifest classifies an input outside the parity corpus: '{explicitPath}'.");
+        }
+
         var entryNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var entry in manifest.Entries)
         {
@@ -56,31 +54,12 @@ internal static partial class Program
             ValidateParityEntry(projectRoot, entry);
         }
 
-        var successInputs = manifest.SuccessInputs ?? [];
-        var successInputPaths = successInputs
-            .Select(NormalizeManifestPath)
-            .ToArray();
-        if (successInputPaths.Distinct(StringComparer.Ordinal).Count() != successInputPaths.Length)
-            throw new Exception("frontend parity manifest contains duplicate admitted success paths.");
-        foreach (var successInputPath in successInputPaths)
-        {
-            if (explicitEntries.ContainsKey(successInputPath))
-                throw new Exception($"frontend parity manifest admits '{successInputPath}' both explicitly and as a success input.");
-            if (!sourcePaths.Contains(successInputPath))
-                throw new Exception($"frontend parity manifest admits a success input outside the parity corpus: '{successInputPath}'.");
-        }
-
         foreach (var sourcePath in sourceEntries)
         {
             var relativePath = NormalizeManifestPath(Path.GetRelativePath(projectRoot, sourcePath));
-            if (explicitEntries.ContainsKey(relativePath))
-                continue;
-            if (!manifest.Scopes.Any(scope => IsPathWithinScope(relativePath, scope.Root)))
-                throw new Exception($"frontend parity manifest does not classify '{relativePath}'.");
+            if (!explicitEntries.ContainsKey(relativePath))
+                throw new Exception($"frontend parity manifest does not explicitly classify '{relativePath}'.");
         }
-
-        foreach (var scope in manifest.Scopes)
-            ValidateParityScope(projectRoot, scope);
 
         var gatedCases = LoadFrontendParityCases(projectRoot);
         if (gatedCases.Count == 0)
@@ -102,14 +81,7 @@ internal static partial class Program
                 Path.GetFullPath(Path.Combine(projectRoot, entry.Path)),
                 entry.Expected,
                 entry.Feature));
-        var admittedSuccessCases = (manifest.SuccessInputs ?? [])
-            .Select(path => new FixtureParityCase(
-                $"success:{NormalizeManifestPath(path)}",
-                Path.GetFullPath(Path.Combine(projectRoot, path)),
-                "success",
-                "baseline.success"));
         return explicitCases
-            .Concat(admittedSuccessCases)
             .OrderBy(parityCase => parityCase.Name, StringComparer.Ordinal)
             .ToArray();
     }
@@ -153,20 +125,6 @@ internal static partial class Program
         }
     }
 
-    private static void ValidateParityScope(string projectRoot, FixtureParityScope scope)
-    {
-        if (string.IsNullOrWhiteSpace(scope.Root) || string.IsNullOrWhiteSpace(scope.Kind) ||
-            string.IsNullOrWhiteSpace(scope.Classification) || string.IsNullOrWhiteSpace(scope.Feature) ||
-            string.IsNullOrWhiteSpace(scope.Reason))
-        {
-            throw new Exception("frontend parity manifest contains an incomplete scope.");
-        }
-
-        var rootPath = Path.GetFullPath(Path.Combine(projectRoot, scope.Root));
-        if (!Directory.Exists(rootPath))
-            throw new Exception($"frontend parity scope root does not exist: '{scope.Root}'.");
-    }
-
     private static void ValidateParityEntry(string projectRoot, FixtureParityEntry entry)
     {
         if (string.IsNullOrWhiteSpace(entry.Name) || string.IsNullOrWhiteSpace(entry.Path) ||
@@ -191,12 +149,6 @@ internal static partial class Program
         var inputPath = Path.GetFullPath(Path.Combine(projectRoot, entry.Path));
         if (!File.Exists(inputPath))
             throw new Exception($"frontend parity entry '{entry.Name}' references missing input '{entry.Path}'.");
-    }
-
-    private static bool IsPathWithinScope(string relativePath, string scopeRoot)
-    {
-        var normalizedRoot = NormalizeManifestPath(scopeRoot).TrimEnd('/') + "/";
-        return relativePath.StartsWith(normalizedRoot, StringComparison.Ordinal);
     }
 
     private static string NormalizeManifestPath(string path) => path.Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/');
