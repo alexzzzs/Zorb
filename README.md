@@ -279,20 +279,31 @@ Notes:
 Run the full fixture suite:
 
 ```bash
-dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release
+python scripts/test_compiler.py
 ```
 
-Every semantically successful fixture and example is emitted through LLVM and
-verified. The same successful corpus must also complete native Backend IR
-lowering through `zorb build --output-kind llvm-ir`; negative fixtures must be
-rejected by native `zorb check` with structured diagnostics. Runtime fixtures
-are built and executed through the LLVM backend.
-Focused `expect-llvm.txt` files may assert stable IR details where verifier and
-runtime coverage are not specific enough.
+The Python runner bootstraps the native compiler from the pinned preceding
+release when needed; it never invokes .NET. Every catalog input is checked
+against its declared native outcome and structured diagnostic phase. Supported
+successful inputs are emitted through LLVM, and runtime fixtures are built and
+executed through the native driver. Focused `expect-llvm.txt` files may assert
+stable IR details where verifier and runtime coverage are not specific enough.
+
+Known recovery-to-native migration gaps are explicit in
+`tests/native-suite-exclusions.json` and are printed as `SKIP` records. The
+runner rejects stale exclusions that do not name a catalog input. The C# project
+is retained solely for explicit recovery work and is not part of normal tests
+or CI.
 
 Current runtime coverage is strongest on Linux and on Windows host targets in
 CI. An AArch64 Linux lane is available on Linux hosts with `aarch64-linux-gnu-gcc`
-plus `qemu-aarch64`; set `ZORB_RUN_AARCH64_TESTS=1` to require that lane locally.
+plus `qemu-aarch64`:
+
+```bash
+python scripts/test_compiler.py \
+  --target host-linux-aarch64 \
+  --runtime-target host-linux-aarch64
+```
 
 ## Examples
 

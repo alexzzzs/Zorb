@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Normal compiler tests on Linux x64, Linux ARM64, Linux-to-ARM64 cross builds,
+  and Windows x64 now run through a shared Python/native harness without
+  installing or invoking .NET. Release version metadata is also read by Python
+  instead of MSBuild.
+- The native fixture gate now validates declared outcomes directly, including
+  lexical, parse, import, and semantic diagnostic phases. Remaining
+  recovery-to-native lowering, warning, and fiber-runtime gaps are recorded as
+  explicit machine-validated skips.
+- Direct imports no longer expose unqualified functions projected from a
+  transitive import.
 - The recovery compiler version now advances to the `0.2.4-dev` line after the
   `0.2.3` release.
 - Normal bootstrap and publishing now use SHA-256-pinned v0.2.3 compiler

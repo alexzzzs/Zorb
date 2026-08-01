@@ -16,12 +16,16 @@ then uses the rebuilt compiler to build the driver once more. The generation-2
 and generation-3 compiler executables must be byte-identical; there is no
 normalization step.
 
-The ordinary managed fixture run now also creates (or accepts through
-`ZORB_NATIVE_FIXTURE_COMPILER`) the integrated native `zorb` driver. Every
-successful fixture must complete a native `build --output-kind llvm-ir`; every
-negative fixture must be rejected by native `check` with a structured
-diagnostic. This makes all fixture directories a native frontend-and-lowering
-gate rather than limiting native validation to the differential subset.
+The ordinary fixture run is now `python scripts/test_compiler.py`. It creates
+the integrated native `zorb` driver from the pinned release seed, validates the
+complete catalog directly, emits supported successful inputs through native
+Backend IR and LLVM lowering, and executes the applicable runtime corpus. No
+.NET runtime participates in this production gate on Linux x64, Linux ARM64,
+Linux-to-ARM64 cross tests, or Windows x64.
+
+The remaining recovery-to-native gaps are machine-readable in
+`tests/native-suite-exclusions.json`. They are reported as explicit skips and
+must reference an existing catalog case with a non-empty reason.
 
 ## Parity contract
 
@@ -66,7 +70,12 @@ The Linux bootstrap gate is `frontend_differential`.
 `ZORB_FRONTEND_PARITY_CASE=<catalog-name>` locally to run one enabled case while
 debugging; CI leaves it unset and runs the complete differential set.
 
-GitHub Actions runs this contract in the dedicated `linux-native-frontend-parity` job. It sets `ZORB_FRONTEND_PARITY_ONLY=1`, builds stage 0 and the native backend, then runs catalog validation, repeated-session bootstrap coverage, and the differential gate without waiting on the wider runtime suite.
+GitHub Actions runs the focused contract in the dedicated
+`linux-native-frontend-parity` job with
+`python scripts/test_compiler.py --frontend-only`. Wider Linux, AArch64, and
+Windows jobs use the same Python runner for native LLVM and runtime coverage.
+Cross-frontend comparison remains available for explicit recovery maintenance,
+but it is not part of the production CI path.
 
 ## Session contract
 

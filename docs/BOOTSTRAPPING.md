@@ -118,3 +118,18 @@ bootstrap and publishing on Linux x64, Linux ARM64, and Windows x64.
 
 The C# recovery source need not implement new language features. It should stay
 frozen to the pinned bridge needed to repair the bootstrap chain.
+
+## Native test workflow
+
+Run the production compiler regression suite without .NET on every supported
+host:
+
+```bash
+python scripts/test_compiler.py
+```
+
+The command resolves or builds `build/zorb`, validates the fixture catalog,
+checks structured diagnostic outcomes, emits LLVM IR, executes host runtime
+fixtures, and verifies CLI target behavior. CI passes explicit target profiles
+for Windows and AArch64. `tests/native-suite-exclusions.json` is the reviewed,
+machine-validated list of remaining recovery-to-native migration work.
