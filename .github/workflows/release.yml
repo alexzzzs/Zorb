@@ -43,14 +43,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Setup .NET
-        # Windows needs recovery for the first release after the host-tuned
-        # v0.2.2 seed. Future baseline seeds can use the normal released path.
-        if: matrix.platform == 'windows' || (matrix.platform == 'linux' && matrix.zig_arch == 'aarch64')
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-
       - name: Install release toolchain
         if: matrix.platform == 'linux'
         run: |
@@ -124,16 +116,29 @@ jobs:
       - name: Publish standalone compiler
         if: matrix.platform == 'linux'
         run: |
-          recovery_args=()
-          if [[ "${{ matrix.zig_arch }}" == "aarch64" ]]; then
-            recovery_args=(--recovery-csharp)
-          fi
-          python3 scripts/bootstrap_compiler.py publish "${{ matrix.output_dir }}" "${recovery_args[@]}"
+          mkdir -p "$RUNNER_TEMP/no-dotnet"
+          cat > "$RUNNER_TEMP/no-dotnet/dotnet" <<'EOF'
+          #!/usr/bin/env bash
+          echo "dotnet must not be used by the release bootstrap path" >&2
+          exit 97
+          EOF
+          chmod +x "$RUNNER_TEMP/no-dotnet/dotnet"
+          export PATH="$RUNNER_TEMP/no-dotnet:$PATH"
+          python3 scripts/bootstrap_compiler.py publish "${{ matrix.output_dir }}"
 
       - name: Publish standalone compiler
         if: matrix.platform == 'windows'
         shell: pwsh
-        run: python scripts/bootstrap_compiler.py publish "${{ matrix.output_dir }}" --recovery-csharp
+        run: |
+          $noDotnetDir = Join-Path $env:RUNNER_TEMP "zorb-no-dotnet"
+          New-Item -ItemType Directory -Force -Path $noDotnetDir | Out-Null
+          @"
+          @echo off
+          echo dotnet must not be used by the release bootstrap path 1>&2
+          exit /b 97
+          "@ | Set-Content -LiteralPath (Join-Path $noDotnetDir "dotnet.cmd") -Encoding ASCII
+          $env:PATH = "$noDotnetDir;$env:PATH"
+          python scripts/bootstrap_compiler.py publish "${{ matrix.output_dir }}"
 
       - name: Write version metadata
         shell: bash

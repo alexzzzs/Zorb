@@ -8,6 +8,11 @@ All notable changes to this project will be documented in this file.
 
 - The recovery compiler version now advances to the `0.2.4-dev` line after the
   `0.2.3` release.
+- Normal bootstrap and publishing now use SHA-256-pinned v0.2.3 compiler
+  packages on Linux x64, Linux ARM64, and Windows x64.
+- ARM64 and Windows CI publishing paths now place a failing `dotnet` shim ahead
+  of the toolchain, proving that released-seed bootstrap does not fall back to
+  the C# recovery compiler.
 
 ## [0.2.3] - July 28, 2026
 
