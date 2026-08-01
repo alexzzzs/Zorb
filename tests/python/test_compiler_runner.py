@@ -85,6 +85,7 @@ class CompilerRunnerTests(unittest.TestCase):
                     {
                         "version": 1,
                         "llvm": {"missing": "reason"},
+                        "llvm_by_target": {},
                         "llvm_assertions": {},
                         "runtime": {},
                         "warnings": {},
@@ -104,6 +105,7 @@ class CompilerRunnerTests(unittest.TestCase):
                     {
                         "version": 1,
                         "llvm": {},
+                        "llvm_by_target": {},
                         "llvm_assertions": {},
                         "runtime": {},
                         "warnings": {},
@@ -114,6 +116,14 @@ class CompilerRunnerTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(RuntimeError, "unknown section 'runtimes'"):
                 load_suite_exclusions(root, [])
+
+    def test_target_specific_exclusion_is_loaded_for_windows(self) -> None:
+        cases = load_fixture_manifest(PROJECT_ROOT)
+        exclusions = load_suite_exclusions(PROJECT_ROOT, cases)
+        self.assertIn(
+            "self_check_builtin_compile_error",
+            exclusions.llvm_by_target["host-windows"],
+        )
 
 
 if __name__ == "__main__":

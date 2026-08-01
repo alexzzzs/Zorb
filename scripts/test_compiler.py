@@ -25,7 +25,15 @@ from typing import Callable, Iterable, Sequence
 
 MANIFEST_VERSION = 2
 EXCLUSIONS_VERSION = 1
-EXCLUSION_SECTIONS = ("llvm", "llvm_assertions", "runtime", "warnings")
+EXCLUSION_SECTIONS = ("llvm", "llvm_by_target", "llvm_assertions", "runtime", "warnings")
+SUPPORTED_TARGETS = {
+    "host-linux",
+    "freestanding-linux",
+    "host-linux-aarch64",
+    "freestanding-linux-aarch64",
+    "host-windows",
+    "bare-metal-x86_64",
+}
 COMMAND_TIMEOUT_SECONDS = 60
 BOOTSTRAP_TIMEOUT_SECONDS = 600
 CONCURRENT_RUN_COUNT = 8
@@ -73,6 +81,7 @@ class RuntimeExpectation:
 @dataclass(frozen=True)
 class SuiteExclusions:
     llvm: dict[str, str]
+    llvm_by_target: dict[str, dict[str, str]]
     llvm_assertions: dict[str, str]
     runtime: dict[str, str]
     warnings: dict[str, str]
@@ -222,8 +231,27 @@ def load_suite_exclusions(project_root: Path, cases: Sequence[FixtureCase]) -> S
                 raise SuiteFailure(f"native-suite exclusion {case_name!r} has no reason")
         return section
 
+    def read_target_section(name: str) -> dict[str, dict[str, str]]:
+        section = payload.get(name)
+        if not isinstance(section, dict):
+            raise SuiteFailure(f"native-suite exclusions section {name!r} must be an object")
+        result: dict[str, dict[str, str]] = {}
+        for target, target_cases in section.items():
+            if target not in SUPPORTED_TARGETS:
+                raise SuiteFailure(f"native-suite exclusion has unknown target {target!r}")
+            if not isinstance(target_cases, dict):
+                raise SuiteFailure(f"native-suite exclusions target {target!r} must be an object")
+            for case_name, reason in target_cases.items():
+                if case_name not in case_names:
+                    raise SuiteFailure(f"native-suite exclusion {case_name!r} is not a fixture case")
+                if not isinstance(reason, str) or not reason.strip():
+                    raise SuiteFailure(f"native-suite exclusion {case_name!r} has no reason")
+            result[target] = target_cases
+        return result
+
     return SuiteExclusions(
         llvm=read_section("llvm"),
+        llvm_by_target=read_target_section("llvm_by_target"),
         llvm_assertions=read_section("llvm_assertions"),
         runtime=read_section("runtime"),
         warnings=read_section("warnings"),
@@ -466,8 +494,10 @@ class NativeCompilerSuite:
                     self._assert_warnings(case, checked, warning_expectations)
             if self.frontend_only:
                 return
-            if case.name in exclusions.llvm:
-                raise SuiteSkip(exclusions.llvm[case.name])
+            target_exclusions = exclusions.llvm_by_target.get(self.target, {})
+            exclusion_reason = exclusions.llvm.get(case.name) or target_exclusions.get(case.name)
+            if exclusion_reason is not None:
+                raise SuiteSkip(exclusion_reason)
             output = output_root / f"fixture-{index}.ll"
             built = run_command(
                 [
