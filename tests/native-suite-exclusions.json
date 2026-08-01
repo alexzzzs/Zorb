@@ -7,9 +7,6 @@
   "llvm_by_target": {
     "host-windows": {
       "self_check_builtin_compile_error": "This Linux-success probe intentionally activates Builtin.CompileError on Windows."
-    },
-    "bare-metal-x86_64": {
-      "self_check_builtin_compile_error": "This Linux-success probe intentionally activates Builtin.CompileError on bare-metal targets."
     }
   },
   "llvm_assertions": {

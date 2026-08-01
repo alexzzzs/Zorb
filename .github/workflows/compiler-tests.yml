@@ -8,7 +8,7 @@ jobs:
   test:
     name: linux-hosted-x64
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -58,10 +58,11 @@ jobs:
   linux-aarch64-cross:
     name: linux-aarch64-cross
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     env:
       ZORB_RUN_AARCH64_TESTS: "1"
+      ZORB_TEST_COMMAND_TIMEOUT_SECONDS: "120"
 
     steps:
       - name: Checkout
@@ -111,7 +112,7 @@ jobs:
   linux-arm64-native-compiler:
     name: linux-arm64-native-compiler
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     permissions:
       contents: read
@@ -256,7 +257,7 @@ jobs:
   linux-native-parity:
     name: linux-native-frontend-parity
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     env:
       ZORB_FRONTEND_PARITY_ONLY: "1"
@@ -292,7 +293,7 @@ jobs:
   windows-hosted-smoke:
     name: windows-hosted-x64
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     steps:
       - name: Checkout

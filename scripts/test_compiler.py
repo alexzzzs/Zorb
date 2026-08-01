@@ -20,7 +20,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 
 MANIFEST_VERSION = 2
@@ -34,7 +34,8 @@ SUPPORTED_TARGETS = {
     "host-windows",
     "bare-metal-x86_64",
 }
-COMMAND_TIMEOUT_SECONDS = 60
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 60
+COMMAND_TIMEOUT_ENVIRONMENT_VARIABLE = "ZORB_TEST_COMMAND_TIMEOUT_SECONDS"
 BOOTSTRAP_TIMEOUT_SECONDS = 600
 CONCURRENT_RUN_COUNT = 8
 VALID_CLASSIFICATIONS = {"deferred", "native-verified", "differential"}
@@ -46,6 +47,7 @@ VALID_OUTCOMES = {
     "semantic-failure",
 }
 DIAGNOSTIC_PATTERN = re.compile(r"error\[(?P<code>[a-z0-9.-]+)\]")
+SEMANTIC_DIAGNOSTIC_PREFIXES = ("name.", "type.", "flow.")
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,26 @@ class SuiteSkip(RuntimeError):
     pass
 
 
+class ExclusionTracker:
+    def __init__(self) -> None:
+        self._applicable: dict[str, str] = {}
+        self._consumed: set[str] = set()
+
+    def register(self, key: str, reason: str) -> None:
+        self._applicable[key] = reason
+
+    def consume(self, key: str) -> None:
+        self._consumed.add(key)
+
+    def require_no_stale_exclusions(self) -> None:
+        stale = sorted(set(self._applicable) - self._consumed)
+        if stale:
+            details = "; ".join(
+                f"{key}: {self._applicable[key]}" for key in stale
+            )
+            raise SuiteFailure(f"stale native-suite exclusions: {details}")
+
+
 def normalize_newlines(value: str) -> str:
     return value.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
 
@@ -116,7 +138,9 @@ def expected_phase_from_code(code: str) -> str:
         return "parse-failure"
     if code.startswith("import."):
         return "import-failure"
-    return "semantic-failure"
+    if code.startswith(SEMANTIC_DIAGNOSTIC_PREFIXES):
+        return "semantic-failure"
+    raise SuiteFailure(f"unrecognized structured diagnostic code {code!r}")
 
 
 def enumerate_parity_sources(project_root: Path) -> set[Path]:
@@ -262,7 +286,7 @@ def run_command(
     arguments: Sequence[str | Path],
     cwd: Path,
     environment: dict[str, str],
-    timeout_seconds: int = COMMAND_TIMEOUT_SECONDS,
+    timeout_seconds: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
 ) -> CommandResult:
     command = [os.fspath(argument) for argument in arguments]
     try:
@@ -421,6 +445,7 @@ class NativeCompilerSuite:
         environment: dict[str, str],
         target: str,
         runtime_targets: Sequence[str],
+        command_timeout_seconds: int,
         frontend_only: bool,
         selected_case: str | None,
     ) -> None:
@@ -429,9 +454,11 @@ class NativeCompilerSuite:
         self.environment = environment
         self.target = target
         self.runtime_targets = list(runtime_targets)
+        self.command_timeout_seconds = command_timeout_seconds
         self.frontend_only = frontend_only
         self.selected_case = selected_case
         self.failures: list[str] = []
+        self.exclusion_tracker = ExclusionTracker()
 
     def run(self) -> int:
         cases = load_fixture_manifest(self.project_root)
@@ -455,12 +482,30 @@ class NativeCompilerSuite:
                 self._run_runtime_tests(cases, output_root, exclusions)
                 self._run_named("cli_contract", lambda: self._test_cli_contract(output_root))
 
+        try:
+            self.exclusion_tracker.require_no_stale_exclusions()
+        except SuiteFailure as error:
+            self.failures.append(f"exclusions: {error}")
+
         if self.failures:
             print(file=sys.stderr)
             for failure in self.failures:
                 print(failure, file=sys.stderr)
             return 1
         return 0
+
+    def _run_command(
+        self,
+        arguments: Sequence[str | Path],
+        cwd: Path | None = None,
+        environment: dict[str, str] | None = None,
+    ) -> CommandResult:
+        return run_command(
+            arguments,
+            cwd or self.project_root,
+            environment or self.environment,
+            self.command_timeout_seconds,
+        )
 
     def _run_named(self, name: str, action: Callable[[], None]) -> None:
         try:
@@ -480,26 +525,41 @@ class NativeCompilerSuite:
         index: int,
         exclusions: SuiteExclusions,
     ) -> None:
-        checked = run_command(
-            [self.compiler, "check", case.path], self.project_root, self.environment
-        )
+        checked = self._run_command([self.compiler, "check", case.path])
         if case.expected == "success":
             if checked.returncode != 0:
                 raise SuiteFailure(format_command_failure("native check rejected successful input", checked))
             warning_expectations = read_expectation_lines(case.path.parent / "expect-warnings.txt")
             if warning_expectations:
                 if case.name in exclusions.warnings:
-                    print(f"SKIP warning/{case.name}: {exclusions.warnings[case.name]}")
+                    exclusion_key = f"warnings:{case.name}"
+                    exclusion_reason = exclusions.warnings[case.name]
+                    self.exclusion_tracker.register(exclusion_key, exclusion_reason)
+                    diagnostics = self._normalized_diagnostics(case, checked)
+                    missing_warnings = [
+                        expected
+                        for expected in warning_expectations
+                        if expected not in diagnostics
+                    ]
+                    if missing_warnings:
+                        self.exclusion_tracker.consume(exclusion_key)
+                        print(f"SKIP warning/{case.name}: {exclusion_reason}")
                 else:
                     self._assert_warnings(case, checked, warning_expectations)
             if self.frontend_only:
                 return
             target_exclusions = exclusions.llvm_by_target.get(self.target, {})
-            exclusion_reason = exclusions.llvm.get(case.name) or target_exclusions.get(case.name)
+            exclusion_key: str | None = None
+            exclusion_reason = exclusions.llvm.get(case.name)
             if exclusion_reason is not None:
-                raise SuiteSkip(exclusion_reason)
+                exclusion_key = f"llvm:{case.name}"
+            elif case.name in target_exclusions:
+                exclusion_reason = target_exclusions[case.name]
+                exclusion_key = f"llvm_by_target:{self.target}:{case.name}"
+            if exclusion_key is not None and exclusion_reason is not None:
+                self.exclusion_tracker.register(exclusion_key, exclusion_reason)
             output = output_root / f"fixture-{index}.ll"
-            built = run_command(
+            built = self._run_command(
                 [
                     self.compiler,
                     "build",
@@ -511,19 +571,27 @@ class NativeCompilerSuite:
                     "-o",
                     output,
                 ],
-                self.project_root,
-                self.environment,
             )
             if built.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
+                if exclusion_key is not None and exclusion_reason is not None:
+                    self.exclusion_tracker.consume(exclusion_key)
+                    raise SuiteSkip(exclusion_reason)
                 raise SuiteFailure(format_command_failure("LLVM IR emission failed", built))
             llvm_ir = output.read_text(encoding="utf-8")
             if "target triple =" not in llvm_ir:
                 raise SuiteFailure("LLVM output did not contain a target triple")
             if case.name in exclusions.llvm_assertions:
-                print(
-                    f"SKIP llvm-assertion/{case.name}: "
-                    f"{exclusions.llvm_assertions[case.name]}"
-                )
+                exclusion_key = f"llvm_assertions:{case.name}"
+                exclusion_reason = exclusions.llvm_assertions[case.name]
+                self.exclusion_tracker.register(exclusion_key, exclusion_reason)
+                missing_assertions = [
+                    expected
+                    for expected in llvm_expectations(case.path.parent, self.target)
+                    if expected not in llvm_ir
+                ]
+                if missing_assertions:
+                    self.exclusion_tracker.consume(exclusion_key)
+                    print(f"SKIP llvm-assertion/{case.name}: {exclusion_reason}")
             else:
                 for expected in llvm_expectations(case.path.parent, self.target):
                     if expected not in llvm_ir:
@@ -543,11 +611,15 @@ class NativeCompilerSuite:
     def _assert_warnings(
         self, case: FixtureCase, result: CommandResult, expectations: Sequence[str]
     ) -> None:
-        diagnostics = result.output.replace(os.fspath(case.path), case.path.name)
-        diagnostics = diagnostics.replace(case.path.as_posix(), case.path.name)
+        diagnostics = self._normalized_diagnostics(case, result)
         for expected in expectations:
             if expected not in diagnostics:
                 raise SuiteFailure(f"diagnostics did not contain warning {expected!r}")
+
+    @staticmethod
+    def _normalized_diagnostics(case: FixtureCase, result: CommandResult) -> str:
+        diagnostics = result.output.replace(os.fspath(case.path), case.path.name)
+        return diagnostics.replace(case.path.as_posix(), case.path.name)
 
     def _run_runtime_tests(
         self,
@@ -565,23 +637,33 @@ class NativeCompilerSuite:
                 if not has_runtime_expectation(case.path.parent, target):
                     continue
                 name = f"runtime/{target}/{case.name}"
-                if case.name in exclusions.runtime:
-                    print(f"SKIP {name}: {exclusions.runtime[case.name]}")
-                    continue
                 self._run_named(
                     name,
                     lambda case=case, target=target: self._test_runtime_from_files(
-                        case, target, output_root
+                        case, target, output_root, exclusions.runtime.get(case.name)
                     ),
                 )
 
     def _test_runtime_from_files(
-        self, case: FixtureCase, target: str, output_root: Path
+        self,
+        case: FixtureCase,
+        target: str,
+        output_root: Path,
+        exclusion_reason: str | None,
     ) -> None:
         expectation = load_runtime_expectation(case.path.parent, target)
         if expectation is None:
             raise SuiteFailure("runtime expectation disappeared while running the suite")
-        self._test_runtime(case, expectation, output_root)
+        exclusion_key = f"runtime:{case.name}"
+        if exclusion_reason is not None:
+            self.exclusion_tracker.register(exclusion_key, exclusion_reason)
+        try:
+            self._test_runtime(case, expectation, output_root)
+        except SuiteFailure:
+            if exclusion_reason is None:
+                raise
+            self.exclusion_tracker.consume(exclusion_key)
+            raise SuiteSkip(exclusion_reason)
 
     def _test_runtime(
         self, case: FixtureCase, expectation: RuntimeExpectation, output_root: Path
@@ -589,18 +671,15 @@ class NativeCompilerSuite:
         runtime_dir = Path(tempfile.mkdtemp(prefix=f"runtime-{case.name}-", dir=output_root))
         copy_runtime_data(case.path.parent, runtime_dir)
         binary = runtime_dir / ("out.exe" if expectation.target == "host-windows" else "out")
-        built = run_command(
+        built = self._run_command(
             [self.compiler, "build", case.path, "--target", expectation.target, "-o", binary],
-            self.project_root,
-            self.environment,
         )
         if built.returncode != 0 or not binary.is_file():
             raise SuiteFailure(format_command_failure("runtime build failed", built))
 
-        executed = run_command(
+        executed = self._run_command(
             execution_command(binary, expectation.target, self.environment),
             runtime_dir,
-            self.environment,
         )
         if executed.returncode != expectation.exit_code:
             raise SuiteFailure(
@@ -622,7 +701,7 @@ class NativeCompilerSuite:
     def _test_cli_contract(self, output_root: Path) -> None:
         simple = self.project_root / "tests/csharp/fixtures/runtime_hello_world/main.zorb"
         invalid_output = output_root / "invalid-native-link-args.ll"
-        invalid = run_command(
+        invalid = self._run_command(
             [
                 self.compiler,
                 "build",
@@ -634,17 +713,13 @@ class NativeCompilerSuite:
                 "--native-link-args",
                 "-lm",
             ],
-            self.project_root,
-            self.environment,
         )
         if invalid.returncode != 64:
             raise SuiteFailure("native linker arguments were accepted for non-executable output")
 
         def run_hello(_: int) -> CommandResult:
-            return run_command(
+            return self._run_command(
                 [self.compiler, "run", simple, "--target", self.target],
-                self.project_root,
-                self.environment,
             )
 
         with ThreadPoolExecutor(max_workers=CONCURRENT_RUN_COUNT) as executor:
@@ -668,7 +743,7 @@ class NativeCompilerSuite:
         }
         for target, triple in targets.items():
             output = output_root / f"target-{target}.ll"
-            built = run_command(
+            built = self._run_command(
                 [
                     self.compiler,
                     "build",
@@ -680,8 +755,6 @@ class NativeCompilerSuite:
                     "-o",
                     output,
                 ],
-                self.project_root,
-                self.environment,
             )
             if built.returncode != 0 or not output.is_file():
                 raise SuiteFailure(format_command_failure(f"named target {target} failed", built))
@@ -702,7 +775,7 @@ class NativeCompilerSuite:
         script = output_root / "kernel.ld"
         environment = dict(self.environment)
         environment["ZORB_LLD"] = linker
-        built = run_command(
+        built = self._run_command(
             [
                 self.compiler,
                 "build",
@@ -714,8 +787,7 @@ class NativeCompilerSuite:
                 "--emit-linker-script",
                 script,
             ],
-            self.project_root,
-            environment,
+            environment=environment,
         )
         if built.returncode != 0 or not output.is_file() or not script.is_file():
             raise SuiteFailure(format_command_failure("bare-metal linking failed", built))
@@ -723,7 +795,20 @@ class NativeCompilerSuite:
             raise SuiteFailure("bare-metal linker script did not preserve _start")
 
 
-def parse_arguments(arguments: Sequence[str]) -> argparse.Namespace:
+def positive_timeout_seconds(value: str) -> int:
+    try:
+        seconds = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("timeout must be an integer") from error
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError("timeout must be greater than zero")
+    return seconds
+
+
+def parse_arguments(
+    arguments: Sequence[str], environment: Mapping[str, str] | None = None
+) -> argparse.Namespace:
+    environment = os.environ if environment is None else environment
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compiler", type=Path, help="native compiler to test")
     parser.add_argument("--target", default=default_target(), help="LLVM emission target")
@@ -735,6 +820,18 @@ def parse_arguments(arguments: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--frontend-only", action="store_true", help="only check frontend outcomes")
     parser.add_argument("--case", help="run one manifest case and skip runtime/CLI tests")
+    parser.add_argument(
+        "--command-timeout-seconds",
+        type=positive_timeout_seconds,
+        default=environment.get(
+            COMMAND_TIMEOUT_ENVIRONMENT_VARIABLE,
+            str(DEFAULT_COMMAND_TIMEOUT_SECONDS),
+        ),
+        help=(
+            "per-command compiler/runtime timeout; defaults to 60 seconds or "
+            f"${COMMAND_TIMEOUT_ENVIRONMENT_VARIABLE}"
+        ),
+    )
     parser.add_argument(
         "--no-bootstrap",
         action="store_true",
@@ -763,6 +860,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         environment=environment,
         target=options.target,
         runtime_targets=runtime_targets,
+        command_timeout_seconds=options.command_timeout_seconds,
         frontend_only=options.frontend_only,
         selected_case=options.case,
     )

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -13,10 +14,15 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from project_version import read_project_version  # noqa: E402
 from test_compiler import (  # noqa: E402
+    COMMAND_TIMEOUT_ENVIRONMENT_VARIABLE,
+    ExclusionTracker,
+    NativeCompilerSuite,
+    SuiteFailure,
     expected_phase_from_code,
     load_fixture_manifest,
     load_runtime_expectation,
     load_suite_exclusions,
+    parse_arguments,
 )
 
 
@@ -37,6 +43,43 @@ class CompilerRunnerTests(unittest.TestCase):
         self.assertEqual(expected_phase_from_code("parse.expected-token"), "parse-failure")
         self.assertEqual(expected_phase_from_code("import.not-found"), "import-failure")
         self.assertEqual(expected_phase_from_code("type.not-assignable"), "semantic-failure")
+        self.assertEqual(expected_phase_from_code("name.unknown"), "semantic-failure")
+        self.assertEqual(expected_phase_from_code("flow.missing-return"), "semantic-failure")
+        with self.assertRaisesRegex(SuiteFailure, "unrecognized structured diagnostic code"):
+            expected_phase_from_code("backend.invalid")
+
+    def test_command_timeout_uses_environment_and_cli_override(self) -> None:
+        environment = {COMMAND_TIMEOUT_ENVIRONMENT_VARIABLE: "75"}
+        self.assertEqual(parse_arguments([], environment).command_timeout_seconds, 75)
+        self.assertEqual(
+            parse_arguments(
+                ["--command-timeout-seconds", "90"], environment
+            ).command_timeout_seconds,
+            90,
+        )
+
+    def test_suite_command_uses_resolved_timeout(self) -> None:
+        suite = NativeCompilerSuite(
+            project_root=PROJECT_ROOT,
+            compiler=Path("zorb"),
+            environment={},
+            target="host-linux",
+            runtime_targets=[],
+            command_timeout_seconds=123,
+            frontend_only=True,
+            selected_case=None,
+        )
+        with patch("test_compiler.run_command") as run_command:
+            suite._run_command(["zorb", "check", "input.zorb"])
+        self.assertEqual(run_command.call_args.args[3], 123)
+
+    def test_unconsumed_exclusion_is_stale(self) -> None:
+        tracker = ExclusionTracker()
+        tracker.register("llvm:case", "reason")
+        with self.assertRaisesRegex(SuiteFailure, "stale native-suite exclusions"):
+            tracker.require_no_stale_exclusions()
+        tracker.consume("llvm:case")
+        tracker.require_no_stale_exclusions()
 
     def test_aarch64_runtime_expectations_fall_back_to_generic_values(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

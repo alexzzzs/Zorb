@@ -103,6 +103,9 @@ The runner bootstraps `build/zorb` from the pinned release seed when needed and
 does not require .NET. Pass `--compiler /path/to/zorb` to test an existing
 native compiler. Cross-platform CI supplies `--target` and one or more
 `--runtime-target` values for its host or cross-runtime lane.
+Individual compiler and runtime commands time out after 60 seconds by default;
+override that with `--command-timeout-seconds` or
+`ZORB_TEST_COMMAND_TIMEOUT_SECONDS` for slower hosts and emulators.
 
 `tests/native-suite-exclusions.json` records remaining recovery-to-native
 migration gaps. Each exclusion requires a reason and appears as `SKIP` output;
