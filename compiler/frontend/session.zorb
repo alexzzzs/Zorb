@@ -303,6 +303,86 @@ fn zsession_diagnostic_code(phase: i64, message: string) -> string {
     return "type.invalid"
 }
 
+fn zsession_warning_code(category: i64) -> string {
+    if category == ZAstWarningMixedSignednessComparison { return "type.mixed-signedness" }
+    if category == ZAstWarningPointerAlignment { return "pointer.suspicious-alignment" }
+    return "flow.unreachable"
+}
+
+fn zsession_warning_operator(op: i64) -> string {
+    if op == ZTokenEqualEqual { return "==" }
+    if op == ZTokenBangEqual { return "!=" }
+    if op == ZTokenGreater { return ">" }
+    if op == ZTokenLess { return "<" }
+    if op == ZTokenGreaterEqual { return ">=" }
+    if op == ZTokenLessEqual { return "<=" }
+    return "?"
+}
+
+fn zsession_warning_message(self: *ZFrontendSession, warning: ZAstWarning) !string {
+    if warning.category == ZAstWarningPointerAlignment {
+        return "Assigning &u8 to *u8 is valid, but the pointer is only guaranteed byte alignment; casting it to a wider pointer type may be misaligned."
+    }
+    if warning.category == ZAstWarningUnreachableStatement {
+        return "Unreachable statement."
+    }
+
+    builder: std.collections.StringBuilder = std.collections.StringBuilder.init(&self.heap, 192) catch |err| {
+        return error.OutOfMemory
+    }
+    left_signedness: string = "unsigned"
+    right_signedness: string = "unsigned"
+    if warning.left_type.len > 0 && warning.left_type.ptr[0] == 105 { left_signedness = "signed" }
+    if warning.right_type.len > 0 && warning.right_type.ptr[0] == 105 { right_signedness = "signed" }
+    std.collections.StringBuilder.append(&builder, &self.heap, "Comparison '") catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(&builder, &self.heap, zsession_warning_operator(warning.op)) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(&builder, &self.heap, "' mixes ") catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(&builder, &self.heap, left_signedness) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(&builder, &self.heap, " type '") catch |err| { return error.OutOfMemory }
+    left_type: []u8
+    left_type.ptr = warning.left_type.ptr
+    left_type.len = warning.left_type.len
+    std.collections.StringBuilder.append_slice(&builder, &self.heap, left_type) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(&builder, &self.heap, "' with ") catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(&builder, &self.heap, right_signedness) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(&builder, &self.heap, " type '") catch |err| { return error.OutOfMemory }
+    right_type: []u8
+    right_type.ptr = warning.right_type.ptr
+    right_type.len = warning.right_type.len
+    std.collections.StringBuilder.append_slice(&builder, &self.heap, right_type) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(
+        &builder,
+        &self.heap,
+        "'. The comparison uses the usual integer conversion rules."
+    ) catch |err| { return error.OutOfMemory }
+    return cast(string, std.collections.StringBuilder.c_string(&builder, &self.heap) catch |err| {
+        return error.OutOfMemory
+    })
+}
+
+fn zsession_report_warning(self: *ZFrontendSession, path: string, warning: ZAstWarning) !i64 {
+    message: string = zsession_warning_message(self, warning) catch |err| { return err }
+    source_index: i64 = ZSourceManager.find(&self.sources, path)
+    diagnostic: ZDiagnostic = ZDiagnostic{
+        severity: ZDiagnosticSeverityWarning,
+        phase: "semantic",
+        code: zsession_warning_code(warning.category),
+        message: message,
+        span: ZSourceSpan{
+            source: ZSourceId{ value: source_index },
+            line: warning.span.line,
+            column: warning.span.column,
+            length: warning.span.length
+        }
+    }
+    if self.machine_output {
+        ZDiagnostic.render_json(diagnostic, path)
+    } else {
+        ZDiagnostic.render_human(diagnostic, path)
+    }
+    return 0
+}
+
 fn zsession_report_span(self: *ZFrontendSession, path: string, phase: i64, line: i64, column: i64, length: i64, message: string) {
     code: string = zsession_diagnostic_code(phase, message)
     diagnostic: ZDiagnostic = ZDiagnostic{
@@ -471,6 +551,19 @@ fn zsession_check_file(self: *ZFrontendSession, path: string, missing_file_phase
             zsession_report_span(self, path, ZFrontendPhaseSemantic, line, column, length, message)
         }
         return 1
+    }
+
+    ZAstModule.collect_warnings(retained_module, &self.heap) catch |err| {
+        zsession_report(self, path, ZFrontendPhaseSemantic, 1, 1, "out of memory while collecting warnings")
+        return 1
+    }
+    warning_index: i64 = 0
+    while warning_index < retained_module.warning_count {
+        zsession_report_warning(self, path, retained_module.warnings[warning_index]) catch |err| {
+            zsession_report(self, path, ZFrontendPhaseSemantic, 1, 1, "out of memory while rendering warning")
+            return 1
+        }
+        warning_index = warning_index + 1
     }
 
     source_index: i64 = ZSourceManager.find(&self.sources, path)
