@@ -150,11 +150,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-
       - name: Install native ARM64 release toolchain
         run: |
           test "$(uname -m)" = "aarch64"
@@ -176,10 +171,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-
 
-      - name: Publish native ARM64 compiler
+      - name: Publish native ARM64 compiler without .NET
         run: |
+          mkdir -p "$RUNNER_TEMP/no-dotnet"
+          cat > "$RUNNER_TEMP/no-dotnet/dotnet" <<'EOF'
+          #!/usr/bin/env bash
+          echo "dotnet must not be used by the normal ARM64 bootstrap path" >&2
+          exit 97
+          EOF
+          chmod +x "$RUNNER_TEMP/no-dotnet/dotnet"
+          export PATH="$RUNNER_TEMP/no-dotnet:$PATH"
           set +e
-          python3 scripts/bootstrap_compiler.py publish "artifacts/compiler/linux-arm64" --recovery-csharp 2>&1 | tee "$RUNNER_TEMP/zorb-arm64-publisher.log"
+          python3 scripts/bootstrap_compiler.py publish "artifacts/compiler/linux-arm64" 2>&1 | tee "$RUNNER_TEMP/zorb-arm64-publisher.log"
           publisher_status=${PIPESTATUS[0]}
           set -e
           if [[ $publisher_status -ne 0 ]]; then
@@ -379,21 +382,7 @@ jobs:
       - name: Build Compiler
         run: dotnet build seed/csharp/Zorb.Compiler.csproj -c Release --no-restore
 
-      # v0.2.2's Windows backend was compiled for its release runner's native
-      # CPU. Build one baseline transition seed so this lane can still prove
-      # that the normal bootstrap path does not invoke dotnet.
-      - name: Build portable Windows transition seed
-        shell: pwsh
-        run: |
-          $transitionSeed = Join-Path $env:RUNNER_TEMP "zorb-windows-transition-seed.exe"
-          python scripts/bootstrap_compiler.py bootstrap $transitionSeed --recovery-csharp
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $transitionSeed -PathType Leaf)) {
-            throw "Portable Windows transition seed build failed with exit code $LASTEXITCODE."
-          }
-          "ZORB_WINDOWS_TRANSITION_SEED=$transitionSeed" |
-            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Build native fixture compiler
+      - name: Build native fixture compiler from released seed
         shell: pwsh
         run: |
           $nativeCompilerDir = Join-Path $env:RUNNER_TEMP "zorb-native-fixture"
@@ -406,7 +395,7 @@ jobs:
           "@ | Set-Content -LiteralPath (Join-Path $noDotnetDir "dotnet.cmd") -Encoding ASCII
           $env:PATH = "$noDotnetDir;$env:PATH"
           try {
-            python scripts/bootstrap_compiler.py publish $nativeCompilerDir --seed $env:ZORB_WINDOWS_TRANSITION_SEED
+            python scripts/bootstrap_compiler.py publish $nativeCompilerDir
             if ($LASTEXITCODE -ne 0) {
               throw "Windows native compiler publish failed with exit code $LASTEXITCODE."
             }
@@ -534,13 +523,30 @@ jobs:
 
       - name: Publish standalone compiler
         if: matrix.os == 'ubuntu-latest'
-        run: python3 scripts/bootstrap_compiler.py publish "artifacts/compiler/linux-x64"
+        run: |
+          mkdir -p "$RUNNER_TEMP/no-dotnet"
+          cat > "$RUNNER_TEMP/no-dotnet/dotnet" <<'EOF'
+          #!/usr/bin/env bash
+          echo "dotnet must not be used by the normal Linux bootstrap path" >&2
+          exit 97
+          EOF
+          chmod +x "$RUNNER_TEMP/no-dotnet/dotnet"
+          export PATH="$RUNNER_TEMP/no-dotnet:$PATH"
+          python3 scripts/bootstrap_compiler.py publish "artifacts/compiler/linux-x64"
 
       - name: Publish standalone compiler
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        # v0.2.2 is host-CPU-tuned; recovery creates the first baseline seed.
-        run: python scripts/bootstrap_compiler.py publish "artifacts/compiler/win-x64" --recovery-csharp
+        run: |
+          $noDotnetDir = Join-Path $env:RUNNER_TEMP "zorb-no-dotnet"
+          New-Item -ItemType Directory -Force -Path $noDotnetDir | Out-Null
+          @"
+          @echo off
+          echo dotnet must not be used by the normal Windows bootstrap path 1>&2
+          exit /b 97
+          "@ | Set-Content -LiteralPath (Join-Path $noDotnetDir "dotnet.cmd") -Encoding ASCII
+          $env:PATH = "$noDotnetDir;$env:PATH"
+          python scripts/bootstrap_compiler.py publish "artifacts/compiler/win-x64"
 
       - name: Record version metadata
         shell: bash

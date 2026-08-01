@@ -9,7 +9,8 @@ import zipfile
 from pathlib import Path
 
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from bootstrap_seed import (  # noqa: E402
@@ -27,6 +28,20 @@ def sha256(path: Path) -> str:
 
 
 class BootstrapSeedTests(unittest.TestCase):
+    def test_repository_manifest_covers_supported_hosts(self) -> None:
+        manifest = PROJECT_ROOT / "bootstrap/manifest.json"
+        expected_executables = {
+            "host-linux": "zorb",
+            "host-linux-aarch64": "zorb",
+            "host-windows": "zorb.exe",
+        }
+
+        for target, executable in expected_executables.items():
+            with self.subTest(target=target):
+                artifact = load_seed_artifact(manifest, target)
+                self.assertEqual("0.2.3", artifact.version)
+                self.assertEqual(executable, artifact.executable)
+
     def test_local_seed_requires_matching_checksum(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             artifact_dir = Path(temporary_dir)
