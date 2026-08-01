@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- The native frontend now emits non-fatal structured warnings with stable
+  codes for mixed-signedness comparisons, suspicious pointer alignment, and
+  unreachable statements after direct control transfer.
 - Normal compiler tests on Linux x64, Linux ARM64, Linux-to-ARM64 cross builds,
   and Windows x64 now run through a shared Python/native harness without
   installing or invoking .NET. Release version metadata is also read by Python

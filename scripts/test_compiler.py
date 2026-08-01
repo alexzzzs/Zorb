@@ -539,7 +539,11 @@ class NativeCompilerSuite:
             if checked.returncode != 0:
                 raise SuiteFailure(format_command_failure("native check rejected successful input", checked))
             warning_expectations = read_expectation_lines(case.path.parent / "expect-warnings.txt")
-            if warning_expectations:
+            native_warning_codes = read_expectation_lines(
+                case.path.parent / "expect-native-warning-codes.txt"
+            )
+            warning_assertions = [*warning_expectations, *native_warning_codes]
+            if warning_assertions:
                 if case.name in exclusions.warnings:
                     exclusion_key = f"warnings:{case.name}"
                     exclusion_reason = exclusions.warnings[case.name]
@@ -547,14 +551,14 @@ class NativeCompilerSuite:
                     diagnostics = self._normalized_diagnostics(case, checked)
                     missing_warnings = [
                         expected
-                        for expected in warning_expectations
+                        for expected in warning_assertions
                         if expected not in diagnostics
                     ]
                     if missing_warnings:
                         self.exclusion_tracker.consume(exclusion_key)
                         print(f"SKIP warning/{case.name}: {exclusion_reason}")
                 else:
-                    self._assert_warnings(case, checked, warning_expectations)
+                    self._assert_warnings(case, checked, warning_assertions)
             if self.frontend_only:
                 return
             target_exclusions = exclusions.llvm_by_target.get(self.target, {})

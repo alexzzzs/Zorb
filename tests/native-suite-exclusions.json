@@ -33,10 +33,5 @@
       "runtime_task_round_robin": "Native fiber context switching is not runtime-stable yet."
     }
   },
-  "warnings": {
-    "numeric_mixed_comparison_codegen": "Native structured warning emission has not been ported from recovery stage 0.",
-    "warning_pointer_alignment": "Native structured warning emission has not been ported from recovery stage 0.",
-    "warning_unreachable_after_loop_control": "Native structured warning emission has not been ported from recovery stage 0.",
-    "warning_unreachable_after_return": "Native structured warning emission has not been ported from recovery stage 0."
-  }
+  "warnings": {}
 }

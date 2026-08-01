@@ -40,10 +40,19 @@ export fn ZDiagnostic.render_human(self: ZDiagnostic, path: string) {
     std.io.eprint_i64(self.span.line)
     std.io.eprint(":")
     std.io.eprint_i64(self.span.column)
-    std.io.eprint(": error[")
-    std.io.eprint(self.code)
-    std.io.eprint("]: ")
+    if self.severity == ZDiagnosticSeverityWarning {
+        std.io.eprint(": warning: ")
+    } else {
+        std.io.eprint(": error[")
+        std.io.eprint(self.code)
+        std.io.eprint("]: ")
+    }
     std.io.eprint(self.message)
+    if self.severity == ZDiagnosticSeverityWarning {
+        std.io.eprint(" [")
+        std.io.eprint(self.code)
+        std.io.eprint("]")
+    }
     std.io.eprint("\n")
 }
 

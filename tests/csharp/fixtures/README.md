@@ -8,6 +8,7 @@ Optional expectation files:
 - `expect-phase.txt`
 - `expect-errors.txt`
 - `expect-warnings.txt`
+- `expect-native-warning-codes.txt`
 - `expect-llvm.txt`
 - `expect-llvm-linux.txt`
 - `expect-llvm-windows.txt`
@@ -43,6 +44,9 @@ catalog outcome rather than additional local phase values.
 
 `expect-errors.txt` and `expect-warnings.txt` contain diagnostic substrings, one
 per line. Blank lines and lines beginning with `#` are ignored.
+`expect-native-warning-codes.txt` contains stable warning codes emitted by the
+native frontend. It is separate because the C# recovery compiler retains its
+legacy prose-only warning contract.
 
 ## LLVM Assertions
 
