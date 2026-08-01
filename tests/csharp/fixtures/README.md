@@ -31,8 +31,15 @@ compiler must then emit non-empty, verified LLVM IR containing a target triple.
 
 ## Diagnostics
 
-`expect-phase.txt` may contain `success`, `parse`, or `semantic`. It defaults to
-`success`.
+The authoritative production outcome is the entry's `expected` field in
+`tests/csharp/frontend-parity.json`. It accepts `success`, `lexical-failure`,
+`parse-failure`, `import-failure`, or `semantic-failure`, and the Python runner
+compares it with the native structured diagnostic code.
+
+The fixture-local `expect-phase.txt` file belongs to the retained recovery
+harness. It may contain only `success`, `parse`, or `semantic` and defaults to
+`success`; lexical and missing-import normalization are represented by the
+catalog outcome rather than additional local phase values.
 
 `expect-errors.txt` and `expect-warnings.txt` contain diagnostic substrings, one
 per line. Blank lines and lines beginning with `#` are ignored.
@@ -89,12 +96,17 @@ The current parity bar for the LLVM backend is:
 From the repository root:
 
 ```bash
-dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj
+python scripts/test_compiler.py
 ```
 
-The suite requires a built `backend/llvm`. Set `ZORB_LLVM_BACKEND` when the
-backend is not discoverable beside the compiler or under the repository build
-directory.
+The runner bootstraps `build/zorb` from the pinned release seed when needed and
+does not require .NET. Pass `--compiler /path/to/zorb` to test an existing
+native compiler. Cross-platform CI supplies `--target` and one or more
+`--runtime-target` values for its host or cross-runtime lane.
+
+`tests/native-suite-exclusions.json` records remaining recovery-to-native
+migration gaps. Each exclusion requires a reason and appears as `SKIP` output;
+unknown or stale fixture names fail manifest validation.
 
 ## Adding A Fixture
 

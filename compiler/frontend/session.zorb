@@ -648,7 +648,8 @@ fn zsession_add_direct_import_exports(self: *ZFrontendSession, module: *ZAstModu
                         // private to their owning import edge, preventing a
                         // transitive `leaf.answer` re-export.
                         candidate_is_direct_or_unqualified_function: bool = !candidate.is_imported || ((candidate.kind == ZAstDeclFunction || candidate.kind == ZAstDeclExternFunction) && zsession_name_is_unqualified(candidate.name))
-                        if candidate.kind != ZAstDeclImport && (candidate.exported || importing_std_module || candidate.is_imported) && candidate_is_direct_or_unqualified_function {
+                        candidate_is_visible: bool = (candidate.exported && !candidate.is_imported) || (importing_std_module && candidate_is_direct_or_unqualified_function)
+                        if candidate.kind != ZAstDeclImport && candidate_is_visible {
                             candidate.canonical_name = candidate.name
                             candidate.name = zsession_imported_name(self, import_decl.alias, candidate.name) catch |err| {
                                 return err

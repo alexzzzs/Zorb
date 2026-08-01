@@ -1482,7 +1482,7 @@
       "path": "tests/csharp/fixtures/import_file_not_found/main.zorb",
       "classification": "differential",
       "feature": "imports.missing-source",
-      "expected": "semantic-failure",
+      "expected": "import-failure",
       "gate": "frontend",
       "reason": "Verified missing import normalization to the import-not-found category and import statement span."
     },

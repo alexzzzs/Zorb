@@ -19,11 +19,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-
       - name: Install runtime test toolchains
         run: |
           . /etc/os-release
@@ -57,14 +52,8 @@ jobs:
       - name: Test cross-platform bootstrap tooling
         run: python3 -m unittest discover -s tests/python -v
 
-      - name: Restore
-        run: dotnet restore tests/csharp/Zorb.Compiler.Tests.csproj
-
-      - name: Build Compiler
-        run: dotnet build seed/csharp/Zorb.Compiler.csproj -c Release --no-restore
-
-      - name: Run Fixture Suite
-        run: dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release
+      - name: Run native compiler suite without .NET
+        run: python3 scripts/test_compiler.py
 
   linux-aarch64-cross:
     name: linux-aarch64-cross
@@ -82,11 +71,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
 
       - name: Install AArch64 cross-runtime toolchains
         run: |
@@ -118,14 +102,11 @@ jobs:
           zig build test
           zig build -Dstatic-llvm=true -Dcxx-runtime="$(g++ -print-file-name=libstdc++.so)" -Doptimize=ReleaseSafe
 
-      - name: Restore
-        run: dotnet restore tests/csharp/Zorb.Compiler.Tests.csproj
-
-      - name: Build Compiler
-        run: dotnet build seed/csharp/Zorb.Compiler.csproj -c Release --no-restore
-
-      - name: Run Fixture Suite With AArch64 Lane
-        run: dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release
+      - name: Run native AArch64 cross-target suite without .NET
+        run: |
+          python3 scripts/test_compiler.py \
+            --target host-linux-aarch64 \
+            --runtime-target host-linux-aarch64
 
   linux-arm64-native-compiler:
     name: linux-arm64-native-compiler
@@ -206,6 +187,14 @@ jobs:
           test "$("$executable")" = "ok"
           test "$("$compiler" run tests/csharp/fixtures/runtime_hello_world/main.zorb --target host-linux-aarch64)" = "ok"
 
+      - name: Run native ARM64 compiler suite without .NET
+        run: |
+          python3 scripts/test_compiler.py \
+            --compiler artifacts/compiler/linux-arm64/zorb \
+            --target host-linux-aarch64 \
+            --runtime-target host-linux-aarch64 \
+            --no-bootstrap
+
       - name: Upload native ARM64 compiler artifact
         uses: actions/upload-artifact@v4
         with:
@@ -281,11 +270,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-
       - name: Install frontend bootstrap toolchains
         run: |
           . /etc/os-release
@@ -302,13 +286,8 @@ jobs:
           cd backend/llvm
           zig build -Dstatic-llvm=true -Dcxx-runtime="$(g++ -print-file-name=libstdc++.so)" -Doptimize=ReleaseSafe
 
-      - name: Restore and build stage 0
-        run: |
-          dotnet restore tests/csharp/Zorb.Compiler.Tests.csproj
-          dotnet build tests/csharp/Zorb.Compiler.Tests.csproj -c Release --no-restore
-
-      - name: Run native frontend parity gate
-        run: dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release --no-build
+      - name: Run native frontend outcome gate without .NET
+        run: python3 scripts/test_compiler.py --frontend-only
 
   windows-hosted-smoke:
     name: windows-hosted-x64
@@ -323,11 +302,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
 
       - name: Setup MSVC developer command prompt
         uses: ilammy/msvc-dev-cmd@v1
@@ -376,12 +350,6 @@ jobs:
           zig build test
           zig build "-Dllvm-prefix=$env:LLVM_PREFIX" "-Dllvm-lib-dir=$env:LLVM_LIB_DIR" "-Dllvm-library=LLVM-C" "-Doptimize=ReleaseSafe"
 
-      - name: Restore
-        run: dotnet restore tests/csharp/Zorb.Compiler.Tests.csproj
-
-      - name: Build Compiler
-        run: dotnet build seed/csharp/Zorb.Compiler.csproj -c Release --no-restore
-
       - name: Build native fixture compiler from released seed
         shell: pwsh
         run: |
@@ -419,8 +387,14 @@ jobs:
           "ZORB_NATIVE_FIXTURE_COMPILER=$nativeCompiler" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Run Fixture Suite
-        run: dotnet run --project tests/csharp/Zorb.Compiler.Tests.csproj --configuration Release
+      - name: Run native Windows compiler suite without .NET
+        shell: pwsh
+        run: |
+          python scripts/test_compiler.py `
+            --compiler "$env:ZORB_NATIVE_FIXTURE_COMPILER" `
+            --target host-windows `
+            --runtime-target host-windows `
+            --no-bootstrap
 
   publish-standalone:
     needs:
@@ -452,11 +426,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
 
       - name: Install release toolchain
         if: matrix.os == 'ubuntu-latest'
@@ -513,7 +482,7 @@ jobs:
             version="${GITHUB_REF_NAME#v}"
             informational_version="$version"
           else
-            base_version="$(dotnet msbuild seed/csharp/Zorb.Compiler.csproj -getProperty:Version -nologo -v:q | tail -n 1 | tr -d '\r')"
+            base_version="$(python scripts/project_version.py)"
             version="${base_version}.${GITHUB_RUN_NUMBER}"
             informational_version="${version}+${short_sha}"
           fi

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "llvm": {
+    "example_advanced_stress_pipeline": "The native lowerer does not yet lower this recovery stress example.",
+    "example_advanced_threads": "The native lowerer does not yet lower the recovery thread example."
+  },
+  "llvm_assertions": {
+    "generic_function_value_deferred_inference_codegen": "The legacy assertion pins recovery-compiler symbol spelling rather than the Backend IR contract.",
+    "numeric_mixed_comparison_codegen": "The legacy assertion pins recovery-compiler integer promotion details rather than runtime behavior."
+  },
+  "runtime": {
+    "runtime_async_many_waiters": "Native fiber context switching is not runtime-stable yet.",
+    "runtime_async_reinit_safe": "Native fiber context switching is not runtime-stable yet.",
+    "runtime_async_sample": "Native fiber context switching is not runtime-stable yet.",
+    "runtime_async_socket_wait": "Native fiber context switching is not runtime-stable yet.",
+    "runtime_async_wait_timeout": "Native fiber context switching is not runtime-stable yet.",
+    "runtime_task_many_yields": "Native fiber context switching is not runtime-stable yet.",
+    "runtime_task_round_robin": "Native fiber context switching is not runtime-stable yet."
+  },
+  "warnings": {
+    "numeric_mixed_comparison_codegen": "Native structured warning emission has not been ported from recovery stage 0.",
+    "warning_pointer_alignment": "Native structured warning emission has not been ported from recovery stage 0.",
+    "warning_unreachable_after_loop_control": "Native structured warning emission has not been ported from recovery stage 0.",
+    "warning_unreachable_after_return": "Native structured warning emission has not been ported from recovery stage 0."
+  }
+}
