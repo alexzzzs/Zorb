@@ -37,6 +37,8 @@ class CompilerRunnerTests(unittest.TestCase):
         exclusions = load_suite_exclusions(PROJECT_ROOT, cases)
         self.assertTrue(exclusions.runtime)
         self.assertTrue(all(exclusions.runtime.values()))
+        self.assertTrue(exclusions.runtime_by_target["host-linux"])
+        self.assertNotIn("host-windows", exclusions.runtime_by_target)
 
     def test_structured_diagnostic_codes_map_to_manifest_outcomes(self) -> None:
         self.assertEqual(expected_phase_from_code("lex.invalid-token"), "lexical-failure")

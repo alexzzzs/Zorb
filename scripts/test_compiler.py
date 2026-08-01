@@ -25,7 +25,14 @@ from typing import Callable, Iterable, Mapping, Sequence
 
 MANIFEST_VERSION = 2
 EXCLUSIONS_VERSION = 1
-EXCLUSION_SECTIONS = ("llvm", "llvm_by_target", "llvm_assertions", "runtime", "warnings")
+EXCLUSION_SECTIONS = (
+    "llvm",
+    "llvm_by_target",
+    "llvm_assertions",
+    "runtime",
+    "runtime_by_target",
+    "warnings",
+)
 SUPPORTED_TARGETS = {
     "host-linux",
     "freestanding-linux",
@@ -86,6 +93,7 @@ class SuiteExclusions:
     llvm_by_target: dict[str, dict[str, str]]
     llvm_assertions: dict[str, str]
     runtime: dict[str, str]
+    runtime_by_target: dict[str, dict[str, str]]
     warnings: dict[str, str]
 
 
@@ -278,6 +286,7 @@ def load_suite_exclusions(project_root: Path, cases: Sequence[FixtureCase]) -> S
         llvm_by_target=read_target_section("llvm_by_target"),
         llvm_assertions=read_section("llvm_assertions"),
         runtime=read_section("runtime"),
+        runtime_by_target=read_target_section("runtime_by_target"),
         warnings=read_section("warnings"),
     )
 
@@ -637,10 +646,13 @@ class NativeCompilerSuite:
                 if not has_runtime_expectation(case.path.parent, target):
                     continue
                 name = f"runtime/{target}/{case.name}"
+                exclusion_reason = exclusions.runtime.get(case.name) or (
+                    exclusions.runtime_by_target.get(target, {}).get(case.name)
+                )
                 self._run_named(
                     name,
-                    lambda case=case, target=target: self._test_runtime_from_files(
-                        case, target, output_root, exclusions.runtime.get(case.name)
+                    lambda case=case, target=target, exclusion_reason=exclusion_reason: self._test_runtime_from_files(
+                        case, target, output_root, exclusion_reason
                     ),
                 )
 
@@ -654,7 +666,7 @@ class NativeCompilerSuite:
         expectation = load_runtime_expectation(case.path.parent, target)
         if expectation is None:
             raise SuiteFailure("runtime expectation disappeared while running the suite")
-        exclusion_key = f"runtime:{case.name}"
+        exclusion_key = f"runtime:{target}:{case.name}"
         if exclusion_reason is not None:
             self.exclusion_tracker.register(exclusion_key, exclusion_reason)
         try:
