@@ -1,1 +1,1 @@
-main.zorb:4:11: warning: Casting *u8 to **u8 may cause crashes if the address is not 8-byte aligned.
+main.zorb:4:11: warning: Assigning &u8 to *u8 is valid, but the pointer is only guaranteed byte alignment; casting it to a wider pointer type may be misaligned.

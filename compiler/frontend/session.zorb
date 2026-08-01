@@ -321,7 +321,7 @@ fn zsession_warning_operator(op: i64) -> string {
 
 fn zsession_warning_message(self: *ZFrontendSession, warning: ZAstWarning) !string {
     if warning.category == ZAstWarningPointerAlignment {
-        return "Casting *u8 to **u8 may cause crashes if the address is not 8-byte aligned. Consider using mem.Align64 first."
+        return "Assigning &u8 to *u8 is valid, but the pointer is only guaranteed byte alignment; casting it to a wider pointer type may be misaligned."
     }
     if warning.category == ZAstWarningUnreachableStatement {
         return "Unreachable statement."

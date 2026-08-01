@@ -57,7 +57,7 @@ public partial class TypeChecker
         {
             if (assign.Value is UnaryExpr unary && unary.Operator == "&")
             {
-                _errors.Warning(assign.Value, "Casting *u8 to **u8 may cause crashes if the address is not 8-byte aligned. Consider using mem.Align64 first.");
+                _errors.Warning(assign.Value, "Assigning &u8 to *u8 is valid, but the pointer is only guaranteed byte alignment; casting it to a wider pointer type may be misaligned.");
             }
         }
     }
