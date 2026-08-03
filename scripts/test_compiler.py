@@ -725,7 +725,7 @@ class NativeCompilerSuite:
             result = self._run_command(
                 [self.compiler, "build", source, "--output-kind", "llvm-ir", "-o", output],
             )
-            expected_prefix = f"{source}:"
+            expected_prefix = f"{source.as_posix()}:"
             expected_code_text = f"error[{expected_code}]"
             if (
                 result.returncode != 1
