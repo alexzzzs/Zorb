@@ -1,0 +1,117 @@
+param(
+    [string]$Version = "21.1.8",
+    [string]$ExpectedSha256 = "7a5386c26497db1691f320121e5b113364dd0274b98e55f15f4dbc00c0450113",
+    [int]$MaxDownloadAttempts = 4
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+if (-not $IsWindows) {
+    throw "The LLVM Windows installer can only run on Windows."
+}
+if ($MaxDownloadAttempts -lt 1) {
+    throw "MaxDownloadAttempts must be at least 1."
+}
+
+$InstallRoot = Join-Path $env:ProgramFiles "LLVM"
+$LlvmConfig = Join-Path $InstallRoot "bin/llvm-config.exe"
+$ExpectedVersion = $Version
+
+function Get-LlvmVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LlvmConfigPath
+    )
+
+    $VersionOutput = & $LlvmConfigPath --version
+    $VersionExitCode = $LASTEXITCODE
+    if ($VersionExitCode -ne 0 -or $null -eq $VersionOutput) {
+        return ""
+    }
+    return ([string]$VersionOutput).Trim()
+}
+
+function Find-LlvmCLibrary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LlvmRoot
+    )
+
+    return Get-ChildItem -Path $LlvmRoot -Filter LLVM-C.lib -Recurse -File -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+}
+
+if (Test-Path $LlvmConfig) {
+    $InstalledVersion = Get-LlvmVersion -LlvmConfigPath $LlvmConfig
+    $LlvmCLibrary = Find-LlvmCLibrary -LlvmRoot $InstallRoot
+    if ($InstalledVersion -eq $ExpectedVersion -and $null -ne $LlvmCLibrary) {
+        Write-Host "LLVM $InstalledVersion is already installed at $InstallRoot."
+        exit 0
+    }
+}
+
+$AssetName = "LLVM-$Version-win64.exe"
+$AssetUrl = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$Version/$AssetName"
+$TempRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [System.IO.Path]::GetTempPath() }
+$InstallerPath = Join-Path $TempRoot $AssetName
+
+function Invoke-DownloadWithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+        [Parameter(Mandatory = $true)]
+        [string]$OutFile,
+        [Parameter(Mandatory = $true)]
+        [int]$Attempts
+    )
+
+    for ($Attempt = 1; $Attempt -le $Attempts; $Attempt += 1) {
+        try {
+            Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+            Write-Host "Downloading $Uri (attempt $Attempt of $Attempts)..."
+            Invoke-WebRequest -Uri $Uri -OutFile $OutFile
+            return
+        }
+        catch {
+            if ($Attempt -eq $Attempts) {
+                throw
+            }
+            $DelaySeconds = [Math]::Pow(2, $Attempt)
+            Write-Warning "LLVM download failed: $($_.Exception.Message). Retrying in $DelaySeconds seconds."
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+}
+
+try {
+    Invoke-DownloadWithRetry -Uri $AssetUrl -OutFile $InstallerPath -Attempts $MaxDownloadAttempts
+
+    $ActualSha256 = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($ActualSha256 -ne $ExpectedSha256.ToLowerInvariant()) {
+        throw "LLVM installer checksum mismatch. Expected $ExpectedSha256, got $ActualSha256."
+    }
+
+    $Install = Start-Process -FilePath $InstallerPath -ArgumentList "/S" -Wait -PassThru
+    if ($Install.ExitCode -ne 0 -and $Install.ExitCode -ne 3010) {
+        throw "LLVM installer failed with exit code $($Install.ExitCode)."
+    }
+
+    if (-not (Test-Path $LlvmConfig)) {
+        throw "LLVM installation did not create $LlvmConfig."
+    }
+    $InstalledVersion = Get-LlvmVersion -LlvmConfigPath $LlvmConfig
+    if ($InstalledVersion -ne $ExpectedVersion) {
+        throw "Expected LLVM $ExpectedVersion at $InstallRoot, found '$InstalledVersion'."
+    }
+
+    $LlvmCLibrary = Find-LlvmCLibrary -LlvmRoot $InstallRoot
+    if ($null -eq $LlvmCLibrary) {
+        throw "LLVM installation did not provide LLVM-C.lib under $InstallRoot."
+    }
+
+    Write-Host "Installed LLVM $InstalledVersion at $InstallRoot."
+}
+finally {
+    Remove-Item -LiteralPath $InstallerPath -Force -ErrorAction SilentlyContinue
+}
