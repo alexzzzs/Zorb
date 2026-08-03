@@ -345,45 +345,29 @@ test "parse and validate scalar module" {
 }
 
 test "functions report operations lowered through inline assembly" {
-    for ([_]InstructionOp{ .inline_asm, .syscall, .process_exit }) |op| {
-        const instructions = [_]Instruction{
-            .{ .id = 1, .op = op, .type = 1 },
-        };
-        const blocks = [_]Block{
-            .{
-                .id = 1,
-                .name = "entry",
-                .instructions = &instructions,
-                .terminator = .{ .op = .return_void },
-            },
-        };
-        const function = Function{
-            .id = 1,
-            .name = "inline_asm_boundary",
-            .return_type = 1,
-            .blocks = &blocks,
-        };
-
-        try std.testing.expect(function.containsInlineAsm());
-    }
-
-    const plain_instructions = [_]Instruction{
-        .{ .id = 1, .op = .integer_constant, .type = 1 },
+    var instructions = [_]Instruction{
+        .{ .id = 1, .op = .inline_asm, .type = 1 },
     };
-    const plain_blocks = [_]Block{
+    const blocks = [_]Block{
         .{
             .id = 1,
             .name = "entry",
-            .instructions = &plain_instructions,
+            .instructions = &instructions,
             .terminator = .{ .op = .return_void },
         },
     };
-    const plain_function = Function{
+    const function = Function{
         .id = 1,
-        .name = "plain_function",
+        .name = "inline_asm_boundary",
         .return_type = 1,
-        .blocks = &plain_blocks,
+        .blocks = &blocks,
     };
 
-    try std.testing.expect(!plain_function.containsInlineAsm());
+    for ([_]InstructionOp{ .inline_asm, .syscall, .process_exit }) |op| {
+        instructions[0].op = op;
+        try std.testing.expect(function.containsInlineAsm());
+    }
+
+    instructions[0].op = .integer_constant;
+    try std.testing.expect(!function.containsInlineAsm());
 }
