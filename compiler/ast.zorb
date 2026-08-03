@@ -175,6 +175,10 @@ export struct ZAstStmt {
 export struct ZAstDecl {
     kind: i64,
     span: ZAstSpan,
+    // Set when source modules are flattened for graph-wide lowering. Keeping
+    // source ownership beside the declaration lets later compiler phases
+    // report an imported declaration against its defining file.
+    source_index: i64,
     exported: bool,
     name: ZAstText,
     path: ZAstText,
@@ -925,6 +929,7 @@ export fn ZAstDecl.init(kind: i64, exported: bool) -> ZAstDecl {
     return ZAstDecl{
         kind: kind,
         span: ZAstSpan.empty(),
+        source_index: ZAstNoIndex,
         exported: exported,
         name: ZAstText.empty(),
         path: ZAstText.empty(),

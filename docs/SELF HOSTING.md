@@ -41,6 +41,13 @@ has focused native self-check fixtures for aggregate types, control flow,
 errors, generics, globals, casts, function values, builtins, and platform
 branches.
 
+Backend IR failures attributable to checked source use the same structured
+record and source ownership as frontend diagnostics. Unsupported source
+constructs use `lower.unsupported`; compiler invariant failures discovered near
+a source construct use `lower.internal`. Allocation failures and failures that
+cannot be tied to source remain operational errors instead of being presented
+as user mistakes.
+
 The differential gate covers all 374 catalog inputs that are eligible for
 cross-frontend comparison, including successful programs and lexical, parse,
 import, and semantic failures. For failures it compares phase, stable code,

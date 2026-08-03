@@ -9,6 +9,7 @@ import "../ast.zorb"
 import "../backend-ir/lowering.zorb"
 import "../backend-ir/model.zorb"
 import "../backend-ir/serialization.zorb"
+import "../frontend/diagnostic.zorb"
 import "../frontend/session.zorb"
 
 extern fn zorb_llvm_emit_file(path: *u8) -> i32
@@ -196,10 +197,20 @@ fn zorb_compile(
     }
     target: ZBackendIrTarget = ZBackendIrTarget.init(target_triple)
     target.optimize = optimize
+    lowering_diagnostic: ZDiagnostic = ZDiagnostic.empty()
     module: ZBackendIrModule = ZBackendIrLowering.lower_module(
-        &session.heap, lowering_ast, input, target, backend_kind, backend_output
+        &session.heap, lowering_ast, input, target, backend_kind, backend_output,
+        &lowering_diagnostic
     ) catch |err| {
-        std.io.eprint("zorb: backend IR lowering failed\n")
+        if ZDiagnostic.is_present(lowering_diagnostic) {
+            ZFrontendSession.emit_diagnostic(&session, lowering_diagnostic, input)
+        } else if err == error.OutOfMemory {
+            std.io.eprint("zorb: out of memory during backend IR lowering\n")
+        } else {
+            std.io.eprint("zorb: internal compiler error during backend IR lowering (error ")
+            std.io.eprint_i64(err)
+            std.io.eprint(")\n")
+        }
         ZFrontendSession.deinit(&session)
         return 1
     }

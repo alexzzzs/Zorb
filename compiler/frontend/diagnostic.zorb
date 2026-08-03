@@ -24,6 +24,25 @@ export struct ZDiagnostic {
     span: ZSourceSpan
 }
 
+export fn ZDiagnostic.empty() -> ZDiagnostic {
+    return ZDiagnostic{
+        severity: ZDiagnosticSeverityError,
+        phase: "",
+        code: "",
+        message: "",
+        span: ZSourceSpan{
+            source: ZSourceId{ value: -1 },
+            line: 1,
+            column: 1,
+            length: 1
+        }
+    }
+}
+
+export fn ZDiagnostic.is_present(self: ZDiagnostic) -> bool {
+    return std.str.len(self.code) > 0
+}
+
 export fn ZDiagnostic.write_json_bytes(ptr: *u8, length: i64) {
     ZJson.write_bytes(ptr, length)
 }
