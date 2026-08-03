@@ -64,6 +64,25 @@ export fn ZFrontendSession.set_serialization_mode(self: *ZFrontendSession, mode:
     }
 }
 
+// Later compiler phases produce the same structured record as the frontend.
+// The session remains responsible for resolving source identity and choosing
+// human or JSON presentation.
+export fn ZFrontendSession.emit_diagnostic(self: *ZFrontendSession, diagnostic: ZDiagnostic, fallback_path: string) {
+    path: string = fallback_path
+    source_index: i64 = diagnostic.span.source.value
+    if source_index >= 0 && source_index < self.sources.len {
+        path = self.sources.files[source_index].path
+    }
+    if self.machine_output {
+        ZDiagnostic.render_json(diagnostic, path)
+    } else {
+        ZDiagnostic.render_human(diagnostic, path)
+    }
+    if diagnostic.severity == ZDiagnosticSeverityError {
+        self.diagnostics = self.diagnostics + 1
+    }
+}
+
 // Lowering starts only after a successful graph check. The first retained
 // source is always the entry file; imported modules follow it in discovery
 // order and remain available through the session for later lowering slices.
@@ -124,8 +143,9 @@ fn zsession_copy_literal_field(destination: *ZAstLiteralField, source: *ZAstLite
     destination[0].value_expr = zsession_rebase_index(destination[0].value_expr, expression_base)
 }
 
-fn zsession_copy_declaration(destination: *ZAstDecl, source: *ZAstDecl, type_base: i64, generic_base: i64, param_base: i64, member_base: i64, statement_base: i64, expression_base: i64) {
+fn zsession_copy_declaration(destination: *ZAstDecl, source: *ZAstDecl, source_index: i64, type_base: i64, generic_base: i64, param_base: i64, member_base: i64, statement_base: i64, expression_base: i64) {
     destination[0] = source[0]
+    destination[0].source_index = source_index
     destination[0].type_index = zsession_rebase_index(destination[0].type_index, type_base)
     destination[0].return_type_index = zsession_rebase_index(destination[0].return_type_index, type_base)
     destination[0].init_expr = zsession_rebase_index(destination[0].init_expr, expression_base)
@@ -258,7 +278,7 @@ export fn ZFrontendSession.lowering_module(self: *ZFrontendSession) !*ZAstModule
         }
         index = 0
         while index < source.len {
-            zsession_copy_declaration(&result.decls[result.len], &source.decls[index], type_base, generic_base, param_base, member_base, statement_base, expression_base)
+            zsession_copy_declaration(&result.decls[result.len], &source.decls[index], source_index, type_base, generic_base, param_base, member_base, statement_base, expression_base)
             result.len = result.len + 1
             if !source.decls[index].is_imported {
                 if result.decls[result.len - 1].kind == ZAstDeclExternFunction {

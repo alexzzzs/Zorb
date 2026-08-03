@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Native Backend IR lowering failures now retain the defining source file and
+  span and emit structured `lower.unsupported` or `lower.internal`
+  diagnostics. Allocation failures remain operational errors rather than
+  source diagnostics.
 - The native frontend now emits non-fatal structured warnings with stable
   codes for mixed-signedness comparisons, suspicious pointer alignment, and
   unreachable statements after direct control transfer.

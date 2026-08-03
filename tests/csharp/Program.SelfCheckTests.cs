@@ -64,6 +64,8 @@ internal static partial class Program
         var backendIrFunctionValuesInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_function_values.zorb");
         var backendIrBuiltinsPlatformInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_builtins_platform.zorb");
         var backendIrGenericsInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "backend_ir_generics.zorb");
+        var stressPipelineInput = Path.Combine(projectRoot, "examples", "advanced", "stress_pipeline.zorb");
+        var threadsInput = Path.Combine(projectRoot, "examples", "advanced", "threads.zorb");
         var invalidForUpdateInput = Path.Combine(projectRoot, "compiler", "self-check", "fixtures", "for_update_declaration_invalid.zorb");
 
         WithTempDirectory("zorb-self-check-tests", tempDir =>
@@ -95,6 +97,10 @@ internal static partial class Program
             AssertSelfCheckResult(binaryPath, projectRoot, [aliasedImportInput], 0, "self-check succeeded:", null);
             AssertSelfCheckResult(binaryPath, projectRoot, [aliasedEnumImportInput], 0, "self-check succeeded:", null);
             AssertSelfCheckResult(binaryPath, projectRoot, [canonicalImportInput], 0, "self-check succeeded:", null);
+            AssertNativeLoweringDiagnostic(
+                binaryPath, projectRoot, tempDir, stressPipelineInput, "lower.internal");
+            AssertNativeLoweringDiagnostic(
+                binaryPath, projectRoot, tempDir, threadsInput, "lower.unsupported");
             AssertSelfCheckResult(binaryPath, projectRoot, [privateImportInput], 1, null, "error[name.unknown]");
             AssertSelfCheckResult(binaryPath, projectRoot, [transitiveImportInput], 0, "self-check succeeded:", null);
             AssertSelfCheckResult(binaryPath, projectRoot, [cycleInput], 0, "self-check succeeded:", null);
@@ -1650,6 +1656,39 @@ internal static partial class Program
         {
             throw new Exception($"zorb-self-check did not emit one valid JSON object: {ex.Message}\nActual stdout:\n{execution.StdOut}".Trim());
         }
+    }
+
+    private static void AssertNativeLoweringDiagnostic(
+        string binaryPath,
+        string workingDirectory,
+        string tempDirectory,
+        string inputPath,
+        string expectedCode)
+    {
+        var outputPath = Path.Combine(tempDirectory, $"{Path.GetFileNameWithoutExtension(inputPath)}-diagnostic.ll");
+        var execution = RunProcessWithTimeoutArgs(
+            binaryPath,
+            ["--emit-backend-ir", GetNativeLlvmTriple(), outputPath, inputPath],
+            workingDirectory,
+            TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
+
+        if (execution.ExitCode != 1)
+            throw new Exception($"native lowering diagnostic expected exit code 1, got {execution.ExitCode}.\n{execution.StdErr}{execution.StdOut}".Trim());
+        if (!string.IsNullOrWhiteSpace(execution.StdErr))
+            throw new Exception($"native lowering diagnostic wrote to stderr.\n{execution.StdErr}".Trim());
+        if (File.Exists(outputPath))
+            throw new Exception($"native lowering diagnostic created output '{outputPath}'.");
+
+        using var document = System.Text.Json.JsonDocument.Parse(execution.StdOut.Trim());
+        var diagnostic = document.RootElement;
+        if (diagnostic.GetProperty("kind").GetString() != "diagnostic" ||
+            diagnostic.GetProperty("phase").GetString() != "lower" ||
+            diagnostic.GetProperty("code").GetString() != expectedCode ||
+            diagnostic.GetProperty("file").GetString() != inputPath ||
+            diagnostic.GetProperty("line").GetInt64() < 1 ||
+            diagnostic.GetProperty("column").GetInt64() < 1 ||
+            diagnostic.GetProperty("length").GetInt64() < 1)
+            throw new Exception($"native lowering emitted an invalid structured diagnostic.\n{execution.StdOut}".Trim());
     }
 
     private static void AssertSelfCheckAstHasNoUnknownKinds(

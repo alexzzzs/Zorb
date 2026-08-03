@@ -3,6 +3,7 @@ import "../../runtime/std/collections.zorb"
 import "../../runtime/std/mem.zorb"
 import "../../runtime/std/str.zorb"
 import "../ast.zorb"
+import "../frontend/diagnostic.zorb"
 import "../token.zorb"
 import "model.zorb"
 
@@ -15,6 +16,86 @@ const ZBACKEND_IR_INITIAL_TYPE_CAPACITY: i64 = 16
 // may materialize a temporary alloca/store for a non-addressable array value.
 const ZBACKEND_IR_CONTEXTUAL_COERCION_INSTRUCTION_OVERHEAD: i64 = 6
 const ZBACKEND_IR_MAX_CONSTANT_EVALUATION_DEPTH: i64 = 64
+
+fn zbackend_ir_set_diagnostic(
+    diagnostic: *ZDiagnostic,
+    declaration: ZAstDecl,
+    span: ZAstSpan,
+    code: string,
+    message: string
+) {
+    if ZDiagnostic.is_present(diagnostic[0]) { return }
+    diagnostic[0] = ZDiagnostic{
+        severity: ZDiagnosticSeverityError,
+        phase: "lower",
+        code: code,
+        message: message,
+        span: ZSourceSpan{
+            source: ZSourceId{ value: declaration.source_index },
+            line: span.line,
+            column: span.column,
+            length: span.length
+        }
+    }
+}
+
+fn zbackend_ir_internal_message(err: i64) -> string {
+    if err == error.InvalidArgument {
+        return "internal compiler invariant failed: Backend IR lowering received an invalid argument"
+    }
+    if err == error.OutOfBounds {
+        return "internal compiler invariant failed: Backend IR lowering accessed an out-of-bounds compiler arena"
+    }
+    if err == error.Overflow {
+        return "internal compiler invariant failed: Backend IR lowering overflowed an internal value"
+    }
+    return "internal compiler error during Backend IR lowering"
+}
+
+fn zbackend_ir_set_failure_diagnostic(
+    diagnostic: *ZDiagnostic,
+    declaration: ZAstDecl,
+    span: ZAstSpan,
+    err: i64,
+    unsupported_message: string
+) {
+    if err == error.OutOfMemory { return }
+    if err == error.NotImplemented {
+        zbackend_ir_set_diagnostic(
+            diagnostic, declaration, span, "lower.unsupported", unsupported_message
+        )
+        return
+    }
+    zbackend_ir_set_diagnostic(
+        diagnostic,
+        declaration,
+        span,
+        "lower.internal",
+        zbackend_ir_internal_message(err)
+    )
+}
+
+fn zbackend_ir_set_module_failure_diagnostic(
+    diagnostic: *ZDiagnostic,
+    ast: *ZAstModule,
+    err: i64
+) {
+    declaration_index: i64 = 0
+    while declaration_index < ast.len {
+        declaration: ZAstDecl = ast.decls[declaration_index]
+        if !declaration.is_imported {
+            zbackend_ir_set_failure_diagnostic(
+                diagnostic,
+                declaration,
+                declaration.span,
+                err,
+                "backend IR lowering does not support a type or declaration in this module"
+            )
+            return
+        }
+        declaration_index = declaration_index + 1
+    }
+}
 
 struct ZBackendIrTypeLayout {
     allocator: *std.mem.HeapAllocator,
@@ -6890,7 +6971,8 @@ fn zbackend_ir_cfg_lower_function(
     function_id: i64,
     function_name: string,
     parameters: *ZBackendIrParameter,
-    type_layout: *ZBackendIrTypeLayout
+    type_layout: *ZBackendIrTypeLayout,
+    diagnostic: *ZDiagnostic
 ) !ZBackendIrFunction {
     // Catch error bindings are scoped locals but are not counted as source
     // variable declarations. The statement arena is a safe upper bound for
@@ -6980,7 +7062,21 @@ fn zbackend_ir_cfg_lower_function(
     zbackend_ir_cfg_push_scope(&context) catch |err| { return err }
     zbackend_ir_cfg_lower_sequence(
         &context, declaration.stmt_start, declaration.stmt_start + declaration.stmt_count
-    ) catch |err| { return err }
+    ) catch |err| {
+        span: ZAstSpan = declaration.span
+        if context.current_statement_index >= declaration.stmt_start &&
+            context.current_statement_index < declaration.stmt_start + declaration.stmt_count {
+            span = ast.stmts[context.current_statement_index].span
+        }
+        zbackend_ir_set_failure_diagnostic(
+            diagnostic,
+            declaration,
+            span,
+            err,
+            "backend IR lowering does not support a source construct in this statement"
+        )
+        return err
+    }
     zbackend_ir_cfg_pop_scope(&context) catch |err| { return err }
     if context.current_block >= 0 {
         if !context.returns_void { return error.NotImplemented }
@@ -7025,7 +7121,8 @@ fn zbackend_ir_lower_function(
     function_id: i64,
     type_layout: *ZBackendIrTypeLayout,
     generic_declaration_index: i64,
-    generic_suffix: ZAstText
+    generic_suffix: ZAstText,
+    diagnostic: *ZDiagnostic
 ) !ZBackendIrFunction {
     previous_generic_declaration: i64 = type_layout.active_generic_declaration
     previous_generic_suffix: ZAstText = type_layout.active_generic_suffix
@@ -7095,8 +7192,17 @@ fn zbackend_ir_lower_function(
     }
 
     result: ZBackendIrFunction = zbackend_ir_cfg_lower_function(
-        allocator, ast, declaration, function_id, function_name, parameters, type_layout
-    ) catch |err| { return err }
+        allocator, ast, declaration, function_id, function_name, parameters, type_layout, diagnostic
+    ) catch |err| {
+        zbackend_ir_set_failure_diagnostic(
+            diagnostic,
+            declaration,
+            declaration.span,
+            err,
+            "backend IR lowering does not support this function declaration"
+        )
+        return err
+    }
     type_layout.active_generic_declaration = previous_generic_declaration
     type_layout.active_generic_suffix = previous_generic_suffix
     return result
@@ -7351,13 +7457,17 @@ export fn ZBackendIrLowering.lower_module(
     module_name: string,
     target: ZBackendIrTarget,
     output_kind: string,
-    output_path: string
+    output_path: string,
+    diagnostic: *ZDiagnostic
 ) !ZBackendIrModule {
     concrete_function_count: i64 = zbackend_ir_function_count(ast)
     global_count: i64 = zbackend_ir_global_count(ast)
     type_layout: ZBackendIrTypeLayout = zbackend_ir_module_type_layout(
         allocator, ast, target.triple
-    ) catch |err| { return err }
+    ) catch |err| {
+        zbackend_ir_set_module_failure_diagnostic(diagnostic, ast, err)
+        return err
+    }
     function_capacity: i64 = concrete_function_count + ast.expr_count
     functions: *ZBackendIrFunction = cast(*ZBackendIrFunction, 0)
     if function_capacity > 0 {
@@ -7382,7 +7492,16 @@ export fn ZBackendIrLowering.lower_module(
             !declaration.is_imported {
             globals[global_index] = zbackend_ir_lower_global(
                 allocator, ast, declaration, global_index + 1, &type_layout
-            ) catch |err| { return err }
+            ) catch |err| {
+                zbackend_ir_set_failure_diagnostic(
+                    diagnostic,
+                    declaration,
+                    declaration.span,
+                    err,
+                    "backend IR lowering does not support this global declaration"
+                )
+                return err
+            }
             global_index = global_index + 1
         }
         if (declaration.kind == ZAstDeclFunction || declaration.kind == ZAstDeclExternFunction) &&
@@ -7395,8 +7514,18 @@ export fn ZBackendIrLowering.lower_module(
                 function_index + 1,
                 &type_layout,
                 ZAstNoIndex,
-                ZAstText.empty()
-            ) catch |err| { return err }
+                ZAstText.empty(),
+                diagnostic
+            ) catch |err| {
+                zbackend_ir_set_failure_diagnostic(
+                    diagnostic,
+                    declaration,
+                    declaration.span,
+                    err,
+                    "backend IR lowering does not support this function declaration"
+                )
+                return err
+            }
             function_index = function_index + 1
         }
         declaration_index = declaration_index + 1
@@ -7411,8 +7540,19 @@ export fn ZBackendIrLowering.lower_module(
             function_index + 1,
             &type_layout,
             instance_declaration_index,
-            type_layout.generic_instance_suffixes[instance_index]
-        ) catch |err| { return err }
+            type_layout.generic_instance_suffixes[instance_index],
+            diagnostic
+        ) catch |err| {
+            instance_declaration: ZAstDecl = ast.decls[instance_declaration_index]
+            zbackend_ir_set_failure_diagnostic(
+                diagnostic,
+                instance_declaration,
+                instance_declaration.span,
+                err,
+                "backend IR lowering does not support this generic function instance"
+            )
+            return err
+        }
         function_index = function_index + 1
         instance_index = instance_index + 1
     }

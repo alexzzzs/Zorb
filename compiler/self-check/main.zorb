@@ -1,4 +1,5 @@
 import "../../runtime/std/io.zorb"
+import "../../runtime/std/errors.zorb"
 import "../../runtime/std/process.zorb"
 import "../../runtime/std/str.zorb"
 import "../frontend/diagnostic.zorb"
@@ -54,17 +55,25 @@ fn zself_emit_backend_ir(target_triple: string, output_path: string, entry: stri
         ZFrontendSession.deinit(&session)
         return ZORB_SELF_CHECK_FAILURE_EXIT
     }
+    lowering_diagnostic: ZDiagnostic = ZDiagnostic.empty()
     module: ZBackendIrModule = ZBackendIrLowering.lower_module(
         &session.heap,
         lowering_ast,
         entry,
         target,
         "llvm_ir",
-        output_path
+        output_path,
+        &lowering_diagnostic
     ) catch |err| {
-        std.io.eprint("native backend IR lowering does not support this source yet\n")
-        std.io.eprint_i64(err)
-        std.io.eprint("\n")
+        if ZDiagnostic.is_present(lowering_diagnostic) {
+            ZFrontendSession.emit_diagnostic(&session, lowering_diagnostic, entry)
+        } else if err == error.OutOfMemory {
+            std.io.eprint("out of memory during native backend IR lowering\n")
+        } else {
+            std.io.eprint("internal compiler error during native backend IR lowering (error ")
+            std.io.eprint_i64(err)
+            std.io.eprint(")\n")
+        }
         ZFrontendSession.deinit(&session)
         return ZORB_SELF_CHECK_FAILURE_EXIT
     }

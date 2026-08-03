@@ -714,6 +714,32 @@ class NativeCompilerSuite:
                 f"stderr mismatch\nexpected: {expectation.stderr!r}\nactual:   {actual_stderr!r}"
             )
 
+    def _test_lowering_diagnostic_contract(self, output_root: Path) -> None:
+        cases = (
+            ("stress_pipeline.zorb", "lower.internal"),
+            ("threads.zorb", "lower.unsupported"),
+        )
+        for source_name, expected_code in cases:
+            source = self.project_root / "examples/advanced" / source_name
+            output = output_root / f"diagnostic-{source.stem}.ll"
+            result = self._run_command(
+                [self.compiler, "build", source, "--output-kind", "llvm-ir", "-o", output],
+            )
+            expected_prefix = f"{source}:"
+            expected_code_text = f"error[{expected_code}]"
+            if (
+                result.returncode != 1
+                or expected_prefix not in result.stderr
+                or expected_code_text not in result.stderr
+                or result.stdout
+                or output.exists()
+            ):
+                raise SuiteFailure(
+                    format_command_failure(
+                        f"native lowering did not emit {expected_code}", result
+                    )
+                )
+
     def _test_cli_contract(self, output_root: Path) -> None:
         simple = self.project_root / "tests/csharp/fixtures/runtime_hello_world/main.zorb"
         invalid_output = output_root / "invalid-native-link-args.ll"
@@ -746,6 +772,7 @@ class NativeCompilerSuite:
 
         self._test_named_target_triples(simple, output_root)
         self._test_bare_metal_linking(output_root)
+        self._test_lowering_diagnostic_contract(output_root)
 
     def _test_named_target_triples(self, source: Path, output_root: Path) -> None:
         arm_host = platform.machine().lower() in {"aarch64", "arm64"}
