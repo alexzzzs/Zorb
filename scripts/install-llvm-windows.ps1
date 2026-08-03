@@ -15,21 +15,24 @@ if ($MaxDownloadAttempts -lt 1) {
 }
 
 $InstallRoot = Join-Path $env:ProgramFiles "LLVM"
-$LlvmConfig = Join-Path $InstallRoot "bin/llvm-config.exe"
+$Clang = Join-Path $InstallRoot "bin/clang.exe"
 $ExpectedVersion = $Version
 
-function Get-LlvmVersion {
+function Test-LlvmVersion {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$LlvmConfigPath
+        [string]$ClangPath,
+        [Parameter(Mandatory = $true)]
+        [string]$RequiredVersion
     )
 
-    $VersionOutput = & $LlvmConfigPath --version
+    $VersionOutput = & $ClangPath --version
     $VersionExitCode = $LASTEXITCODE
     if ($VersionExitCode -ne 0 -or $null -eq $VersionOutput) {
-        return ""
+        return $false
     }
-    return ([string]$VersionOutput).Trim()
+    $VersionText = $VersionOutput -join [Environment]::NewLine
+    return $VersionText.Contains("clang version $RequiredVersion")
 }
 
 function Find-LlvmCLibrary {
@@ -42,11 +45,11 @@ function Find-LlvmCLibrary {
         Select-Object -First 1
 }
 
-if (Test-Path $LlvmConfig) {
-    $InstalledVersion = Get-LlvmVersion -LlvmConfigPath $LlvmConfig
+if (Test-Path $Clang) {
+    $HasExpectedVersion = Test-LlvmVersion -ClangPath $Clang -RequiredVersion $ExpectedVersion
     $LlvmCLibrary = Find-LlvmCLibrary -LlvmRoot $InstallRoot
-    if ($InstalledVersion -eq $ExpectedVersion -and $null -ne $LlvmCLibrary) {
-        Write-Host "LLVM $InstalledVersion is already installed at $InstallRoot."
+    if ($HasExpectedVersion -and $null -ne $LlvmCLibrary) {
+        Write-Host "LLVM $ExpectedVersion is already installed at $InstallRoot."
         exit 0
     }
 }
@@ -97,12 +100,11 @@ try {
         throw "LLVM installer failed with exit code $($Install.ExitCode)."
     }
 
-    if (-not (Test-Path $LlvmConfig)) {
-        throw "LLVM installation did not create $LlvmConfig."
+    if (-not (Test-Path $Clang)) {
+        throw "LLVM installation did not create $Clang."
     }
-    $InstalledVersion = Get-LlvmVersion -LlvmConfigPath $LlvmConfig
-    if ($InstalledVersion -ne $ExpectedVersion) {
-        throw "Expected LLVM $ExpectedVersion at $InstallRoot, found '$InstalledVersion'."
+    if (-not (Test-LlvmVersion -ClangPath $Clang -RequiredVersion $ExpectedVersion)) {
+        throw "The LLVM installation at $InstallRoot does not report clang version $ExpectedVersion."
     }
 
     $LlvmCLibrary = Find-LlvmCLibrary -LlvmRoot $InstallRoot
@@ -110,7 +112,7 @@ try {
         throw "LLVM installation did not provide LLVM-C.lib under $InstallRoot."
     }
 
-    Write-Host "Installed LLVM $InstalledVersion at $InstallRoot."
+    Write-Host "Installed LLVM $ExpectedVersion at $InstallRoot."
 }
 finally {
     Remove-Item -LiteralPath $InstallerPath -Force -ErrorAction SilentlyContinue
