@@ -32,6 +32,13 @@ export ready_queue_head: *Fiber = cast(*Fiber, 0)
 export ready_queue_tail: *Fiber = cast(*Fiber, 0)
 export scheduler_sp: *u8 = cast(*u8, 0)
 
+// Stage AArch64 switch operands outside the raw switch routine. At -O0 the
+// native compiler spills ordinary function parameters into a stack frame.
+// A stack switch cannot safely return through a prologue-owned frame when the
+// destination is a newly constructed fiber stack.
+aarch64_old_sp_ptr: **u8 = cast(**u8, 0)
+aarch64_new_sp: *u8 = cast(*u8, 0)
+
 // The fix: track active fibers
 export active_fibers: i64 = 0
 
@@ -153,65 +160,34 @@ fn std.task.swap_context(old_sp_ptr: **u8, new_sp: *u8) {
     if Builtin.IsX86_64 {
         if Builtin.IsWindows {
             asm {
-                "subq $160, %%rsp"
-                "movdqu %%xmm6, 0(%%rsp)"
-                "movdqu %%xmm7, 16(%%rsp)"
-                "movdqu %%xmm8, 32(%%rsp)"
-                "movdqu %%xmm9, 48(%%rsp)"
-                "movdqu %%xmm10, 64(%%rsp)"
-                "movdqu %%xmm11, 80(%%rsp)"
-                "movdqu %%xmm12, 96(%%rsp)"
-                "movdqu %%xmm13, 112(%%rsp)"
-                "movdqu %%xmm14, 128(%%rsp)"
-                "movdqu %%xmm15, 144(%%rsp)"
-                "pushq %%rbp; pushq %%rbx; pushq %%rdi; pushq %%rsi; pushq %%r12; pushq %%r13; pushq %%r14; pushq %%r15"
-                "movq %%rsp, (%0)"
-                "movq %1, %%rsp"
-                "popq %%r15; popq %%r14; popq %%r13; popq %%r12; popq %%rsi; popq %%rdi; popq %%rbx; popq %%rbp"
-                "movdqu 0(%%rsp), %%xmm6"
-                "movdqu 16(%%rsp), %%xmm7"
-                "movdqu 32(%%rsp), %%xmm8"
-                "movdqu 48(%%rsp), %%xmm9"
-                "movdqu 64(%%rsp), %%xmm10"
-                "movdqu 80(%%rsp), %%xmm11"
-                "movdqu 96(%%rsp), %%xmm12"
-                "movdqu 112(%%rsp), %%xmm13"
-                "movdqu 128(%%rsp), %%xmm14"
-                "movdqu 144(%%rsp), %%xmm15"
-                "addq $160, %%rsp"
+                "subq $160, %%rsp\n\tmovdqu %%xmm6, 0(%%rsp)\n\tmovdqu %%xmm7, 16(%%rsp)\n\tmovdqu %%xmm8, 32(%%rsp)\n\tmovdqu %%xmm9, 48(%%rsp)\n\tmovdqu %%xmm10, 64(%%rsp)\n\tmovdqu %%xmm11, 80(%%rsp)\n\tmovdqu %%xmm12, 96(%%rsp)\n\tmovdqu %%xmm13, 112(%%rsp)\n\tmovdqu %%xmm14, 128(%%rsp)\n\tmovdqu %%xmm15, 144(%%rsp)\n\tpushq %%rbp; pushq %%rbx; pushq %%rdi; pushq %%rsi; pushq %%r12; pushq %%r13; pushq %%r14; pushq %%r15\n\tmovq %%rsp, (%0)\n\tmovq %1, %%rsp\n\tpopq %%r15; popq %%r14; popq %%r13; popq %%r12; popq %%rsi; popq %%rdi; popq %%rbx; popq %%rbp\n\tmovdqu 0(%%rsp), %%xmm6\n\tmovdqu 16(%%rsp), %%xmm7\n\tmovdqu 32(%%rsp), %%xmm8\n\tmovdqu 48(%%rsp), %%xmm9\n\tmovdqu 64(%%rsp), %%xmm10\n\tmovdqu 80(%%rsp), %%xmm11\n\tmovdqu 96(%%rsp), %%xmm12\n\tmovdqu 112(%%rsp), %%xmm13\n\tmovdqu 128(%%rsp), %%xmm14\n\tmovdqu 144(%%rsp), %%xmm15\n\taddq $160, %%rsp"
                 : : "r"(old_sp_ptr), "r"(new_sp) : "memory"
             }
             return
         }
 
         asm {
-            "pushq %%rbp; pushq %%rbx; pushq %%rdi; pushq %%rsi; pushq %%r12; pushq %%r13; pushq %%r14; pushq %%r15"
-            "movq %%rsp, (%0)"
-            "movq %1, %%rsp"
-            "popq %%r15; popq %%r14; popq %%r13; popq %%r12; popq %%rsi; popq %%rdi; popq %%rbx; popq %%rbp"
+            "pushq %%rbp; pushq %%rbx; pushq %%rdi; pushq %%rsi; pushq %%r12; pushq %%r13; pushq %%r14; pushq %%r15\n\tmovq %%rsp, (%0)\n\tmovq %1, %%rsp\n\tpopq %%r15; popq %%r14; popq %%r13; popq %%r12; popq %%rsi; popq %%rdi; popq %%rbx; popq %%rbp"
             : : "r"(old_sp_ptr), "r"(new_sp) : "memory"
         }
         return
     }
 
     if Builtin.IsAArch64 {
+        aarch64_old_sp_ptr = old_sp_ptr
+        aarch64_new_sp = new_sp
+        std.task.swap_context_aarch64()
+    }
+}
+
+// Keep the actual AArch64 stack switch parameterless. This prevents O0 from
+// creating a hidden stack frame for argument spills around the inline asm.
+export [noinline, noclone]
+fn std.task.swap_context_aarch64() {
+    if Builtin.IsAArch64 {
         asm {
-            "stp x19, x20, [sp, #-16]!"
-            "stp x21, x22, [sp, #-16]!"
-            "stp x23, x24, [sp, #-16]!"
-            "stp x25, x26, [sp, #-16]!"
-            "stp x27, x28, [sp, #-16]!"
-            "stp x29, x30, [sp, #-16]!"
-            "mov x2, sp"
-            "str x2, [%0]"
-            "mov sp, %1"
-            "ldp x29, x30, [sp], #16"
-            "ldp x27, x28, [sp], #16"
-            "ldp x25, x26, [sp], #16"
-            "ldp x23, x24, [sp], #16"
-            "ldp x21, x22, [sp], #16"
-            "ldp x19, x20, [sp], #16"
-            : : "r"(old_sp_ptr), "r"(new_sp) : "x2", "memory"
+            "stp x19, x20, [sp, #-16]!\n\tstp x21, x22, [sp, #-16]!\n\tstp x23, x24, [sp, #-16]!\n\tstp x25, x26, [sp, #-16]!\n\tstp x27, x28, [sp, #-16]!\n\tstp x29, x30, [sp, #-16]!\n\tstp d8, d9, [sp, #-16]!\n\tstp d10, d11, [sp, #-16]!\n\tstp d12, d13, [sp, #-16]!\n\tstp d14, d15, [sp, #-16]!\n\tmov x2, sp\n\tstr x2, [%0]\n\tmov sp, %1\n\tldp d14, d15, [sp], #16\n\tldp d12, d13, [sp], #16\n\tldp d10, d11, [sp], #16\n\tldp d8, d9, [sp], #16\n\tldp x29, x30, [sp], #16\n\tldp x27, x28, [sp], #16\n\tldp x25, x26, [sp], #16\n\tldp x23, x24, [sp], #16\n\tldp x21, x22, [sp], #16\n\tldp x19, x20, [sp], #16"
+            : : "r"(aarch64_old_sp_ptr), "r"(aarch64_new_sp) : "x2", "memory"
         }
     }
 }
@@ -350,9 +326,11 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         active_fibers = active_fibers + 1
 
         top: i64 = (cast(i64, raw_stack) + stack_size) & -16
-        ctx: **u8 = cast(**u8, top - 96)
+        // AAPCS64 requires x19-x30 and the low 64 bits of v8-v15 to survive
+        // a call. The initial frame mirrors swap_context's restore order.
+        ctx: **u8 = cast(**u8, top - 160)
         ctx[0] = cast(*u8, 0)
-        ctx[1] = cast(*u8, cast(i64, fiber_entry_point))
+        ctx[1] = cast(*u8, 0)
         ctx[2] = cast(*u8, 0)
         ctx[3] = cast(*u8, 0)
         ctx[4] = cast(*u8, 0)
@@ -360,9 +338,17 @@ export fn std.task.spawn(gpa: *std.mem.HeapAllocator, taskFunc: fn(*void) -> voi
         ctx[6] = cast(*u8, 0)
         ctx[7] = cast(*u8, 0)
         ctx[8] = cast(*u8, 0)
-        ctx[9] = cast(*u8, 0)
+        ctx[9] = cast(*u8, cast(i64, fiber_entry_point))
         ctx[10] = cast(*u8, 0)
         ctx[11] = cast(*u8, 0)
+        ctx[12] = cast(*u8, 0)
+        ctx[13] = cast(*u8, 0)
+        ctx[14] = cast(*u8, 0)
+        ctx[15] = cast(*u8, 0)
+        ctx[16] = cast(*u8, 0)
+        ctx[17] = cast(*u8, 0)
+        ctx[18] = cast(*u8, 0)
+        ctx[19] = cast(*u8, 0)
         f.stack_ptr = cast(*u8, ctx)
 
         std.task.enqueue(f)

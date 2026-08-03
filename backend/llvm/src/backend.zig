@@ -360,6 +360,23 @@ pub const Backend = struct {
                 .external => llvm.LLVMExternalLinkage,
                 .internal => llvm.LLVMInternalLinkage,
             });
+            // Inline assembly may implement an ABI boundary such as a stack
+            // switch. Keep its containing frame intact across optimization.
+            if (function_ir.containsInlineAsm()) {
+                const attribute_name = "noinline";
+                const attribute_kind = llvm.LLVMGetEnumAttributeKindForName(
+                    attribute_name,
+                    attribute_name.len,
+                );
+                if (attribute_kind == 0) return error.InvalidBackendIr;
+                const attribute = llvm.LLVMCreateEnumAttribute(self.context, attribute_kind, 0) orelse
+                    return error.OutOfMemory;
+                llvm.LLVMAddAttributeAtIndex(
+                    function,
+                    std.math.maxInt(llvm.LLVMAttributeIndex),
+                    attribute,
+                );
+            }
             try self.functions.put(self.allocator, function_ir.id, .{
                 .function = function,
                 .function_type = function_type,

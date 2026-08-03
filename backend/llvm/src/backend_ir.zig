@@ -249,6 +249,18 @@ pub const Function = struct {
     return_type: u32,
     parameters: []const Parameter = &.{},
     blocks: []const Block = &.{},
+
+    pub fn containsInlineAsm(self: Function) bool {
+        for (self.blocks) |block| {
+            for (block.instructions) |instruction| {
+                switch (instruction.op) {
+                    .inline_asm, .syscall, .process_exit => return true,
+                    else => {},
+                }
+            }
+        }
+        return false;
+    }
 };
 
 pub const Module = struct {
@@ -330,4 +342,32 @@ test "parse and validate scalar module" {
     var diagnostic_buffer: [256]u8 = undefined;
     var diagnostics: std.Io.Writer = .fixed(&diagnostic_buffer);
     try parsed.value.validate(&diagnostics);
+}
+
+test "functions report operations lowered through inline assembly" {
+    var instructions = [_]Instruction{
+        .{ .id = 1, .op = .inline_asm, .type = 1 },
+    };
+    const blocks = [_]Block{
+        .{
+            .id = 1,
+            .name = "entry",
+            .instructions = &instructions,
+            .terminator = .{ .op = .return_void },
+        },
+    };
+    const function = Function{
+        .id = 1,
+        .name = "inline_asm_boundary",
+        .return_type = 1,
+        .blocks = &blocks,
+    };
+
+    for ([_]InstructionOp{ .inline_asm, .syscall, .process_exit }) |op| {
+        instructions[0].op = op;
+        try std.testing.expect(function.containsInlineAsm());
+    }
+
+    instructions[0].op = .integer_constant;
+    try std.testing.expect(!function.containsInlineAsm());
 }

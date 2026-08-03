@@ -1,0 +1,2 @@
+; Function Attrs: noinline
+define void @std.task.swap_context

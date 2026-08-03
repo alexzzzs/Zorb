@@ -34,6 +34,11 @@ struct std.net.WinPollFd {
     revents: i16
 }
 
+struct std.net.PollTimeout {
+    tv_sec: i64,
+    tv_nsec: i64
+}
+
 wsa_started: bool = false
 wsa_start_status: i32 = 0
 wsa_data_storage: [512]u8
@@ -542,6 +547,21 @@ export fn std.net.poll(fds: *std.net.PollFd, count: i64, timeout_ms: i32) -> i64
     nr: i64 = std.net.poll_nr()
     if nr == 0 {
         return -cast(i64, error.UnsupportedPlatform)
+    }
+
+    if Builtin.IsAArch64 {
+        timeout: std.net.PollTimeout
+        timeout_ptr: *std.net.PollTimeout = cast(*std.net.PollTimeout, 0)
+        if timeout_ms >= 0 {
+            timeout_millis: i64 = cast(i64, timeout_ms)
+            timeout.tv_sec = timeout_millis / 1000
+            timeout.tv_nsec = (timeout_millis % 1000) * 1000000
+            timeout_ptr = &timeout
+        }
+
+        // Linux AArch64 provides ppoll rather than poll. A null timeout keeps
+        // the poll-style infinite-wait behavior for timeout_ms == -1.
+        return syscall(nr, cast(i64, fds), count, cast(i64, timeout_ptr), 0, 0)
     }
 
     return syscall(nr, cast(i64, fds), count, cast(i64, timeout_ms))

@@ -20,6 +20,7 @@ from test_compiler import (  # noqa: E402
     SuiteFailure,
     expected_phase_from_code,
     load_fixture_manifest,
+    llvm_expectations,
     load_runtime_expectation,
     load_suite_exclusions,
     parse_arguments,
@@ -35,10 +36,23 @@ class CompilerRunnerTests(unittest.TestCase):
     def test_repository_exclusions_are_named_and_reference_real_cases(self) -> None:
         cases = load_fixture_manifest(PROJECT_ROOT)
         exclusions = load_suite_exclusions(PROJECT_ROOT, cases)
-        self.assertTrue(exclusions.runtime)
-        self.assertTrue(all(exclusions.runtime.values()))
-        self.assertTrue(exclusions.runtime_by_target["host-linux"])
-        self.assertNotIn("host-windows", exclusions.runtime_by_target)
+        self.assertTrue(exclusions.llvm)
+        self.assertTrue(all(exclusions.llvm.values()))
+        self.assertFalse(exclusions.runtime)
+        self.assertFalse(exclusions.runtime_by_target)
+
+    def test_llvm_expectations_prefer_the_exact_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture_dir = Path(temp_dir)
+            (fixture_dir / "expect-llvm.txt").write_text("generic\n", encoding="utf-8")
+            (fixture_dir / "expect-llvm-linux.txt").write_text("linux\n", encoding="utf-8")
+            (fixture_dir / "expect-llvm-host-linux-aarch64.txt").write_text(
+                "aarch64\n", encoding="utf-8"
+            )
+
+            self.assertEqual(
+                llvm_expectations(fixture_dir, "host-linux-aarch64"), ["aarch64"]
+            )
 
     def test_structured_diagnostic_codes_map_to_manifest_outcomes(self) -> None:
         self.assertEqual(expected_phase_from_code("lex.invalid-token"), "lexical-failure")

@@ -409,9 +409,12 @@ def load_runtime_expectation(fixture_dir: Path, target: str) -> RuntimeExpectati
 
 
 def llvm_expectations(fixture_dir: Path, target: str) -> list[str]:
+    target_path = fixture_dir / f"expect-llvm-{target}.txt"
     platform_name = "windows" if target == "host-windows" else "linux"
     platform_path = fixture_dir / f"expect-llvm-{platform_name}.txt"
     generic_path = fixture_dir / "expect-llvm.txt"
+    if target_path.is_file():
+        return read_expectation_lines(target_path)
     return read_expectation_lines(platform_path if platform_path.is_file() else generic_path)
 
 
