@@ -32,6 +32,13 @@ export ready_queue_head: *Fiber = cast(*Fiber, 0)
 export ready_queue_tail: *Fiber = cast(*Fiber, 0)
 export scheduler_sp: *u8 = cast(*u8, 0)
 
+// Stage AArch64 switch operands outside the raw switch routine. At -O0 the
+// native compiler spills ordinary function parameters into a stack frame.
+// A stack switch cannot safely return through a prologue-owned frame when the
+// destination is a newly constructed fiber stack.
+aarch64_old_sp_ptr: **u8 = cast(**u8, 0)
+aarch64_new_sp: *u8 = cast(*u8, 0)
+
 // The fix: track active fibers
 export active_fibers: i64 = 0
 
@@ -167,9 +174,20 @@ fn std.task.swap_context(old_sp_ptr: **u8, new_sp: *u8) {
     }
 
     if Builtin.IsAArch64 {
+        aarch64_old_sp_ptr = old_sp_ptr
+        aarch64_new_sp = new_sp
+        std.task.swap_context_aarch64()
+    }
+}
+
+// Keep the actual AArch64 stack switch parameterless. This prevents O0 from
+// creating a hidden stack frame for argument spills around the inline asm.
+export [noinline, noclone]
+fn std.task.swap_context_aarch64() {
+    if Builtin.IsAArch64 {
         asm {
             "stp x19, x20, [sp, #-16]!\n\tstp x21, x22, [sp, #-16]!\n\tstp x23, x24, [sp, #-16]!\n\tstp x25, x26, [sp, #-16]!\n\tstp x27, x28, [sp, #-16]!\n\tstp x29, x30, [sp, #-16]!\n\tstp d8, d9, [sp, #-16]!\n\tstp d10, d11, [sp, #-16]!\n\tstp d12, d13, [sp, #-16]!\n\tstp d14, d15, [sp, #-16]!\n\tmov x2, sp\n\tstr x2, [%0]\n\tmov sp, %1\n\tldp d14, d15, [sp], #16\n\tldp d12, d13, [sp], #16\n\tldp d10, d11, [sp], #16\n\tldp d8, d9, [sp], #16\n\tldp x29, x30, [sp], #16\n\tldp x27, x28, [sp], #16\n\tldp x25, x26, [sp], #16\n\tldp x23, x24, [sp], #16\n\tldp x21, x22, [sp], #16\n\tldp x19, x20, [sp], #16"
-            : : "r"(old_sp_ptr), "r"(new_sp) : "x2", "memory"
+            : : "r"(aarch64_old_sp_ptr), "r"(aarch64_new_sp) : "x2", "memory"
         }
     }
 }
