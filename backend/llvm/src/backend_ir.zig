@@ -249,6 +249,15 @@ pub const Function = struct {
     return_type: u32,
     parameters: []const Parameter = &.{},
     blocks: []const Block = &.{},
+
+    pub fn containsInlineAsm(self: Function) bool {
+        for (self.blocks) |block| {
+            for (block.instructions) |instruction| {
+                if (instruction.op == .inline_asm) return true;
+            }
+        }
+        return false;
+    }
 };
 
 pub const Module = struct {
@@ -330,4 +339,26 @@ test "parse and validate scalar module" {
     var diagnostic_buffer: [256]u8 = undefined;
     var diagnostics: std.Io.Writer = .fixed(&diagnostic_buffer);
     try parsed.value.validate(&diagnostics);
+}
+
+test "functions report inline assembly in their blocks" {
+    const instructions = [_]Instruction{
+        .{ .id = 1, .op = .inline_asm, .type = 1 },
+    };
+    const blocks = [_]Block{
+        .{
+            .id = 1,
+            .name = "entry",
+            .instructions = &instructions,
+            .terminator = .{ .op = .return_void },
+        },
+    };
+    const function = Function{
+        .id = 1,
+        .name = "context_switch",
+        .return_type = 1,
+        .blocks = &blocks,
+    };
+
+    try std.testing.expect(function.containsInlineAsm());
 }
