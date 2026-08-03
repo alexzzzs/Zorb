@@ -7,8 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Native task and async fibers now preserve their complete x86_64 and AArch64
-  context-switch sequences, remain frame-stable at `-O0` through `-O3`, and
-  use the AArch64 Linux `ppoll` ABI for readiness waits and timeouts.
+  context-switch sequences, including AArch64's callee-saved SIMD registers,
+  remain frame-stable at `-O0` through `-O3`, and use the AArch64 Linux `ppoll`
+  ABI for readiness waits and timeouts.
 - Native Backend IR lowering failures now retain the defining source file and
   span and emit structured `lower.unsupported` or `lower.internal`
   diagnostics. Allocation failures remain operational errors rather than
