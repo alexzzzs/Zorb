@@ -253,7 +253,10 @@ pub const Function = struct {
     pub fn containsInlineAsm(self: Function) bool {
         for (self.blocks) |block| {
             for (block.instructions) |instruction| {
-                if (instruction.op == .inline_asm) return true;
+                switch (instruction.op) {
+                    .inline_asm, .syscall, .process_exit => return true,
+                    else => {},
+                }
             }
         }
         return false;
@@ -341,24 +344,46 @@ test "parse and validate scalar module" {
     try parsed.value.validate(&diagnostics);
 }
 
-test "functions report inline assembly in their blocks" {
-    const instructions = [_]Instruction{
-        .{ .id = 1, .op = .inline_asm, .type = 1 },
+test "functions report operations lowered through inline assembly" {
+    for ([_]InstructionOp{ .inline_asm, .syscall, .process_exit }) |op| {
+        const instructions = [_]Instruction{
+            .{ .id = 1, .op = op, .type = 1 },
+        };
+        const blocks = [_]Block{
+            .{
+                .id = 1,
+                .name = "entry",
+                .instructions = &instructions,
+                .terminator = .{ .op = .return_void },
+            },
+        };
+        const function = Function{
+            .id = 1,
+            .name = "inline_asm_boundary",
+            .return_type = 1,
+            .blocks = &blocks,
+        };
+
+        try std.testing.expect(function.containsInlineAsm());
+    }
+
+    const plain_instructions = [_]Instruction{
+        .{ .id = 1, .op = .integer_constant, .type = 1 },
     };
-    const blocks = [_]Block{
+    const plain_blocks = [_]Block{
         .{
             .id = 1,
             .name = "entry",
-            .instructions = &instructions,
+            .instructions = &plain_instructions,
             .terminator = .{ .op = .return_void },
         },
     };
-    const function = Function{
+    const plain_function = Function{
         .id = 1,
-        .name = "context_switch",
+        .name = "plain_function",
         .return_type = 1,
-        .blocks = &blocks,
+        .blocks = &plain_blocks,
     };
 
-    try std.testing.expect(function.containsInlineAsm());
+    try std.testing.expect(!plain_function.containsInlineAsm());
 }
