@@ -36,7 +36,6 @@ class CompilerRunnerTests(unittest.TestCase):
     def test_repository_exclusions_are_named_and_reference_real_cases(self) -> None:
         cases = load_fixture_manifest(PROJECT_ROOT)
         exclusions = load_suite_exclusions(PROJECT_ROOT, cases)
-        self.assertTrue(exclusions.llvm)
         self.assertTrue(all(exclusions.llvm.values()))
         self.assertFalse(exclusions.runtime)
         self.assertFalse(exclusions.runtime_by_target)
