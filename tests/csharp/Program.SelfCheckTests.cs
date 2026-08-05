@@ -97,10 +97,8 @@ internal static partial class Program
             AssertSelfCheckResult(binaryPath, projectRoot, [aliasedImportInput], 0, "self-check succeeded:", null);
             AssertSelfCheckResult(binaryPath, projectRoot, [aliasedEnumImportInput], 0, "self-check succeeded:", null);
             AssertSelfCheckResult(binaryPath, projectRoot, [canonicalImportInput], 0, "self-check succeeded:", null);
-            AssertNativeLoweringDiagnostic(
-                binaryPath, projectRoot, tempDir, stressPipelineInput, "lower.internal");
-            AssertNativeLoweringDiagnostic(
-                binaryPath, projectRoot, tempDir, threadsInput, "lower.unsupported");
+            AssertNativeLoweringSucceeded(binaryPath, projectRoot, tempDir, stressPipelineInput);
+            AssertNativeLoweringSucceeded(binaryPath, projectRoot, tempDir, threadsInput);
             AssertSelfCheckResult(binaryPath, projectRoot, [privateImportInput], 1, null, "error[name.unknown]");
             AssertSelfCheckResult(binaryPath, projectRoot, [transitiveImportInput], 0, "self-check succeeded:", null);
             AssertSelfCheckResult(binaryPath, projectRoot, [cycleInput], 0, "self-check succeeded:", null);
@@ -1658,37 +1656,33 @@ internal static partial class Program
         }
     }
 
-    private static void AssertNativeLoweringDiagnostic(
+    private static void AssertNativeLoweringSucceeded(
         string binaryPath,
         string workingDirectory,
         string tempDirectory,
-        string inputPath,
-        string expectedCode)
+        string inputPath)
     {
-        var outputPath = Path.Combine(tempDirectory, $"{Path.GetFileNameWithoutExtension(inputPath)}-diagnostic.ll");
+        var outputPath = Path.Combine(tempDirectory, $"{Path.GetFileNameWithoutExtension(inputPath)}-native.ll");
         var execution = RunProcessWithTimeoutArgs(
             binaryPath,
             ["--emit-backend-ir", GetNativeLlvmTriple(), outputPath, inputPath],
             workingDirectory,
             TimeSpan.FromSeconds(SelfCheckTimeoutSeconds));
 
-        if (execution.ExitCode != 1)
-            throw new Exception($"native lowering diagnostic expected exit code 1, got {execution.ExitCode}.\n{execution.StdErr}{execution.StdOut}".Trim());
+        if (execution.ExitCode != 0)
+            throw new Exception($"native lowering expected exit code 0, got {execution.ExitCode}.\n{execution.StdErr}{execution.StdOut}".Trim());
         if (!string.IsNullOrWhiteSpace(execution.StdErr))
-            throw new Exception($"native lowering diagnostic wrote to stderr.\n{execution.StdErr}".Trim());
-        if (File.Exists(outputPath))
-            throw new Exception($"native lowering diagnostic created output '{outputPath}'.");
+            throw new Exception($"native lowering wrote to stderr.\n{execution.StdErr}".Trim());
 
         using var document = System.Text.Json.JsonDocument.Parse(execution.StdOut.Trim());
-        var diagnostic = document.RootElement;
-        if (diagnostic.GetProperty("kind").GetString() != "diagnostic" ||
-            diagnostic.GetProperty("phase").GetString() != "lower" ||
-            diagnostic.GetProperty("code").GetString() != expectedCode ||
-            diagnostic.GetProperty("file").GetString() != inputPath ||
-            diagnostic.GetProperty("line").GetInt64() < 1 ||
-            diagnostic.GetProperty("column").GetInt64() < 1 ||
-            diagnostic.GetProperty("length").GetInt64() < 1)
-            throw new Exception($"native lowering emitted an invalid structured diagnostic.\n{execution.StdOut}".Trim());
+        if (document.RootElement.GetProperty("schema_version").GetInt32() != 2)
+            throw new Exception("native lowering emitted the wrong backend IR schema version.");
+
+        var irPath = Path.Combine(tempDirectory, $"{Path.GetFileNameWithoutExtension(inputPath)}-native.json");
+        File.WriteAllText(irPath, execution.StdOut);
+        var backend = EmitBackendArtifact(GetLlvmBackendPath(), irPath, tempDirectory);
+        if (backend.ExitCode != 0 || !File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
+            throw new Exception($"native lowering did not produce LLVM IR at '{outputPath}'.\n{backend.StdErr}{backend.StdOut}".Trim());
     }
 
     private static void AssertSelfCheckAstHasNoUnknownKinds(
