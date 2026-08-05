@@ -1,0 +1,13 @@
+fn run_asm() -> i64 {
+    asm {
+        "nop"
+        :
+        : "i"(56)
+    }
+    asm {
+        "nop"
+        :
+        : "i"(-7)
+    }
+    return 7
+}

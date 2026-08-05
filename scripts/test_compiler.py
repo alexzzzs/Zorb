@@ -717,29 +717,26 @@ class NativeCompilerSuite:
                 f"stderr mismatch\nexpected: {expectation.stderr!r}\nactual:   {actual_stderr!r}"
             )
 
-    def _test_lowering_diagnostic_contract(self, output_root: Path) -> None:
+    def _test_advanced_examples_lowering(self, output_root: Path) -> None:
         cases = (
-            ("stress_pipeline.zorb", "lower.internal"),
-            ("threads.zorb", "lower.unsupported"),
+            "stress_pipeline.zorb",
+            "threads.zorb",
         )
-        for source_name, expected_code in cases:
+        for source_name in cases:
             source = self.project_root / "examples/advanced" / source_name
-            output = output_root / f"diagnostic-{source.stem}.ll"
+            output = output_root / f"advanced-{source.stem}.ll"
             result = self._run_command(
                 [self.compiler, "build", source, "--output-kind", "llvm-ir", "-o", output],
             )
-            expected_prefix = f"{source.as_posix()}:"
-            expected_code_text = f"error[{expected_code}]"
             if (
-                result.returncode != 1
-                or expected_prefix not in result.stderr
-                or expected_code_text not in result.stderr
+                result.returncode != 0
                 or result.stdout
-                or output.exists()
+                or not output.is_file()
+                or output.stat().st_size == 0
             ):
                 raise SuiteFailure(
                     format_command_failure(
-                        f"native lowering did not emit {expected_code}", result
+                        f"native lowering failed for {source_name}", result
                     )
                 )
 
@@ -775,7 +772,7 @@ class NativeCompilerSuite:
 
         self._test_named_target_triples(simple, output_root)
         self._test_bare_metal_linking(output_root)
-        self._test_lowering_diagnostic_contract(output_root)
+        self._test_advanced_examples_lowering(output_root)
 
     def _test_named_target_triples(self, source: Path, output_root: Path) -> None:
         arm_host = platform.machine().lower() in {"aarch64", "arm64"}

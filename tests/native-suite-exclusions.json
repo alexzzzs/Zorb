@@ -1,9 +1,6 @@
 {
   "version": 1,
-  "llvm": {
-    "example_advanced_stress_pipeline": "The native lowerer does not yet lower this recovery stress example.",
-    "example_advanced_threads": "The native lowerer does not yet lower the recovery thread example."
-  },
+  "llvm": {},
   "llvm_by_target": {
     "host-windows": {
       "self_check_builtin_compile_error": "This Linux-success probe intentionally activates Builtin.CompileError on Windows."

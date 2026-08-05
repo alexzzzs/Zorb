@@ -1432,7 +1432,7 @@ fn zparser_parse_asm_constraints(self: *ZParser, allocator: *std.mem.HeapAllocat
         slot: i64 = ZAstModule.append_expr_arg(module, allocator, ZAstNoIndex) catch |err| { return err }
         operand: i64 = zparser_parse_expression(self, allocator, module, false, false, false) catch |err| { return err }
         module.expr_args[slot] = operand
-        module.exprs[operand].literal = ZAstText.from_token(constraint_token)
+        module.exprs[operand].asm_constraint = ZAstText.from_token(constraint_token)
         zparser_expect(self, ZTokenRParen) catch |err| { return error.InvalidArgument }
         if !zparser_at(self, ZTokenComma) { break }
         zparser_advance(self)

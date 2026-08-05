@@ -1,0 +1,10 @@
+fn task(arg: *void) {
+}
+
+fn null_task() -> fn(*void) -> void {
+    return cast(fn(*void) -> void, 0)
+}
+
+fn capture(task_func: fn(*void) -> void) -> *u8 {
+    return cast(*u8, task_func)
+}

@@ -3608,11 +3608,14 @@ fn zbackend_ir_cast_op(
     if source_type_id == target_type_id { return "" }
     source_type: ZBackendIrType = type_layout.types[source_type_id - 1]
     target_type: ZBackendIrType = type_layout.types[target_type_id - 1]
-    if (source_type.kind == "pointer" || source_type.kind == "string") &&
-        (target_type.kind == "pointer" || target_type.kind == "string") { return "" }
-    if (source_type.kind == "pointer" || source_type.kind == "string") &&
+    source_is_pointer_like: bool = source_type.kind == "pointer" ||
+        source_type.kind == "string" || source_type.kind == "function"
+    target_is_pointer_like: bool = target_type.kind == "pointer" ||
+        target_type.kind == "string" || target_type.kind == "function"
+    if source_is_pointer_like && target_is_pointer_like { return "" }
+    if source_is_pointer_like &&
         target_type.kind == "scalar" { return "pointer_to_integer" }
-    if source_type.kind == "scalar" && target_type.kind == "pointer" {
+    if source_type.kind == "scalar" && target_is_pointer_like {
         return "integer_to_pointer"
     }
     if source_type.kind != "scalar" || target_type.kind != "scalar" {
@@ -3810,7 +3813,8 @@ fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, expressi
         ) catch |err| { return err }
         target_type: ZBackendIrType = context.type_layout.types[target_type_id - 1]
         operand_expression: ZAstExpr = context.ast.exprs[expression.left]
-        if target_type.kind == "pointer" && operand_expression.kind == ZAstExprInteger {
+        if (target_type.kind == "pointer" || target_type.kind == "function") &&
+            operand_expression.kind == ZAstExprInteger {
             integer: i64 = zbackend_ir_parse_positive_integer(
                 operand_expression.literal
             ) catch |err| { return err }
@@ -5047,7 +5051,8 @@ fn zbackend_ir_cfg_lower_cast_expression(
     ) catch |err| { return err }
     target_type: ZBackendIrType = context.type_layout.types[target_type_id - 1]
     operand_expression: ZAstExpr = context.ast.exprs[expression.left]
-    if target_type.kind == "pointer" && operand_expression.kind == ZAstExprInteger {
+    if (target_type.kind == "pointer" || target_type.kind == "function") &&
+        operand_expression.kind == ZAstExprInteger {
         integer: i64 = zbackend_ir_parse_positive_integer(
             operand_expression.literal
         ) catch |err| { return err }
@@ -5527,6 +5532,40 @@ fn zbackend_ir_cfg_lower_expression_as(
             }
         }
     }
+    if expression_index != ZAstNoIndex {
+        expression: ZAstExpr = context.ast.exprs[expression_index]
+        resolved_global: ZAstText = zbackend_ir_resolved_global_name(
+            context.type_layout, expression_index
+        ) catch |err| { return err }
+        if expression.kind == ZAstExprField && expression.left != ZAstNoIndex &&
+            resolved_global.len == 0 &&
+            !zbackend_ir_expression_is_function_value(
+                context.type_layout, expression_index
+            ) &&
+            !zbackend_ir_field_is_static_enum(context.ast, expression) &&
+            !zbackend_ir_field_is_static_union_tag(context.ast, expression) &&
+            !zbackend_ir_field_is_static_error(context.ast, expression) &&
+            !zbackend_ir_is_builtin_field(context.ast, expression) {
+            field_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+                context, expression_index, value_type_id
+            ) catch |err| { return err }
+            address: i64 = zbackend_ir_cfg_lower_address(
+                context, expression_index, value_type_id
+            ) catch |err| { return err }
+            id: i64 = context.next_value_id
+            context.next_value_id = context.next_value_id + 1
+            load: ZBackendIrInstruction = zbackend_ir_new_instruction(
+                id, "load", field_type_id
+            )
+            load.lhs = address
+            value: i64 = zbackend_ir_cfg_append_instruction(
+                context, load
+            ) catch |err| { return err }
+            return zbackend_ir_cfg_emit_cast_value(
+                context, value, field_type_id, value_type_id
+            ) catch |err| { return err }
+        }
+    }
     if expression_index != ZAstNoIndex && zbackend_ir_expression_is_error_union_call(
         context.type_layout, context.ast.exprs[expression_index]
     ) {
@@ -5710,6 +5749,50 @@ fn zbackend_ir_cfg_lower_address(
             return zbackend_ir_cfg_lower_slice_index_address(
                 context, expression, target_type_id
             ) catch |err| { return err }
+        }
+    }
+    if expression.kind == ZAstExprField {
+        target_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+            context, expression.left, value_type_id
+        ) catch |err| { return err }
+        if target_type_id > 0 && target_type_id <= context.type_layout.type_count {
+            target_type: ZBackendIrType = context.type_layout.types[target_type_id - 1]
+            container_type_id: i64 = target_type_id
+            container_type: ZBackendIrType = target_type
+            base_address: i64 = 0
+            if target_type.kind == "pointer" {
+                container_type_id = target_type.element_type
+                if container_type_id <= 0 || container_type_id > context.type_layout.type_count {
+                    return error.InvalidArgument
+                }
+                container_type = context.type_layout.types[container_type_id - 1]
+                base_address = zbackend_ir_cfg_lower_expression_as(
+                    context, expression.left, target_type_id
+                ) catch |err| { return err }
+            } else if target_type.kind == "struct" || target_type.kind == "union" {
+                base_address = zbackend_ir_cfg_lower_address(
+                    context, expression.left, target_type_id
+                ) catch |err| { return err }
+            }
+            if container_type.kind == "struct" || container_type.kind == "union" {
+                field_index: i64 = zbackend_ir_type_field_index(
+                    context.type_layout, container_type_id, expression.name
+                ) catch |err| { return err }
+                id: i64 = context.next_value_id
+                context.next_value_id = context.next_value_id + 1
+                field_address: ZBackendIrInstruction = zbackend_ir_new_instruction(
+                    id, "field_address", container_type.fields[field_index].type_id
+                )
+                field_address.source_type = container_type_id
+                field_address.field_index = field_index
+                if container_type.kind == "union" {
+                    field_address.field_index = field_index + 1
+                }
+                field_address.lhs = base_address
+                return zbackend_ir_cfg_append_instruction(
+                    context, field_address
+                ) catch |err| { return err }
+            }
         }
     }
     capacity: i64 = zbackend_ir_expression_instruction_capacity(
@@ -6046,12 +6129,39 @@ fn zbackend_ir_cfg_lower_asm(
     operand_index = 0
     while operand_index < statement.asm_input_count {
         expression_index: i64 = context.ast.expr_args[statement.asm_input_start + operand_index]
+        expression: ZAstExpr = context.ast.exprs[expression_index]
+        is_negative_integer: bool = expression.kind == ZAstExprUnary &&
+            expression.op == ZTokenMinus && expression.left != ZAstNoIndex &&
+            context.ast.exprs[expression.left].kind == ZAstExprInteger
+        is_integer_literal: bool = expression.kind == ZAstExprInteger || is_negative_integer
+        input_fallback_type_id: i64 = context.return_payload_type_id
+        if is_integer_literal {
+            input_fallback_type_id = zbackend_ir_type_layout_intern_scalar(
+                context.type_layout, "i64"
+            ) catch |err| { return err }
+        }
         input_type_id: i64 = zbackend_ir_cfg_expression_type_id(
-            context, expression_index, context.return_payload_type_id
+            context, expression_index, input_fallback_type_id
         ) catch |err| { return err }
-        arguments[operand_index] = zbackend_ir_cfg_lower_expression_as(
-            context, expression_index, input_type_id
-        ) catch |err| { return err }
+        if is_integer_literal {
+            literal_value: i64 = 0
+            if is_negative_integer {
+                literal_value = zbackend_ir_parse_negative_integer(
+                    context.ast.exprs[expression.left].literal
+                ) catch |err| { return err }
+            } else {
+                literal_value = zbackend_ir_parse_positive_integer(
+                    expression.literal
+                ) catch |err| { return err }
+            }
+            arguments[operand_index] = zbackend_ir_cfg_emit_integer_constant(
+                context, literal_value, input_type_id
+            ) catch |err| { return err }
+        } else {
+            arguments[operand_index] = zbackend_ir_cfg_lower_expression_as(
+                context, expression_index, input_type_id
+            ) catch |err| { return err }
+        }
         input_type: ZBackendIrType = context.type_layout.types[input_type_id - 1]
         if input_type.kind == "scalar" && zbackend_ir_scalar_bit_width(input_type.scalar) > 0 &&
             zbackend_ir_scalar_bit_width(input_type.scalar) < 32 {
@@ -6091,8 +6201,12 @@ fn zbackend_ir_cfg_lower_asm(
                     statement.asm_output_count - statement.asm_input_count
             ]
         }
+        constraint_text: ZAstText = context.ast.exprs[expression_index].asm_constraint
+        if constraint_text.len == 0 {
+            constraint_text = context.ast.exprs[expression_index].literal
+        }
         constraint: string = zbackend_ir_copy_text(
-            context.allocator, context.ast.exprs[expression_index].literal
+            context.allocator, constraint_text
         ) catch |err| { return err }
         if constraint_index >= statement.asm_output_count + statement.asm_input_count {
             std.collections.StringBuilder.append(
