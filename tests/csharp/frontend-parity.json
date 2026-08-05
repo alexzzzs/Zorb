@@ -3064,6 +3064,33 @@
       "gate": "frontend"
     },
     {
+      "name": "slice_struct_field_codegen",
+      "path": "tests/csharp/fixtures/slice_struct_field_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "backend.slices.struct-fields",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified lowering a struct field reached through a slice index."
+    },
+    {
+      "name": "function_pointer_cast_codegen",
+      "path": "tests/csharp/fixtures/function_pointer_cast_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "backend.function-pointers.casts",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified explicit casts from function values to raw pointers."
+    },
+    {
+      "name": "inline_asm_literal_input_codegen",
+      "path": "tests/csharp/fixtures/inline_asm_literal_input_codegen/main.zorb",
+      "classification": "differential",
+      "feature": "backend.inline-asm.literal-inputs",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified integer literals retain their i64 type as inline-assembly inputs."
+    },
+    {
       "name": "example_basics_generics",
       "path": "examples/basics/generics.zorb",
       "classification": "differential",

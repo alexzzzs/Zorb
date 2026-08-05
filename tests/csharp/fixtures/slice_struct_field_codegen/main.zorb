@@ -1,0 +1,7 @@
+struct Record {
+    value: i64
+}
+
+fn read_record(records: []Record, index: i64) -> i64 {
+    return records[index].value
+}
