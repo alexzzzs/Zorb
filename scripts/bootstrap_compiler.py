@@ -91,7 +91,7 @@ def default_llvm_prefix(target: str) -> Path:
         if not program_files:
             raise BuildError("ProgramFiles is not set; pass --llvm-prefix explicitly.")
         return Path(program_files) / "LLVM"
-    return Path("/usr/lib/llvm-21")
+    return Path("/usr/lib/llvm-22")
 
 
 def create_environment(options: argparse.Namespace) -> BuildEnvironment:
@@ -102,7 +102,7 @@ def create_environment(options: argparse.Namespace) -> BuildEnvironment:
     llvm_prefix = llvm_prefix.resolve()
     if not llvm_prefix.is_dir():
         raise BuildError(
-            f"LLVM prefix does not exist: {llvm_prefix}. Install LLVM 21 or pass --llvm-prefix."
+            f"LLVM prefix does not exist: {llvm_prefix}. Install LLVM 22 or pass --llvm-prefix."
         )
     llvm_lib_dir = options.llvm_lib_dir or (
         Path(os.environ["LLVM_LIB_DIR"]) if "LLVM_LIB_DIR" in os.environ else None
@@ -117,7 +117,7 @@ def create_environment(options: argparse.Namespace) -> BuildEnvironment:
         target=target,
         zig=options.zig or os.environ.get("ZIG", "zig"),
         llvm_prefix=llvm_prefix,
-        llvm_config=options.llvm_config or os.environ.get("LLVM_CONFIG", "llvm-config-21"),
+        llvm_config=options.llvm_config or os.environ.get("LLVM_CONFIG", "llvm-config-22"),
         llvm_lib_dir=llvm_lib_dir.resolve() if llvm_lib_dir else None,
         llvm_runtime_dir=llvm_runtime_dir.resolve() if llvm_runtime_dir else None,
     )
@@ -236,7 +236,7 @@ def build_backend(environment: BuildEnvironment, publish: bool) -> BackendArtifa
     link_args = (
         str(environment.backend_dir / "zig-out/lib/libzorb-llvm.a"),
         f"-L{llvm_lib_dir}",
-        "-lLLVM-21",
+        "-lLLVM-22",
         f"-Wl,-rpath,{llvm_lib_dir}",
         "-ldl",
         "-lpthread",

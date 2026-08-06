@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Switched the LLVM toolchain from 21.1.8 to 22.1.8. This updates the checked-in
+  C header snapshot, local/bootstrap defaults, CI and release pins, Windows
+  installer checksum, and the static component dependencies required by LLVM
+  22.
 - Native task and async fibers now preserve their complete x86_64 and AArch64
   context-switch sequences, including AArch64's callee-saved SIMD registers,
   isolate raw AArch64 switching from native O0 argument-spill frames, remain
@@ -16,7 +20,7 @@ All notable changes to this project will be documented in this file.
   diagnostics. Allocation failures remain operational errors rather than
   source diagnostics.
 - Windows CI and publishing now install the checksum-pinned official LLVM
-  21.1.8 release with bounded download retries instead of depending on the
+  22.1.8 release with bounded download retries instead of depending on the
   Chocolatey community feed.
 - The native frontend now emits non-fatal structured warnings with stable
   codes for mixed-signedness comparisons, suspicious pointer alignment, and

@@ -23,9 +23,9 @@ jobs:
         run: |
           . /etc/os-release
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-21-dev lld-21 g++
+          sudo apt-get install -y llvm-22-dev lld-22 g++
 
       - name: Install Zig 0.16
         run: |
@@ -39,9 +39,9 @@ jobs:
           path: |
             backend/llvm/.zig-cache
             ~/.cache/zig
-          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
+          key: ${{ runner.os }}-zig-0.16.0-llvm22-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
-            ${{ runner.os }}-zig-0.16.0-llvm21-
+            ${{ runner.os }}-zig-0.16.0-llvm22-
 
       - name: Build LLVM backend
         run: |
@@ -77,9 +77,9 @@ jobs:
         run: |
           . /etc/os-release
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-21-dev lld-21 g++ gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+          sudo apt-get install -y llvm-22-dev lld-22 g++ gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
 
       - name: Install Zig 0.16
         run: |
@@ -93,9 +93,9 @@ jobs:
           path: |
             backend/llvm/.zig-cache
             ~/.cache/zig
-          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
+          key: ${{ runner.os }}-zig-0.16.0-llvm22-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
-            ${{ runner.os }}-zig-0.16.0-llvm21-
+            ${{ runner.os }}-zig-0.16.0-llvm22-
 
       - name: Build LLVM backend
         run: |
@@ -137,9 +137,9 @@ jobs:
           test "$(uname -m)" = "aarch64"
           . /etc/os-release
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-21-dev lld-21 g++ minisign
+          sudo apt-get install -y llvm-22-dev lld-22 g++ minisign
           bash scripts/install-zig-linux.sh aarch64
           echo "$PWD/zig-aarch64-linux-0.16.0" >> "$GITHUB_PATH"
 
@@ -149,9 +149,9 @@ jobs:
           path: |
             backend/llvm/.zig-cache
             ~/.cache/zig
-          key: ${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm22-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-
+            ${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm22-
 
       - name: Publish native ARM64 compiler without .NET
         run: |
@@ -225,9 +225,9 @@ jobs:
         run: |
           . /etc/os-release
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-21-dev lld-21 g++
+          sudo apt-get install -y llvm-22-dev lld-22 g++
           curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
           tar -xf zig.tar.xz
           echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
@@ -275,9 +275,9 @@ jobs:
         run: |
           . /etc/os-release
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-21-dev lld-21 g++
+          sudo apt-get install -y llvm-22-dev lld-22 g++
           curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
           tar -xf zig.tar.xz
           echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
@@ -307,7 +307,7 @@ jobs:
       - name: Setup MSVC developer command prompt
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Install LLVM 21 and Zig 0.16
+      - name: Install LLVM 22 and Zig 0.16
         shell: pwsh
         run: |
           ./scripts/install-llvm-windows.ps1
@@ -322,9 +322,9 @@ jobs:
           path: |
             backend/llvm/.zig-cache
             ~\AppData\Local\zig
-          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
+          key: ${{ runner.os }}-zig-0.16.0-llvm22-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
-            ${{ runner.os }}-zig-0.16.0-llvm21-
+            ${{ runner.os }}-zig-0.16.0-llvm22-
 
       - name: Discover LLVM library paths
         shell: pwsh
@@ -433,9 +433,9 @@ jobs:
         run: |
           . /etc/os-release
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-21-dev lld-21 g++
+          sudo apt-get install -y llvm-22-dev lld-22 g++
           curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
           tar -xf zig.tar.xz
           echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
@@ -457,9 +457,9 @@ jobs:
           path: |
             backend/llvm/.zig-cache
             ~/.cache/zig
-          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
+          key: ${{ runner.os }}-zig-0.16.0-llvm22-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
-            ${{ runner.os }}-zig-0.16.0-llvm21-
+            ${{ runner.os }}-zig-0.16.0-llvm22-
 
       - name: Cache Zig build artifacts
         if: matrix.os == 'windows-latest'
@@ -468,9 +468,9 @@ jobs:
           path: |
             backend/llvm/.zig-cache
             ~\AppData\Local\zig
-          key: ${{ runner.os }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
+          key: ${{ runner.os }}-zig-0.16.0-llvm22-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
-            ${{ runner.os }}-zig-0.16.0-llvm21-
+            ${{ runner.os }}-zig-0.16.0-llvm22-
 
       - name: Compute version metadata
         id: version

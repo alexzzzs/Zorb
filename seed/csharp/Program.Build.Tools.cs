@@ -30,7 +30,7 @@ partial class Program
             return versionedPathCandidate;
 
         throw new ZorbCompilerException(
-            $"Unable to find {BareMetalLinkerExecutableName}. Set {BareMetalLinkerEnvironmentVariable} to its path. Install LLVM LLD 20 or reinstall the compiler package.");
+            $"Unable to find {BareMetalLinkerExecutableName}. Set {BareMetalLinkerEnvironmentVariable} to its path. Install LLVM LLD 22 or reinstall the compiler package.");
     }
     private static string? ResolvePackagedToolIfPresent(
         string executableName,

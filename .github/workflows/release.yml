@@ -48,9 +48,9 @@ jobs:
         run: |
           . /etc/os-release
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-21-dev g++ minisign
+          sudo apt-get install -y llvm-22-dev g++ minisign
           bash scripts/install-zig-linux.sh "${{ matrix.zig_arch }}"
           echo "$PWD/zig-${{ matrix.zig_arch }}-linux-0.16.0" >> "$GITHUB_PATH"
 
@@ -61,9 +61,9 @@ jobs:
           path: |
             backend/llvm/.zig-cache
             ~/.cache/zig
-          key: release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
+          key: release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm22-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
-            release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-
+            release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm22-
 
       - name: Install release toolchain
         if: matrix.platform == 'windows'
@@ -82,9 +82,9 @@ jobs:
           path: |
             backend/llvm/.zig-cache
             ~\AppData\Local\zig
-          key: release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
+          key: release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm22-${{ hashFiles('backend/llvm/build.zig', 'backend/llvm/src/**', 'backend/llvm/include/**') }}
           restore-keys: |
-            release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm21-
+            release-${{ runner.os }}-${{ runner.arch }}-zig-0.16.0-llvm22-
 
       - name: Discover LLVM library paths
         if: matrix.platform == 'windows'

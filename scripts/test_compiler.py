@@ -808,7 +808,7 @@ class NativeCompilerSuite:
         if platform.machine().lower() not in {"x86_64", "amd64"}:
             return
         linker = next(
-            (path for name in ("ld.lld-21", "ld.lld") if (path := shutil.which(name))),
+            (path for name in ("ld.lld-22", "ld.lld") if (path := shutil.which(name))),
             None,
         )
         if linker is None:

@@ -28,8 +28,8 @@ class BootstrapCompilerTests(unittest.TestCase):
             driver_entry=Path("/repo/compiler/driver/main.zorb"),
             target="host-linux",
             zig="zig",
-            llvm_prefix=Path("/usr/lib/llvm-21"),
-            llvm_config="llvm-config-21",
+            llvm_prefix=Path("/usr/lib/llvm-22"),
+            llvm_config="llvm-config-22",
             llvm_lib_dir=None,
             llvm_runtime_dir=None,
         )
@@ -48,8 +48,8 @@ class BootstrapCompilerTests(unittest.TestCase):
             driver_entry=Path("/repo/compiler/driver/main.zorb"),
             target="host-linux",
             zig="zig",
-            llvm_prefix=Path("/usr/lib/llvm-21"),
-            llvm_config="llvm-config-21",
+            llvm_prefix=Path("/usr/lib/llvm-22"),
+            llvm_config="llvm-config-22",
             llvm_lib_dir=Path("/custom/llvm/lib"),
             llvm_runtime_dir=None,
         )
@@ -81,7 +81,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         result = subprocess.CompletedProcess(
             args=("ldd", "zorb"),
             returncode=0,
-            stdout="libLLVM.so.21 => /usr/lib/libLLVM.so.21\n",
+            stdout="libLLVM.so.22 => /usr/lib/libLLVM.so.22\n",
             stderr="",
         )
         with patch("bootstrap_compiler.require_command", return_value="ldd"):

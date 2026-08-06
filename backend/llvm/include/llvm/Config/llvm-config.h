@@ -15,11 +15,11 @@
 #define LLVM_CONFIG_H
 
 /* Define if LLVM_ENABLE_DUMP is enabled */
-#define LLVM_ENABLE_DUMP
+/* #undef LLVM_ENABLE_DUMP */
 
 /* Target triple LLVM will generate code for by default */
 /* Doesn't use `cmakedefine` because it is allowed to be empty. */
-#define LLVM_DEFAULT_TARGET_TRIPLE "x86_64-pc-linux-gnu"
+#define LLVM_DEFAULT_TARGET_TRIPLE "x86_64-unknown-linux-gnu"
 
 /* Define if threads enabled */
 #define LLVM_ENABLE_THREADS 1
@@ -28,7 +28,7 @@
 #define LLVM_HAS_ATOMICS 1
 
 /* Host triple LLVM will be executed on */
-#define LLVM_HOST_TRIPLE "x86_64-pc-linux-gnu"
+#define LLVM_HOST_TRIPLE "x86_64-unknown-linux-gnu"
 
 /* LLVM architecture name for the native architecture, if available */
 #define LLVM_NATIVE_ARCH X86
@@ -64,10 +64,10 @@
 #define LLVM_USE_OPROFILE 0
 
 /* Define if we have the perf JIT-support library */
-#define LLVM_USE_PERF 1
+#define LLVM_USE_PERF 0
 
 /* Major version of the LLVM API */
-#define LLVM_VERSION_MAJOR 21
+#define LLVM_VERSION_MAJOR 22
 
 /* Minor version of the LLVM API */
 #define LLVM_VERSION_MINOR 1
@@ -76,7 +76,7 @@
 #define LLVM_VERSION_PATCH 8
 
 /* LLVM version string */
-#define LLVM_VERSION_STRING "21.1.8"
+#define LLVM_VERSION_STRING "22.1.8"
 
 /* Whether LLVM records statistics for use with GetStatistics(),
  * PrintStatistics() or PrintStatisticsJSON()
@@ -87,7 +87,7 @@
 /* #undef LLVM_WITH_Z3 */
 
 /* Define if we have curl and want to use it */
-#define LLVM_ENABLE_CURL 1
+/* #undef LLVM_ENABLE_CURL */
 
 /* Define if we have cpp-httplib and want to use it */
 /* #undef LLVM_ENABLE_HTTPLIB */
@@ -101,11 +101,14 @@
 /* Define if LLVM is using tflite */
 /* #undef LLVM_HAVE_TFLITE */
 
+/* Define if we want to check profile consistency in lit tests */
+/* #undef LLVM_ENABLE_PROFCHECK */
+
 /* Define to 1 if you have the <sysexits.h> header file. */
 #define HAVE_SYSEXITS_H 1
 
 /* Define if building libLLVM shared library */
-#define LLVM_BUILD_LLVM_DYLIB
+/* #undef LLVM_BUILD_LLVM_DYLIB */
 
 /* Define if building LLVM with BUILD_SHARED_LIBS */
 /* #undef LLVM_BUILD_SHARED_LIBS */
@@ -122,6 +125,9 @@
 /* Define if llvm_unreachable should be optimized with undefined behavior
  * in non assert builds */
 #define LLVM_UNREACHABLE_OPTIMIZE 1
+
+/* Define if building LLVM with LLVM_ENABLE_IO_SANDBOX */
+#define LLVM_ENABLE_IO_SANDBOX 0
 
 /* Define to 1 if you have the DIA SDK installed, and to 0 if you don't. */
 #define LLVM_ENABLE_DIA_SDK 0
@@ -142,5 +148,8 @@
 /* Define to 1 to enable expensive tracking of the origin of debug location
    coverage bugs, and to 0 otherwise. */
 #define LLVM_ENABLE_DEBUGLOC_TRACKING_ORIGIN 0
+
+/* Define to 1 to enable LLVM OnDisk Content Addressable Storage */
+#define LLVM_ENABLE_ONDISK_CAS 1
 
 #endif

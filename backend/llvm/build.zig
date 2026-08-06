@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
         []const u8,
         "llvm-prefix",
         "LLVM installation prefix",
-    ) orelse "/usr/lib/llvm-21";
+    ) orelse "/usr/lib/llvm-22";
     const llvm_include_dir = b.option(
         []const u8,
         "llvm-include-dir",
@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) void {
         []const u8,
         "llvm-library",
         "LLVM C API library name for shared linking",
-    ) orelse if (target.result.os.tag == .windows) "LLVM-C" else "LLVM-21";
+    ) orelse if (target.result.os.tag == .windows) "LLVM-C" else "LLVM-22";
 
     const llvm_header = b.addTranslateC(.{
         .root_source_file = b.path("include/zorb_llvm.h"),
@@ -136,6 +136,7 @@ fn linkStaticLlvm(module: *std.Build.Module, cxx_runtime: []const u8) void {
         "LLVMipo",
         "LLVMLinker",
         "LLVMFrontendOpenMP",
+        "LLVMFrontendHLSL",
         "LLVMFrontendAtomic",
         "LLVMFrontendOffloading",
         "LLVMAArch64Disassembler",
@@ -180,6 +181,7 @@ fn linkStaticLlvm(module: *std.Build.Module, cxx_runtime: []const u8) void {
         "LLVMDebugInfoDWARF",
         "LLVMDebugInfoDWARFLowLevel",
         "LLVMObject",
+        "LLVMObjectYAML",
         "LLVMTextAPI",
         "LLVMMCParser",
         "LLVMIRReader",
@@ -204,5 +206,10 @@ fn linkStaticLlvm(module: *std.Build.Module, cxx_runtime: []const u8) void {
     module.addObjectFile(.{ .cwd_relative = cxx_runtime });
     for ([_][]const u8{ "rt", "dl", "m", "z", "zstd", "xml2" }) |library| {
         module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
+    }
+    if (module.resolved_target) |resolved_target| {
+        if (resolved_target.result.os.tag == .linux) {
+            module.linkSystemLibrary("gcc_s", .{ .use_pkg_config = .no });
+        }
     }
 }

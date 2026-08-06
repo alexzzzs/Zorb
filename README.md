@@ -1,7 +1,7 @@
 # Zorb
 
 Zorb is a small ahead-of-time compiler for a systems language. Native
-compilation lowers through a Zig 0.16 backend over LLVM 21.
+compilation lowers through a Zig 0.16 backend over LLVM 22.
 
 The normal compiler is a single `zorb` executable: a Zorb-written frontend
 paired with the Zig/LLVM backend through a static C ABI library. A pinned
@@ -127,7 +127,7 @@ Linux x64, Linux ARM64, and Windows x64 normally use the pinned preceding
 release. The legacy shell entry point `./scripts/bootstrap-compiler.sh` invokes
 the same Python implementation.
 
-Backend development requires Zig 0.16 and LLVM 21 development headers and
+Backend development requires Zig 0.16 and LLVM 22 development headers and
 libraries. The development bootstrap links the local shared LLVM library. The
 Linux publisher statically links LLVM into one `zorb` executable; neither path
 launches a separate backend process.

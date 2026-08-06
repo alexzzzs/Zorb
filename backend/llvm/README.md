@@ -1,6 +1,6 @@
 # Zorb LLVM Backend
 
-This project is the Zig 0.16/LLVM 21 code-generation backend for Zorb. It reads
+This project is the Zig 0.16/LLVM 22 code-generation backend for Zorb. It reads
 the versioned JSON backend IR emitted by the native `zorb` driver or recovery
 seed and writes LLVM IR, bitcode, assembly, or a target object file.
 
@@ -12,17 +12,30 @@ test and debugging tool.
 
 ## Development Build
 
-Install Zig 0.16 and LLVM 21 development headers and libraries, then run:
+Install Zig 0.16 and LLVM 22 development headers and libraries, then run:
 
 ```bash
 zig build test
-zig build -Dllvm-prefix=/usr/lib/llvm-21
+zig build -Dllvm-prefix=/usr/lib/llvm-22
 ```
 
 The default build links against the shared LLVM C API for quick local
-iteration. C API declarations are translated from the checked-in LLVM 21.1.8
+iteration. C API declarations are translated from the checked-in LLVM 22.1.8
 header snapshot so Linux and Windows builds use the same known interface. Use
-`-Dllvm-include-dir=...` to validate against another LLVM 21 installation.
+`-Dllvm-include-dir=...` to validate against another LLVM 22 installation.
+
+For a custom installation such as `$HOME/.local/llvm/22.1.8`, pass its prefix
+and library directory explicitly. If the installation contains only static
+LLVM archives, use the static build:
+
+```bash
+llvm_prefix="$HOME/.local/llvm/22.1.8"
+zig build \
+  -Dstatic-llvm=true \
+  -Dllvm-prefix="$llvm_prefix" \
+  -Dllvm-lib-dir="$llvm_prefix/lib" \
+  -Dcxx-runtime="$(g++ -print-file-name=libstdc++.so)"
+```
 
 ## Static LLVM Build
 
@@ -32,7 +45,7 @@ Linux release packages statically link LLVM component archives:
 zig build \
   -Doptimize=ReleaseSafe \
   -Dstatic-llvm=true \
-  -Dllvm-prefix=/usr/lib/llvm-21 \
+  -Dllvm-prefix=/usr/lib/llvm-22 \
   -Dcxx-runtime="$(g++ -print-file-name=libstdc++.so)"
 ```
 
