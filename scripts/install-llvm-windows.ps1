@@ -1,6 +1,6 @@
 param(
     [string]$Version = "22.1.8",
-    [string]$ExpectedSha256 = "16e5709785fef73c854646241c4a92b5cd574318d1b33c63330dd7721903e55c",
+    [string]$ExpectedSha256 = "16e5709785fef73c854646241c4a92c5cd574318d1b33c63330dd7721903e55c",
     [int]$MaxDownloadAttempts = 4
 )
 
