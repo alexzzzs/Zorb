@@ -15,6 +15,26 @@ python scripts/bootstrap_seed.py resolve
 python scripts/bootstrap_seed.py resolve host-windows
 ```
 
+## Release packaging and provenance
+
+Release ZIPs are created by the deterministic, standard-library-only helper:
+
+```bash
+python scripts/package_release.py <package-dir> <release.zip> \
+  --target <target> --version <version> --commit <commit>
+```
+
+The helper sorts all archive paths as POSIX paths and fixes ZIP timestamps,
+permissions, and metadata. It writes the canonical
+`<release>.provenance.json` sidecar with the target, version, commit, and
+SHA-256 digest of every packaged file. Release CI also publishes `SHA256SUMS`,
+`SHA256SUMS.minisig`, and a `.minisig` signature beside each provenance file;
+signing uses the GitHub Actions `MINISIGN_SECRET_KEY` secret, which is never
+stored in this repository.
+
+The existing unsigned v0.2.3 entries in `manifest.json` remain SHA-256-only
+until signed metadata is published. The pinned URLs and digests are unchanged.
+
 Local seed packages live under `bootstrap/artifacts/<target>/` and remain
 ignored by Git. Cache an already-built integrated compiler for offline use:
 

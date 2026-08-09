@@ -18,6 +18,28 @@ library, and supports Linux x64, Linux ARM64, and Windows x64. The shell and
 PowerShell scripts in `scripts/` are compatibility wrappers around the Python
 commands.
 
+## Release provenance
+
+Release jobs package Linux and Windows output with the same deterministic
+standard-library helper:
+
+```bash
+python scripts/package_release.py <package-dir> <release.zip> \
+  --target <target> --version <version> --commit <commit>
+```
+
+It recursively records sorted POSIX paths, fixed ZIP timestamps and file
+permissions, and no host-specific archive metadata. The adjacent canonical
+`<release>.provenance.json` records the target, version, commit, and SHA-256
+digest for every packaged file. The release then publishes `SHA256SUMS` and
+signatures for both that checksum file and every provenance manifest. Signing
+requires the GitHub Actions `MINISIGN_SECRET_KEY` secret; no private key is
+checked into the repository.
+
+The existing unsigned v0.2.3 bootstrap manifest remains SHA-256-only until
+signed metadata is published. Its pinned URLs and digests are deliberately
+unchanged, and bootstrap continues to verify those SHA-256 values directly.
+
 The resulting `zorb` executable implements `check`, `build`, and `run` and does
 not invoke a separate backend executable. `--target`, `--output-kind`, and
 `-O0` through `-O3` are accepted by `build`; `run` accepts target and
