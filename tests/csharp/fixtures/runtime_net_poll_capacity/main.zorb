@@ -1,0 +1,49 @@
+import "../../../../runtime/std/errors.zorb"
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/net.zorb"
+import "../../../../runtime/std/os.zorb"
+
+const POLL_COUNT: i64 = 65
+
+fn _start() {
+    if !std.net.is_supported() {
+        std.io.print("net unsupported\n")
+        std.os.exit(0)
+        return
+    }
+
+    fds: [POLL_COUNT]std.net.PollFd
+    i: i64 = 0
+    while i < POLL_COUNT {
+        fds[i].fd = -1
+        fds[i].events = cast(i16, 0)
+        fds[i].revents = cast(i16, 0)
+        i = i + 1
+    }
+
+    result: i64 = std.net.poll(fds, POLL_COUNT, 0)
+    if Builtin.IsWindows {
+        if result != -cast(i64, error.InvalidArgument) {
+            std.os.exit(1)
+            return
+        }
+
+        std.io.print("windows poll capacity rejected\n")
+        std.os.exit(0)
+        return
+    }
+
+    if Builtin.IsLinux && (Builtin.IsX86_64 || Builtin.IsAArch64) {
+        if result != 0 {
+            std.os.exit(2)
+            return
+        }
+
+        std.io.print("linux poll capacity accepted\n")
+        std.os.exit(0)
+        return
+    }
+
+    std.io.print("net unsupported\n")
+    std.os.exit(0)
+}

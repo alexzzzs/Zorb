@@ -42,6 +42,7 @@ struct std.net.PollTimeout {
 wsa_started: bool = false
 wsa_start_status: i32 = 0
 wsa_data_storage: [512]u8
+const WINDOWS_POLL_CAPACITY: i64 = 64
 
 fn std.net.pollin() -> i16 {
     if Builtin.IsWindows {
@@ -517,13 +518,18 @@ export fn std.net.poll(fds: *std.net.PollFd, count: i64, timeout_ms: i32) -> i64
     }
 
     if Builtin.IsWindows {
+        // WSAPoll receives this fixed staging buffer, so reject larger caller counts before copying or calling it.
+        if count > WINDOWS_POLL_CAPACITY {
+            return -cast(i64, error.InvalidArgument)
+        }
+
         if std.net.ensure_windows_started() != 0 {
             return -cast(i64, error.IOError)
         }
 
-        poll_storage: [64]std.net.WinPollFd
+        poll_storage: [WINDOWS_POLL_CAPACITY]std.net.WinPollFd
         i: i64 = 0
-        while i < count && i < 64 {
+        while i < count && i < WINDOWS_POLL_CAPACITY {
             poll_storage[i].fd = cast(i64, fds[i].fd)
             poll_storage[i].events = fds[i].events
             poll_storage[i].revents = cast(i16, 0)
@@ -536,7 +542,7 @@ export fn std.net.poll(fds: *std.net.PollFd, count: i64, timeout_ms: i32) -> i64
         }
 
         i = 0
-        while i < count && i < 64 {
+        while i < count && i < WINDOWS_POLL_CAPACITY {
             fds[i].revents = poll_storage[i].revents
             i = i + 1
         }
