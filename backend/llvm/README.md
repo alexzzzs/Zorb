@@ -82,10 +82,20 @@ required by the integrated compiler.
 
 ## Supported Output Targets
 
-- Linux GNU x86_64 and AArch64 on Linux hosts, including AArch64 cross-linking
-  through `aarch64-linux-gnu-gcc` and QEMU-backed execution.
-- Windows MSVC x86_64 and AArch64 on matching Windows hosts.
-- Bare-metal x86_64 ELF from x86_64 Linux or Windows hosts.
+The backend supports these target policies independently of which host binaries
+are currently shipped:
+
+| Target policy | Backend target support | Currently shipped package hosts |
+| --- | --- | --- |
+| `host-linux` | Linux x86_64 host | Linux x64 |
+| `freestanding-linux` | Linux x86_64 host | Linux x64 |
+| `host-linux-aarch64` | Linux x86_64 with `aarch64-linux-gnu-gcc` and QEMU, or native Linux AArch64 | Linux x64, Linux ARM64 |
+| `freestanding-linux-aarch64` | Linux x86_64 with `aarch64-linux-gnu-gcc`, or native Linux AArch64 | Linux x64, Linux ARM64 |
+| `bare-metal-x86_64` | x86_64 Linux or Windows host | Linux x64, Windows x64 |
+| `host-windows` | Matching Windows x86_64 or Windows ARM64 host/toolchain | Windows x64 |
+
+Windows ARM64 requires a matching Windows ARM64 host and toolchain. It is
+backend-supported, but is not a shipped release artifact today.
 
 The integrated API receives a stable target policy name separately from the
 LLVM triple. This keeps target selection in the Zorb driver while the backend
