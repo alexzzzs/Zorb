@@ -231,12 +231,28 @@ jobs:
       - name: Generate checksums and signatures
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
+          MINISIGN_PUBLIC_KEY_FINGERPRINT: ${{ secrets.MINISIGN_PUBLIC_KEY_FINGERPRINT }}
         run: |
           set -euo pipefail
-          if [[ -z "${MINISIGN_SECRET_KEY:-}" ]]; then
-            echo "::error::The MINISIGN_SECRET_KEY GitHub secret is required to sign release metadata."
+          if [[ -z "${MINISIGN_SECRET_KEY:-}" || -z "${MINISIGN_PUBLIC_KEY:-}" || -z "${MINISIGN_PUBLIC_KEY_FINGERPRINT:-}" ]]; then
+            echo "::error::MINISIGN_SECRET_KEY, MINISIGN_PUBLIC_KEY, and MINISIGN_PUBLIC_KEY_FINGERPRINT GitHub secrets are required for release signing."
             exit 1
           fi
+
+          public_key_path="release-assets/MINISIGN_PUBLIC_KEY"
+          printf '%s' "$MINISIGN_PUBLIC_KEY" > "$public_key_path"
+          public_key_sha256="$(sha256sum "$public_key_path" | cut -d ' ' -f1)"
+          expected_public_key_fingerprint="${MINISIGN_PUBLIC_KEY_FINGERPRINT,,}"
+          if [[ ! "$expected_public_key_fingerprint" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::MINISIGN_PUBLIC_KEY_FINGERPRINT must be a 64-character SHA-256 hex digest."
+            exit 1
+          fi
+          if [[ "$public_key_sha256" != "$expected_public_key_fingerprint" ]]; then
+            echo "::error::MINISIGN_PUBLIC_KEY does not match MINISIGN_PUBLIC_KEY_FINGERPRINT."
+            exit 1
+          fi
+          printf '%s  MINISIGN_PUBLIC_KEY\n' "$public_key_sha256" > release-assets/MINISIGN_PUBLIC_KEY.sha256
 
           mapfile -t release_files < <(
             find release-assets -maxdepth 1 -type f \

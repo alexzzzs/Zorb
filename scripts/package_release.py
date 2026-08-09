@@ -104,6 +104,18 @@ def provenance_path_for_archive(output_zip: Path) -> Path:
     return Path(f"{output_zip}{PROVENANCE_SUFFIX}")
 
 
+def _reject_outputs_inside_source(
+    source_root: Path, output_zip: Path, provenance_path: Path
+) -> None:
+    for label, output_path in (
+        ("ZIP output", output_zip),
+        ("provenance output", provenance_path),
+    ):
+        resolved_output_path = output_path.resolve()
+        if resolved_output_path == source_root or source_root in resolved_output_path.parents:
+            raise ValueError(f"{label} must not be inside source directory: {output_path}")
+
+
 def _zip_info(relative_path: str) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(relative_path)
     info.date_time = ZIP_TIMESTAMP
@@ -182,10 +194,14 @@ def package_release(
 ) -> tuple[Path, Path]:
     """Create an archive and adjacent provenance manifest; return both paths."""
 
-    source_files = iter_source_files(source_dir)
-    manifest = _manifest_for_files(source_files, target, version, commit)
+    source_dir = Path(source_dir)
+    source_root = source_dir.resolve()
     output_zip = Path(output_zip)
     provenance_path = provenance_path_for_archive(output_zip)
+    _reject_outputs_inside_source(source_root, output_zip, provenance_path)
+
+    source_files = iter_source_files(source_dir)
+    manifest = _manifest_for_files(source_files, target, version, commit)
     create_deterministic_zip(source_files, output_zip)
     write_canonical_json(manifest, provenance_path)
     return output_zip, provenance_path

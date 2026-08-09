@@ -29,8 +29,22 @@ permissions, and metadata. It writes the canonical
 `<release>.provenance.json` sidecar with the target, version, commit, and
 SHA-256 digest of every packaged file. Release CI also publishes `SHA256SUMS`,
 `SHA256SUMS.minisig`, and a `.minisig` signature beside each provenance file;
-signing uses the GitHub Actions `MINISIGN_SECRET_KEY` secret, which is never
-stored in this repository.
+signing uses the protected GitHub Actions `MINISIGN_SECRET_KEY`,
+`MINISIGN_PUBLIC_KEY`, and `MINISIGN_PUBLIC_KEY_FINGERPRINT` secrets. CI fails
+closed unless the SHA-256 of the published public key matches the protected
+fingerprint, and publishes `MINISIGN_PUBLIC_KEY` with its
+`MINISIGN_PUBLIC_KEY.sha256` checksum. No private key is stored in this
+repository.
+
+After downloading the release metadata, verify the public key and signatures:
+
+```bash
+sha256sum -c MINISIGN_PUBLIC_KEY.sha256
+minisign -Vm SHA256SUMS -x SHA256SUMS.minisig -p MINISIGN_PUBLIC_KEY
+for manifest in *.provenance.json; do
+  minisign -Vm "$manifest" -x "$manifest.minisig" -p MINISIGN_PUBLIC_KEY
+done
+```
 
 The existing unsigned v0.2.3 entries in `manifest.json` remain SHA-256-only
 until signed metadata is published. The pinned URLs and digests are unchanged.

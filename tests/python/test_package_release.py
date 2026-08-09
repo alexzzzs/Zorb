@@ -89,6 +89,18 @@ class PackageReleaseTests(unittest.TestCase):
                     {name: (source / name).read_bytes() for name in names},
                 )
 
+    def test_outputs_inside_source_directory_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "release"
+            self._create_source(source, ["zorb"])
+            output_zip = source / "zorb.zip"
+
+            with self.assertRaisesRegex(ValueError, "inside source directory"):
+                package_release(source, output_zip, "host-linux", "0.3.0", "deadbeef")
+
+            self.assertFalse(output_zip.exists())
+            self.assertFalse((source / "zorb.provenance.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
