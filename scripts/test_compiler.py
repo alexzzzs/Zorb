@@ -45,6 +45,11 @@ DEFAULT_COMMAND_TIMEOUT_SECONDS = 60
 COMMAND_TIMEOUT_ENVIRONMENT_VARIABLE = "ZORB_TEST_COMMAND_TIMEOUT_SECONDS"
 BOOTSTRAP_TIMEOUT_SECONDS = 600
 CONCURRENT_RUN_COUNT = 8
+CHECK_JSON_OPTION = "--json"
+USAGE_EXIT_CODE = 64
+JSON_DIAGNOSTIC_FIELDS = frozenset(
+    {"kind", "severity", "phase", "code", "file", "line", "column", "length", "message"}
+)
 VALID_CLASSIFICATIONS = {"deferred", "native-verified", "differential"}
 VALID_OUTCOMES = {
     "success",
@@ -442,6 +447,37 @@ def diagnostic_phase(result: CommandResult) -> str | None:
     return expected_phase_from_code(match.group("code")) if match else None
 
 
+def parse_json_diagnostics(result: CommandResult) -> list[dict[str, object]]:
+    if result.stderr:
+        raise SuiteFailure(f"JSON check wrote to stderr: {result.stderr.strip()}")
+
+    diagnostics: list[dict[str, object]] = []
+    for line_number, line in enumerate(normalize_newlines(result.stdout).splitlines(), 1):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise SuiteFailure(f"invalid JSON diagnostic line {line_number}: {error}") from error
+        if not isinstance(payload, dict):
+            raise SuiteFailure(f"JSON diagnostic line {line_number} is not an object")
+        if set(payload) != JSON_DIAGNOSTIC_FIELDS:
+            raise SuiteFailure(
+                f"JSON diagnostic line {line_number} has unstable fields: {sorted(payload)}"
+            )
+        if payload["kind"] != "diagnostic":
+            raise SuiteFailure(f"JSON diagnostic line {line_number} has an invalid kind")
+        if payload["severity"] not in {"error", "warning"}:
+            raise SuiteFailure(f"JSON diagnostic line {line_number} has an invalid severity")
+        for field in ("phase", "code", "file", "message"):
+            if not isinstance(payload[field], str):
+                raise SuiteFailure(f"JSON diagnostic line {line_number} has a non-string {field}")
+        for field in ("line", "column", "length"):
+            value = payload[field]
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise SuiteFailure(f"JSON diagnostic line {line_number} has an invalid {field}")
+        diagnostics.append(payload)
+    return diagnostics
+
+
 def format_command_failure(context: str, result: CommandResult) -> str:
     details = result.output.strip()
     if len(details) > 4000:
@@ -490,9 +526,11 @@ class NativeCompilerSuite:
                     ),
                 )
 
-            if not self.frontend_only and self.selected_case is None:
-                self._run_runtime_tests(cases, output_root, exclusions)
-                self._run_named("cli_contract", lambda: self._test_cli_contract(output_root))
+            if self.selected_case is None:
+                self._run_named("cli_json_diagnostics", self._test_cli_json_diagnostics)
+                if not self.frontend_only:
+                    self._run_runtime_tests(cases, output_root, exclusions)
+                    self._run_named("cli_contract", lambda: self._test_cli_contract(output_root))
 
         try:
             self.exclusion_tracker.require_no_stale_exclusions()
@@ -716,6 +754,111 @@ class NativeCompilerSuite:
             raise SuiteFailure(
                 f"stderr mismatch\nexpected: {expectation.stderr!r}\nactual:   {actual_stderr!r}"
             )
+
+    def _test_cli_json_diagnostics(self) -> None:
+        cases = (
+            (
+                "semantic",
+                self.project_root / "tests/csharp/fixtures/bool_condition_required/main.zorb",
+                1,
+                {
+                    "severity": "error",
+                    "phase": "semantic",
+                    "code": "type.condition-not-bool",
+                    "file": "main.zorb",
+                    "line": 3,
+                    "column": 8,
+                    "message": "condition must be bool",
+                },
+            ),
+            (
+                "parse",
+                self.project_root / "tests/csharp/fixtures/parse_parameter_missing_colon/main.zorb",
+                1,
+                {
+                    "severity": "error",
+                    "phase": "parse",
+                    "code": "parse.invalid-syntax",
+                    "file": "main.zorb",
+                    "line": 1,
+                    "column": 17,
+                    "message": "invalid syntax",
+                },
+            ),
+            (
+                "import",
+                self.project_root / "compiler/self-check/fixtures/import_missing/main.zorb",
+                1,
+                {
+                    "severity": "error",
+                    "phase": "import",
+                    "code": "import.not-found",
+                    "file": "main.zorb",
+                    "line": 1,
+                    "column": 1,
+                    "message": "unable to read source file",
+                },
+            ),
+            (
+                "warning",
+                self.project_root / "tests/csharp/fixtures/warning_unreachable_after_return/main.zorb",
+                0,
+                {
+                    "severity": "warning",
+                    "phase": "semantic",
+                    "code": "flow.unreachable",
+                    "file": "main.zorb",
+                    "line": 3,
+                    "column": 5,
+                    "message": "Unreachable statement.",
+                },
+            ),
+            (
+                "success",
+                self.project_root / "tests/csharp/fixtures/runtime_hello_world/main.zorb",
+                0,
+                None,
+            ),
+        )
+        for name, source, expected_exit, expected in cases:
+            result = self._run_command([self.compiler, "check", source, CHECK_JSON_OPTION])
+            if result.returncode != expected_exit:
+                raise SuiteFailure(
+                    format_command_failure(f"JSON check/{name} returned the wrong exit code", result)
+                )
+            diagnostics = parse_json_diagnostics(result)
+            if expected is None:
+                if diagnostics:
+                    raise SuiteFailure(f"JSON check/{name} emitted unexpected diagnostics")
+                continue
+            if len(diagnostics) != 1:
+                raise SuiteFailure(
+                    f"JSON check/{name} emitted {len(diagnostics)} diagnostics, expected one"
+                )
+            actual = diagnostics[0]
+            for field, value in expected.items():
+                actual_value = actual[field]
+                if field == "file":
+                    actual_value = Path(str(actual_value)).name
+                if actual_value != value:
+                    raise SuiteFailure(
+                        f"JSON check/{name} field {field!r}: expected {value!r}, got {actual_value!r}"
+                    )
+
+        malformed = self._run_command(
+            [
+                self.compiler,
+                "check",
+                self.project_root / "tests/csharp/fixtures/runtime_hello_world/main.zorb",
+                "--unknown-check-option",
+            ]
+        )
+        if malformed.returncode != USAGE_EXIT_CODE or malformed.stdout:
+            raise SuiteFailure(
+                format_command_failure("malformed JSON check option was not rejected as usage", malformed)
+            )
+        if "usage: zorb check" not in malformed.stderr:
+            raise SuiteFailure("malformed JSON check option did not print check usage")
 
     def _test_advanced_examples_lowering(self, output_root: Path) -> None:
         cases = (

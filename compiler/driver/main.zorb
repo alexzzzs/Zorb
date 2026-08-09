@@ -26,6 +26,8 @@ extern fn zorb_llvm_link_object(
 ) -> i32
 
 const ZORB_DRIVER_HEAP_BYTES: i64 = 1073741824
+const ZORB_USAGE_EXIT_CODE: i64 = 64
+const ZORB_CHECK_JSON_OPTION: string = "--json"
 
 fn zorb_default_target() -> string {
     if Builtin.IsWindows { return "host-windows" }
@@ -75,7 +77,9 @@ fn zorb_link_target(target: string) -> string {
 }
 
 fn zorb_usage() {
-    std.io.eprint("usage: zorb check <input.zorb>\n")
+    std.io.eprint("usage: zorb check <input.zorb> [")
+    std.io.eprint(ZORB_CHECK_JSON_OPTION)
+    std.io.eprint("]\n")
     std.io.eprint("       zorb build <input.zorb> [-o output] [--target name-or-triple] [--output-kind executable|llvm-ir|object|assembly|bitcode] [--linker-script path] [--emit-linker-script path] [-O0|-O1|-O2|-O3] [--native-link-args <arg>...]\n")
     std.io.eprint("       zorb run <input.zorb> [--target name-or-triple] [-O0|-O1|-O2|-O3]\n")
 }
@@ -124,11 +128,12 @@ fn zorb_write_backend_ir(path: string, module: ZBackendIrModule) !i32 {
     return 0
 }
 
-fn zorb_check(input: string) -> i64 {
+fn zorb_check(input: string, machine_output: bool) -> i64 {
     session: ZFrontendSession = ZFrontendSession.init(ZORB_DRIVER_HEAP_BYTES) catch |err| {
         std.io.eprint("zorb: unable to initialize compiler session\n")
         return 1
     }
+    ZFrontendSession.set_machine_output(&session, machine_output)
     result: i64 = ZFrontendSession.check_file(&session, input)
     ZFrontendSession.deinit(&session)
     return result
@@ -247,22 +252,29 @@ fn main(argc: i64, argv: **u8) -> i64 {
     args: std.process.Arguments = std.process.from_native(argc, argv)
     if std.process.len(args) < 3 {
         zorb_usage()
-        return 64
+        return ZORB_USAGE_EXIT_CODE
     }
     command: string = std.process.at(args, 1)
     input: string = std.process.at(args, 2)
     if std.str.eql(command, "check") {
-        if std.process.len(args) != 3 {
+        machine_output: bool = false
+        if std.process.len(args) == 4 {
+            if !std.str.eql(std.process.at(args, 3), ZORB_CHECK_JSON_OPTION) {
+                zorb_usage()
+                return ZORB_USAGE_EXIT_CODE
+            }
+            machine_output = true
+        } else if std.process.len(args) != 3 {
             zorb_usage()
-            return 64
+            return ZORB_USAGE_EXIT_CODE
         }
-        return zorb_check(input)
+        return zorb_check(input, machine_output)
     }
     is_build: bool = std.str.eql(command, "build")
     is_run: bool = std.str.eql(command, "run")
     if !is_build && !is_run {
         zorb_usage()
-        return 64
+        return ZORB_USAGE_EXIT_CODE
     }
 
     output: string = "out"
@@ -281,7 +293,7 @@ fn main(argc: i64, argv: **u8) -> i64 {
         if (std.str.eql(option, "-o") || std.str.eql(option, "--output")) && index + 1 < std.process.len(args) {
             if is_run {
                 std.io.eprint("zorb: run does not accept an output path\n")
-                return 64
+                return ZORB_USAGE_EXIT_CODE
             }
             output = std.process.at(args, index + 1)
             output_set = true
@@ -316,7 +328,7 @@ fn main(argc: i64, argv: **u8) -> i64 {
                 std.io.eprint("zorb: unknown output kind ")
                 std.io.eprint(requested_kind)
                 std.io.eprint("\n")
-                return 64
+                return ZORB_USAGE_EXIT_CODE
             }
             index = index + 2
             continue
@@ -327,7 +339,7 @@ fn main(argc: i64, argv: **u8) -> i64 {
             native_arg_count = std.process.len(args) - index - 1
             if native_arg_count == 0 {
                 std.io.eprint("zorb: --native-link-args requires at least one argument\n")
-                return 64
+                return ZORB_USAGE_EXIT_CODE
             }
             native_args = cast(
                 **u8,
@@ -344,17 +356,17 @@ fn main(argc: i64, argv: **u8) -> i64 {
             std.io.eprint("zorb: unknown option ")
             std.io.eprint(option)
             std.io.eprint("\n")
-            return 64
+            return ZORB_USAGE_EXIT_CODE
         }
         index = index + 1
     }
     if is_run && !std.str.eql(output_kind, "executable") {
         std.io.eprint("zorb: run requires executable output\n")
-        return 64
+        return ZORB_USAGE_EXIT_CODE
     }
     if native_arg_count > 0 && !std.str.eql(output_kind, "executable") {
         std.io.eprint("zorb: --native-link-args requires executable output\n")
-        return 64
+        return ZORB_USAGE_EXIT_CODE
     }
     link_target: string = zorb_link_target(target)
     if std.str.eql(output_kind, "executable") && std.str.len(link_target) == 0 {
