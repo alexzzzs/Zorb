@@ -1,2 +1,6 @@
+define i32 @less(i32 %lhs, i64 %rhs)
+zext i32
 icmp slt i64
-icmp eq i32
+define i32 @equal(i8 %lhs, i16 %rhs)
+zext i8
+icmp eq i16

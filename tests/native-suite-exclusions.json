@@ -6,10 +6,7 @@
       "self_check_builtin_compile_error": "This Linux-success probe intentionally activates Builtin.CompileError on Windows."
     }
   },
-  "llvm_assertions": {
-    "generic_function_value_deferred_inference_codegen": "The legacy assertion pins recovery-compiler symbol spelling rather than the Backend IR contract.",
-    "numeric_mixed_comparison_codegen": "The legacy assertion pins recovery-compiler integer promotion details rather than runtime behavior."
-  },
+  "llvm_assertions": {},
   "runtime": {},
   "runtime_by_target": {},
   "warnings": {}
