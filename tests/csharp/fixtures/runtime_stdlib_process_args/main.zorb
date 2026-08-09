@@ -1,0 +1,36 @@
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/process.zorb"
+
+fn main(argc: i64, argv: **u8) -> i64 {
+    args: std.process.Arguments = std.process.from_native(argc, argv)
+
+    count: i64 = std.process.len(args)
+    std.io.print("argc=")
+    std.io.println_i64(count)
+
+    if count <= 0 {
+        return 1
+    }
+
+    // Check argv[0] only for presence; its spelling is platform and runner
+    // dependent, so it must not affect the deterministic output.
+    first: string = std.process.at(args, 0)
+    if cast(i64, first) == 0 {
+        return 2
+    }
+    std.io.print("argv0=present\n")
+
+    negative: string = std.process.at(args, -1)
+    if cast(i64, negative) != 0 {
+        return 3
+    }
+    std.io.print("invalid-negative=null\n")
+
+    upper_bound: string = std.process.at(args, count)
+    if cast(i64, upper_bound) != 0 {
+        return 4
+    }
+    std.io.print("invalid-end=null\n")
+
+    return 0
+}

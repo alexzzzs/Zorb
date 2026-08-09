@@ -3361,6 +3361,15 @@
       "reason": "Verified expected outcome through the native frontend differential gate."
     },
     {
+      "name": "runtime_stdlib_process_args",
+      "path": "tests/csharp/fixtures/runtime_stdlib_process_args/main.zorb",
+      "classification": "differential",
+      "feature": "stdlib.process.hosted-argv",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified hosted argc/argv wrapping and deterministic invalid-index handling through the native frontend differential gate."
+    },
+    {
       "name": "runtime_task_many_yields",
       "path": "tests/csharp/fixtures/runtime_task_many_yields/main.zorb",
       "classification": "differential",
