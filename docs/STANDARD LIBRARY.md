@@ -20,8 +20,10 @@ Stable module expectations:
 
 - `std.os`, `std.io`, `std.str`, and `std.mem` are the base library surface for the repo's supported targets, with target-specific differences documented below.
 - `std.fs` is hosted-only and currently stable on Linux and Windows hosted targets.
-- `std.process` is hosted-only and currently stable on `host-linux`,
-  `host-linux-aarch64`, and `host-windows` for borrowed command-line arguments.
+- `std.process` is stable on Linux x86_64/AArch64 and Windows x86_64 for
+  borrowed command-line arguments and inherited-stdio child processes. The
+  process-control API is also available on freestanding Linux targets that
+  provide the documented Linux syscall ABI.
 - `std.net` is hosted-only and currently stable on Linux and Windows hosted targets for low-level TCP sockets and readiness polling.
 - `std.task` is stable only on targets where `std.task.is_supported()` returns `true`.
 - `std.async` is stable only on targets where both `std.task` and `std.net` are supported, and portable code should gate it with `std.async.is_supported()`.
@@ -235,11 +237,15 @@ fn main() -> i64 {
 }
 ```
 
-## Process Arguments: `std/process.zorb`
+## Processes And Arguments: `std/process.zorb`
 
-`std.process` is the hosted command-line API. It wraps the `argc`/`argv`
-values passed to a program's native C entry point. It does not spawn
-processes or inspect or modify the environment.
+`std.process` wraps the `argc`/`argv` values passed to a program's native C
+entry point and provides a small child-process API. Child processes inherit
+the parent's standard input, output, and error. Environment selection is not
+configurable through this API: Linux passes an empty environment to `execve`,
+while Windows follows the native CRT environment behavior. Portable programs
+must not depend on inherited environment variables. The API does not capture
+pipes, modify the environment, or provide shell parsing.
 
 The supported public surface is:
 
@@ -254,6 +260,17 @@ export struct std.process.Arguments {
 export fn std.process.from_native(argc: i64, argv: **u8) -> std.process.Arguments
 export fn std.process.len(self: std.process.Arguments) -> i64
 export fn std.process.at(self: std.process.Arguments, index: i64) -> string
+
+export struct std.process.Child {
+    handle: i64,
+    active: bool
+}
+
+export fn std.process.is_supported() -> bool
+export fn std.process.spawn(argv: **u8) !std.process.Child
+export fn std.process.is_active(self: std.process.Child) -> bool
+export fn std.process.wait(self: *std.process.Child) !i32
+export fn std.process.run(argv: **u8) !i32
 ```
 
 ### Hosted Entry Point
@@ -273,11 +290,11 @@ The hosted linker calls this as the C `main(int, char **)` entry point. Zorb
 models the count as `i64` and the argument vector as `**u8`; use this exact
 parameter layout. On Linux, the supported x86_64 and AArch64 targets use the
 platform C runtime and their native calling conventions. On Windows,
-`host-windows` uses the clang-cl/MSVC-compatible hosted ABI on the supported
-x86_64 and AArch64 hosts; GNU/MinGW hosted output is not part of the current
-support contract. A source `_start` is wrapped as a no-argument hosted entry
-and does not receive `argc` or `argv`; freestanding Linux and bare-metal
-targets do not provide this hosted command-line contract.
+`host-windows` uses the clang-cl/MSVC-compatible hosted ABI on supported
+x86_64 hosts; GNU/MinGW hosted output is not part of the current support
+contract. A source `_start` is wrapped as a no-argument hosted entry and does
+not receive `argc` or `argv`; freestanding Linux and bare-metal targets do not
+provide this hosted command-line contract.
 
 ### Ownership And Lifetime
 
@@ -328,9 +345,53 @@ This is not an error union. Check the pointer before passing the result to
 result safe.
 
 The Linux and Windows implementations expose native bytes through `**u8`;
-this API does not decode command-line text or normalize quoting/encoding. It
-is intentionally only an `argc`/`argv` adapter and adds no process-spawning or
-environment API.
+this API does not decode command-line text or normalize quoting/encoding.
+
+### Child Process Lifecycle
+
+`spawn` and `run` accept a borrowed, null-terminated vector of pointers. The
+first entry is the executable name or path, and the vector must contain a null
+pointer after its final argument:
+
+```zorb
+import "std/io.zorb"
+import "std/process.zorb"
+
+fn main() -> i64 {
+    argv: [3]string
+    argv[0] = "/bin/echo"
+    argv[1] = "hello"
+    argv[2] = cast(string, cast(*u8, 0))
+
+    status: i32 = std.process.run(cast(**u8, &argv[0])) catch |err| {
+        return err
+    }
+    return cast(i64, status)
+}
+```
+
+Use `cmd.exe` and its argument vector on Windows rather than relying on a
+shell-independent path:
+
+```zorb
+argv[0] = "cmd.exe"
+argv[1] = "/c"
+argv[2] = "echo hello"
+```
+
+`spawn` returns an active `Child` whose native handle is owned by the value.
+Zorb values do not have destructors, so `Child` is linear by API convention:
+do not copy an active child or retain a copy after waiting. `wait` is the
+explicit cleanup operation. It should succeed once; it waits for completion,
+reaps the Linux child or releases the Windows handle, returns the normal exit
+code, and consumes the handle. A wait error leaves the child active so the
+caller can retry. There is no implicit cleanup when an active child is dropped
+or abandoned. On Linux, signal termination is reported as `128 + signal
+number`, matching common command-line conventions. Calling `wait` on an
+inactive or already-consumed child returns `error.InvalidArgument`.
+`is_supported` returns false on bare metal and unsupported architectures. The
+argv storage only needs to remain valid until `spawn` or `run` returns; the
+native launch operation copies what it needs.
 
 ## I/O: `std/io.zorb`
 
@@ -1757,6 +1818,11 @@ export fn std.io.read(fd: i32, buf: []u8) -> i64 {
 ```zorb
 export struct std.process {}
 
+export struct std.process.Child {
+    handle: i64,
+    active: bool
+}
+
 export struct std.process.Arguments {
     count: i64,
     values: **u8
@@ -1787,6 +1853,27 @@ export fn std.process.at(self: std.process.Arguments, index: i64) -> string {
 
     return cast(string, self.values[index])
 }
+
+export fn std.process.is_supported() -> bool {
+    if Builtin.IsBareMetal {
+        return false
+    }
+
+    if Builtin.IsLinux {
+        return Builtin.IsX86_64 || Builtin.IsAArch64
+    }
+
+    if Builtin.IsWindows {
+        return Builtin.IsX86_64
+    }
+
+    return false
+}
+
+export fn std.process.spawn(argv: **u8) !std.process.Child
+export fn std.process.is_active(self: std.process.Child) -> bool
+export fn std.process.wait(self: *std.process.Child) !i32
+export fn std.process.run(argv: **u8) !i32
 ```
 
 ### `std/str.zorb`

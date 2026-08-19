@@ -11,6 +11,12 @@ All notable changes to this project will be documented in this file.
 - Normal bootstrap and publishing now pin the signed v0.2.4 compiler packages
   for Linux x64, Linux ARM64, and Windows x64 by SHA-256.
 
+### Added
+
+- A cross-platform `std.process` child-process API with inherited standard
+  handles, null-terminated argv vectors, `spawn`, `wait`, `run`, and explicit
+  active-child state on Linux and Windows.
+
 ## [0.2.4] - August 19, 2026
 
 ### Guarantees

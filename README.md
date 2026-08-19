@@ -115,6 +115,9 @@ Cross-platform stdlib helpers currently include:
 - `std.task.is_supported()` and `std.async.is_supported()` for checking runtime capability before using task or async features, plus async readiness waits with optional timeouts and exact send/recv helpers where supported
 - `std.str.eql(...)`, `std.str.starts_with(...)`, `std.str.ends_with(...)`, `std.str.copy(...)`, and `std.str.from_u64(...)`
 - `std.mem.zero(...)` and `std.mem.copy(...)` for slice-oriented memory helpers
+- `std.process.is_supported()`, `std.process.spawn(...)`,
+  `std.process.wait(...)`, and `std.process.run(...)` for inherited-stdio
+  child processes on supported Linux and Windows targets
 
 ## Build
 
