@@ -6,42 +6,63 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Switched the LLVM toolchain from 21.1.8 to 22.1.8. This updates the checked-in
-  C header snapshot, local/bootstrap defaults, CI and release pins, Windows
-  installer checksum, and the static component dependencies required by LLVM
-  22.
-- Native task and async fibers now preserve their complete x86_64 and AArch64
-  context-switch sequences, including AArch64's callee-saved SIMD registers,
-  isolate raw AArch64 switching from native O0 argument-spill frames, remain
-  frame-stable at `-O0` through `-O3`, and use the AArch64 Linux `ppoll`
-  ABI for readiness waits and timeouts.
-- Native Backend IR lowering failures now retain the defining source file and
-  span and emit structured `lower.unsupported` or `lower.internal`
-  diagnostics. Allocation failures remain operational errors rather than
-  source diagnostics.
-- Windows CI and publishing now install the checksum-pinned official LLVM
-  22.1.8 release with bounded download retries instead of depending on the
-  Chocolatey community feed.
-- The native frontend now emits non-fatal structured warnings with stable
-  codes for mixed-signedness comparisons, suspicious pointer alignment, and
-  unreachable statements after direct control transfer.
-- Normal compiler tests on Linux x64, Linux ARM64, Linux-to-ARM64 cross builds,
-  and Windows x64 now run through a shared Python/native harness without
-  installing or invoking .NET. Release version metadata is also read by Python
-  instead of MSBuild.
-- The native fixture gate now validates declared outcomes directly, including
-  lexical, parse, import, and semantic diagnostic phases. Remaining
-  recovery-to-native lowering, warning, and fiber-runtime gaps are recorded as
-  explicit machine-validated skips.
+- The recovery compiler version now advances to the `0.2.5-dev` line after the
+  `0.2.4` release.
+
+## [0.2.4] - August 19, 2026
+
+### Guarantees
+
+- The Zorb-written frontend and in-process Zig/LLVM backend remain the normal
+  compiler path for the language subset documented in `README.md` and
+  `docs/SEMANTICS.md`.
+- Standalone compiler packages are published for Linux x64, Linux ARM64, and
+  Windows x64.
+- `build` remains supported for the documented hosted, freestanding, and
+  bare-metal targets, while `run` remains supported for the documented hosted
+  targets.
+- Generation-2 and generation-3 native compiler rebuilds must remain
+  byte-identical.
+- Normal bootstrap, testing, and publishing use the integrated compiler seed
+  path without requiring .NET on the supported release hosts.
+
+### Non-Goals
+
+- Hosted Windows GNU/MinGW output is not supported.
+- `run` remains unsupported for bare-metal output.
+- The C# compiler remains an explicit recovery bootstrap and is not a second
+  production frontend.
+
+### Added
+
+- A versioned Backend IR contract with native scalar and envelope fixtures,
+  structured source-owned lowering diagnostics, and stable machine-readable
+  diagnostic output.
+- Cross-target driver and linker policies for hosted and freestanding Linux,
+  Linux AArch64, hosted Windows, and bare-metal x86_64 builds.
+- Hosted process-argument helpers plus cross-platform task, TCP networking,
+  and asynchronous readiness APIs with support checks and timeout handling.
+- Native structured warnings for mixed-signedness comparisons, suspicious
+  pointer alignment, and unreachable statements after direct control transfer.
+- Deterministic release archives, per-file provenance manifests, SHA-256
+  checksums, Minisign signatures, and public-key fingerprint verification.
+
+### Changed
+
+- Switched the LLVM toolchain from 21.1.8 to 22.1.8 and synchronized the
+  checked-in headers, CI, local builds, and Windows installer.
+- Hardened x86_64 and AArch64 task context switching, including callee-saved
+  SIMD state and frame-stable behavior from `-O0` through `-O3`.
+- Normal compiler tests now run through a shared Python/native harness across
+  Linux x64, Linux ARM64, Linux-to-ARM64 cross builds, and Windows x64 without
+  invoking .NET.
+- The native fixture gate now validates declared outcomes and structured
+  diagnostic phases directly, with remaining recovery-to-native gaps recorded
+  as machine-validated exclusions.
 - Direct imports no longer expose unqualified functions projected from a
   transitive import.
-- The recovery compiler version now advances to the `0.2.4-dev` line after the
-  `0.2.3` release.
-- Normal bootstrap and publishing now use SHA-256-pinned v0.2.3 compiler
-  packages on Linux x64, Linux ARM64, and Windows x64.
-- ARM64 and Windows CI publishing paths now place a failing `dotnet` shim ahead
-  of the toolchain, proving that released-seed bootstrap does not fall back to
-  the C# recovery compiler.
+- Normal bootstrap and publishing now resolve SHA-256-pinned v0.2.3 compiler
+  packages for Linux x64, Linux ARM64, and Windows x64.
 
 ## [0.2.3] - July 28, 2026
 
