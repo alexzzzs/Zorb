@@ -1,2 +1,3 @@
-define i64 @"apply$g$i64"(ptr %cb, i64 %value)
-call i64 @"apply$g$i64"(ptr @"identity$g$i64", i64 41)
+define i64 @main() {
+call i64 %2(i64 %3)
+i64 41
