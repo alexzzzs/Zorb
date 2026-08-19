@@ -3325,6 +3325,15 @@
       "reason": "Verified expected outcome through the native frontend differential gate."
     },
     {
+      "name": "runtime_net_poll_capacity",
+      "path": "tests/csharp/fixtures/runtime_net_poll_capacity/main.zorb",
+      "classification": "differential",
+      "feature": "stdlib.net.poll-windows-capacity",
+      "expected": "success",
+      "gate": "frontend",
+      "reason": "Verified that Windows rejects poll counts beyond its fixed staging capacity while Linux and AArch64 retain caller-sized poll behavior."
+    },
+    {
       "name": "runtime_net_tcp_lifecycle",
       "path": "tests/csharp/fixtures/runtime_net_tcp_lifecycle/main.zorb",
       "classification": "differential",
