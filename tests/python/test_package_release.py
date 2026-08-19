@@ -89,6 +89,25 @@ class PackageReleaseTests(unittest.TestCase):
                     {name: (source / name).read_bytes() for name in names},
                 )
 
+    def test_executable_source_files_are_packaged_as_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "release"
+            self._create_source(source, ["zorb", "runtime/LLVM-C.dll"])
+            (source / "zorb").chmod(0o755)
+
+            archive_path, _ = package_release(
+                source, root / "zorb.zip", "host-linux", "0.3.0", "deadbeef"
+            )
+
+            with zipfile.ZipFile(archive_path) as archive:
+                modes = {
+                    info.filename: info.external_attr >> 16 & 0o777
+                    for info in archive.infolist()
+                }
+                self.assertEqual(modes["zorb"], 0o755)
+                self.assertEqual(modes["runtime/LLVM-C.dll"], 0o644)
+
     def test_outputs_inside_source_directory_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "release"

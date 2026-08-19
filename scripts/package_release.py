@@ -18,6 +18,7 @@ from typing import Iterable, Sequence
 CHUNK_SIZE = 1024 * 1024
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 ZIP_FILE_MODE = stat.S_IFREG | 0o644
+ZIP_EXECUTABLE_FILE_MODE = stat.S_IFREG | 0o755
 PROVENANCE_SUFFIX = ".provenance.json"
 
 
@@ -116,7 +117,7 @@ def _reject_outputs_inside_source(
             raise ValueError(f"{label} must not be inside source directory: {output_path}")
 
 
-def _zip_info(relative_path: str) -> zipfile.ZipInfo:
+def _zip_info(relative_path: str, executable: bool = False) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(relative_path)
     info.date_time = ZIP_TIMESTAMP
     info.compress_type = zipfile.ZIP_DEFLATED
@@ -126,7 +127,9 @@ def _zip_info(relative_path: str) -> zipfile.ZipInfo:
     info.flag_bits = 0
     info.volume = 0
     info.internal_attr = 0
-    info.external_attr = ZIP_FILE_MODE << 16
+    info.external_attr = (
+        ZIP_EXECUTABLE_FILE_MODE if executable else ZIP_FILE_MODE
+    ) << 16
     info.extra = b""
     info.comment = b""
     return info
@@ -158,8 +161,13 @@ def create_deterministic_zip(files: Iterable[PackageFile], output_zip: Path) -> 
         ) as archive:
             archive.comment = b""
             for item in ordered_files:
+                source_mode = item.filesystem_path.stat().st_mode
+                executable = bool(
+                    source_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                )
                 archive.writestr(
-                    _zip_info(item.relative_path), item.filesystem_path.read_bytes()
+                    _zip_info(item.relative_path, executable),
+                    item.filesystem_path.read_bytes(),
                 )
         temporary_path.replace(output_zip)
     finally:
