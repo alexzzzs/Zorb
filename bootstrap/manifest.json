@@ -4,27 +4,27 @@
   "artifacts": [
     {
       "target": "host-linux",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "format": "zip",
       "executable": "zorb",
-      "url": "https://github.com/alexzzzs/Zorb/releases/download/v0.2.3/zorb-compiler-linux-x64-v0.2.3.zip",
-      "sha256": "64961643609e479fff994896e720dcaf527e246068058bb16ebf756a370c52cd"
+      "url": "https://github.com/alexzzzs/Zorb/releases/download/v0.2.4/zorb-compiler-linux-x64-v0.2.4.zip",
+      "sha256": "cef1d143657c662847e3b16ef79f90ef0269241db860d96bef9397eba054985e"
     },
     {
       "target": "host-linux-aarch64",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "format": "zip",
       "executable": "zorb",
-      "url": "https://github.com/alexzzzs/Zorb/releases/download/v0.2.3/zorb-compiler-linux-arm64-v0.2.3.zip",
-      "sha256": "e4a45088c3ac93b719e855e086005be44e1d9aff288fee4e8c6476422d71c85b"
+      "url": "https://github.com/alexzzzs/Zorb/releases/download/v0.2.4/zorb-compiler-linux-arm64-v0.2.4.zip",
+      "sha256": "b593f32960c11f9ef4c4f748ef40009833320b51e25364f8205cb8ca53d96d66"
     },
     {
       "target": "host-windows",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "format": "zip",
       "executable": "zorb.exe",
-      "url": "https://github.com/alexzzzs/Zorb/releases/download/v0.2.3/zorb-compiler-win-x64-v0.2.3.zip",
-      "sha256": "66fbe998aa3a0dcb94aa0c46dd97adf3bfca8a8950719759e1ca37837b5ff72c"
+      "url": "https://github.com/alexzzzs/Zorb/releases/download/v0.2.4/zorb-compiler-win-x64-v0.2.4.zip",
+      "sha256": "5d605a0950c19eea8be16f35e6f18f41d51444462d7518a9dc8dfe5914693d99"
     }
   ]
 }

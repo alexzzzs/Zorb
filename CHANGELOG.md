@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 - The recovery compiler version now advances to the `0.2.5-dev` line after the
   `0.2.4` release.
+- Normal bootstrap and publishing now pin the signed v0.2.4 compiler packages
+  for Linux x64, Linux ARM64, and Windows x64 by SHA-256.
 
 ## [0.2.4] - August 19, 2026
 

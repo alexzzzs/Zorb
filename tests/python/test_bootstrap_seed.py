@@ -39,7 +39,7 @@ class BootstrapSeedTests(unittest.TestCase):
         for target, executable in expected_executables.items():
             with self.subTest(target=target):
                 artifact = load_seed_artifact(manifest, target)
-                self.assertEqual("0.2.3", artifact.version)
+                self.assertEqual("0.2.4", artifact.version)
                 self.assertEqual(executable, artifact.executable)
 
     def test_local_seed_requires_matching_checksum(self) -> None:

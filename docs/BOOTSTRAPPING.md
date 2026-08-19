@@ -49,9 +49,9 @@ for manifest in *.provenance.json; do
 done
 ```
 
-The existing unsigned v0.2.3 bootstrap manifest remains SHA-256-only until
-signed metadata is published. Its pinned URLs and digests are deliberately
-unchanged, and bootstrap continues to verify those SHA-256 values directly.
+The v0.2.4 bootstrap manifest remains SHA-256-only because bootstrap currently
+verifies those archive digests directly. The corresponding release also
+publishes signed checksum and provenance metadata for independent verification.
 
 The resulting `zorb` executable implements `check`, `build`, and `run` and does
 not invoke a separate backend executable. `--target`, `--output-kind`, and
@@ -106,7 +106,7 @@ The recovery option is mutually exclusive with `--seed`. Normal bootstrap and
 publishing fail with a clear error when a target has no manifest entry; they do
 not silently fall back to C#.
 
-The pinned v0.2.3 packages provide portable seeds for Linux x64, Linux ARM64,
+The pinned v0.2.4 packages provide portable seeds for Linux x64, Linux ARM64,
 and Windows x64. Normal bootstrap and publishing on those hosts do not invoke
 C# or require .NET. `--recovery-csharp` remains available only for a new host
 target or explicit repair of the release chain.

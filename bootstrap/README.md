@@ -46,8 +46,9 @@ for manifest in *.provenance.json; do
 done
 ```
 
-The existing unsigned v0.2.3 entries in `manifest.json` remain SHA-256-only
-until signed metadata is published. The pinned URLs and digests are unchanged.
+The v0.2.4 entries in `manifest.json` remain SHA-256-only because bootstrap
+currently verifies the archive digest directly. The corresponding release also
+publishes signed checksum and provenance metadata for independent verification.
 
 Local seed packages live under `bootstrap/artifacts/<target>/` and remain
 ignored by Git. Cache an already-built integrated compiler for offline use:
@@ -63,7 +64,7 @@ Python implementation. The former frontend-only
 `scripts/build-bootstrap-seeds.sh` entry point was removed so it cannot be
 mistaken for the integrated compiler seed contract.
 
-Linux x64, Linux ARM64, and Windows x64 use the pinned v0.2.3 release packages.
+Linux x64, Linux ARM64, and Windows x64 use the pinned v0.2.4 release packages.
 That release completed the one-time recovery transition for portable Windows
 and ARM64 seeds, so normal bootstrap and publishing on every supported host no
 longer require .NET.
