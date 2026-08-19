@@ -16,18 +16,21 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
+            target: host-linux
             zig_arch: x86_64
             artifact_name: zorb-release-linux-x64
             output_dir: artifacts/compiler/linux-x64
             asset_name: zorb-compiler-linux-x64-${{ github.ref_name }}.zip
           - os: ubuntu-24.04-arm
             platform: linux
+            target: host-linux-aarch64
             zig_arch: aarch64
             artifact_name: zorb-release-linux-arm64
             output_dir: artifacts/compiler/linux-arm64
             asset_name: zorb-compiler-linux-arm64-${{ github.ref_name }}.zip
           - os: windows-latest
             platform: windows
+            target: host-windows
             artifact_name: zorb-release-win-x64
             output_dir: artifacts/compiler/win-x64
             asset_name: zorb-compiler-win-x64-${{ github.ref_name }}.zip
@@ -172,23 +175,41 @@ jobs:
         if: matrix.platform == 'linux'
         env:
           ASSET_NAME: ${{ matrix.asset_name }}
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_COMMIT: ${{ github.sha }}
         run: |
+          set -euo pipefail
           mkdir -p release-assets
-          cd "${{ matrix.output_dir }}"
-          zip -r "../../../release-assets/$ASSET_NAME" .
+          python3 scripts/package_release.py \
+            "${{ matrix.output_dir }}" \
+            "release-assets/$ASSET_NAME" \
+            --target "$RELEASE_TARGET" \
+            --version "$RELEASE_VERSION" \
+            --commit "$RELEASE_COMMIT"
 
       - name: Package release asset
         if: matrix.platform == 'windows'
         shell: pwsh
+        env:
+          ASSET_NAME: ${{ matrix.asset_name }}
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_COMMIT: ${{ github.sha }}
         run: |
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
-          Compress-Archive -Path "${{ matrix.output_dir }}/*" -DestinationPath "release-assets/${{ matrix.asset_name }}" -Force
+          python scripts/package_release.py `
+            "${{ matrix.output_dir }}" `
+            "release-assets/$env:ASSET_NAME" `
+            --target $env:RELEASE_TARGET `
+            --version $env:RELEASE_VERSION `
+            --commit $env:RELEASE_COMMIT
 
       - name: Upload packaged asset
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: release-assets/${{ matrix.asset_name }}
+          path: release-assets/*
 
   create-release:
     needs: build-release-assets
@@ -201,6 +222,75 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+
+      - name: Generate checksums and signatures
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
+          MINISIGN_PUBLIC_KEY_FINGERPRINT: ${{ secrets.MINISIGN_PUBLIC_KEY_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MINISIGN_SECRET_KEY:-}" || -z "${MINISIGN_PUBLIC_KEY:-}" || -z "${MINISIGN_PUBLIC_KEY_FINGERPRINT:-}" ]]; then
+            echo "::error::MINISIGN_SECRET_KEY, MINISIGN_PUBLIC_KEY, and MINISIGN_PUBLIC_KEY_FINGERPRINT GitHub secrets are required for release signing."
+            exit 1
+          fi
+
+          public_key_path="release-assets/MINISIGN_PUBLIC_KEY"
+          printf '%s' "$MINISIGN_PUBLIC_KEY" > "$public_key_path"
+          public_key_sha256="$(sha256sum "$public_key_path" | cut -d ' ' -f1)"
+          expected_public_key_fingerprint="${MINISIGN_PUBLIC_KEY_FINGERPRINT,,}"
+          if [[ ! "$expected_public_key_fingerprint" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::MINISIGN_PUBLIC_KEY_FINGERPRINT must be a 64-character SHA-256 hex digest."
+            exit 1
+          fi
+          if [[ "$public_key_sha256" != "$expected_public_key_fingerprint" ]]; then
+            echo "::error::MINISIGN_PUBLIC_KEY does not match MINISIGN_PUBLIC_KEY_FINGERPRINT."
+            exit 1
+          fi
+          printf '%s  MINISIGN_PUBLIC_KEY\n' "$public_key_sha256" > release-assets/MINISIGN_PUBLIC_KEY.sha256
+
+          mapfile -t release_files < <(
+            find release-assets -maxdepth 1 -type f \
+              \( -name '*.zip' -o -name '*.provenance.json' \) \
+              -printf '%f\n' | LC_ALL=C sort
+          )
+          if [[ "${#release_files[@]}" -eq 0 ]]; then
+            echo "::error::No ZIP or provenance files were downloaded for signing."
+            exit 1
+          fi
+          mapfile -t zip_files < <(
+            find release-assets -maxdepth 1 -type f -name '*.zip' \
+              -printf '%f\n' | LC_ALL=C sort
+          )
+          if [[ "${#zip_files[@]}" -eq 0 ]]; then
+            echo "::error::No ZIP files were downloaded for signing."
+            exit 1
+          fi
+          mapfile -t provenance_files < <(
+            find release-assets -maxdepth 1 -type f -name '*.provenance.json' \
+              -printf '%f\n' | LC_ALL=C sort
+          )
+          if [[ "${#provenance_files[@]}" -eq 0 ]]; then
+            echo "::error::No provenance manifests were downloaded for signing."
+            exit 1
+          fi
+          (cd release-assets && sha256sum "${release_files[@]}" > SHA256SUMS)
+
+          key_file="$RUNNER_TEMP/minisign-release.key"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key_file"
+          chmod 600 "$key_file"
+          minisign -S -s "$key_file" -m release-assets/SHA256SUMS \
+            -x release-assets/SHA256SUMS.minisig -q
+          for manifest in "${provenance_files[@]}"; do
+            manifest_path="release-assets/$manifest"
+            minisign -S -s "$key_file" -m "$manifest_path" -x "$manifest_path.minisig" -q
+          done
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
