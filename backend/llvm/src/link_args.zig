@@ -54,21 +54,46 @@ pub const LinkTarget = enum {
     bare_metal_x86_64,
     host_windows,
 
-    pub fn parse(name: []const u8) !LinkTarget {
-        if (std.mem.eql(u8, name, "host-linux")) return .host_linux;
-        if (std.mem.eql(u8, name, "freestanding-linux")) return .freestanding_linux;
-        if (std.mem.eql(u8, name, "host-linux-aarch64")) return .host_linux_aarch64;
-        if (std.mem.eql(u8, name, "freestanding-linux-aarch64")) return .freestanding_linux_aarch64;
-        if (std.mem.eql(u8, name, "bare-metal-x86_64")) return .bare_metal_x86_64;
-        if (std.mem.eql(u8, name, "host-windows")) return .host_windows;
+    pub fn parse(target_name: []const u8) !LinkTarget {
+        if (std.mem.eql(u8, target_name, LinkTarget.host_linux.name())) return .host_linux;
+        if (std.mem.eql(u8, target_name, LinkTarget.freestanding_linux.name())) return .freestanding_linux;
+        if (std.mem.eql(u8, target_name, LinkTarget.host_linux_aarch64.name())) return .host_linux_aarch64;
+        if (std.mem.eql(u8, target_name, LinkTarget.freestanding_linux_aarch64.name())) return .freestanding_linux_aarch64;
+        if (std.mem.eql(u8, target_name, LinkTarget.bare_metal_x86_64.name())) return .bare_metal_x86_64;
+        if (std.mem.eql(u8, target_name, LinkTarget.host_windows.name())) return .host_windows;
         return error.UnsupportedTarget;
+    }
+
+    pub fn name(target: LinkTarget) []const u8 {
+        return switch (target) {
+            .host_linux => "host-linux",
+            .freestanding_linux => "freestanding-linux",
+            .host_linux_aarch64 => "host-linux-aarch64",
+            .freestanding_linux_aarch64 => "freestanding-linux-aarch64",
+            .bare_metal_x86_64 => "bare-metal-x86_64",
+            .host_windows => "host-windows",
+        };
     }
 
     pub fn isAarch64Linux(target: LinkTarget) bool {
         return target == .host_linux_aarch64 or target == .freestanding_linux_aarch64;
     }
 
-    pub fn isBareMetal(target: LinkTarget) bool {
+    pub fn isHosted(target: LinkTarget) bool {
+        return switch (target) {
+            .host_linux, .host_linux_aarch64, .host_windows => true,
+            .freestanding_linux, .freestanding_linux_aarch64, .bare_metal_x86_64 => false,
+        };
+    }
+
+    pub fn supportsRun(target: LinkTarget) bool {
+        return switch (target) {
+            .bare_metal_x86_64 => false,
+            .host_linux, .freestanding_linux, .host_linux_aarch64, .freestanding_linux_aarch64, .host_windows => true,
+        };
+    }
+
+    pub fn requiresLinkerScript(target: LinkTarget) bool {
         return target == .bare_metal_x86_64;
     }
 
@@ -205,11 +230,42 @@ fn expectArgs(expected: []const []const u8, actual: []const []const u8) !void {
         try std.testing.expectEqualStrings(expected_arg, actual_arg);
 }
 
-test "supported target names map to link policies" {
-    try std.testing.expectEqual(LinkTarget.host_linux, try LinkTarget.parse("host-linux"));
-    try std.testing.expectEqual(LinkTarget.freestanding_linux_aarch64, try LinkTarget.parse("freestanding-linux-aarch64"));
-    try std.testing.expectEqual(LinkTarget.bare_metal_x86_64, try LinkTarget.parse("bare-metal-x86_64"));
+test "all target names map to their link policies" {
+    const targets = [_]LinkTarget{
+        .host_linux,
+        .freestanding_linux,
+        .host_linux_aarch64,
+        .freestanding_linux_aarch64,
+        .bare_metal_x86_64,
+        .host_windows,
+    };
+    for (targets) |target| {
+        try std.testing.expectEqual(target, try LinkTarget.parse(target.name()));
+    }
     try std.testing.expectError(error.UnsupportedTarget, LinkTarget.parse("host-macos"));
+    try std.testing.expectError(error.UnsupportedTarget, LinkTarget.parse(""));
+}
+
+test "all targets expose their composed capability policy" {
+    const PolicyExpectation = struct {
+        target: LinkTarget,
+        hosted: bool,
+        can_run: bool,
+        requires_script: bool,
+    };
+    const expectations = [_]PolicyExpectation{
+        .{ .target = .host_linux, .hosted = true, .can_run = true, .requires_script = false },
+        .{ .target = .freestanding_linux, .hosted = false, .can_run = true, .requires_script = false },
+        .{ .target = .host_linux_aarch64, .hosted = true, .can_run = true, .requires_script = false },
+        .{ .target = .freestanding_linux_aarch64, .hosted = false, .can_run = true, .requires_script = false },
+        .{ .target = .bare_metal_x86_64, .hosted = false, .can_run = false, .requires_script = true },
+        .{ .target = .host_windows, .hosted = true, .can_run = true, .requires_script = false },
+    };
+    for (expectations) |expected| {
+        try std.testing.expectEqual(expected.hosted, expected.target.isHosted());
+        try std.testing.expectEqual(expected.can_run, expected.target.supportsRun());
+        try std.testing.expectEqual(expected.requires_script, expected.target.requiresLinkerScript());
+    }
 }
 
 test "AArch64 arguments select the native or cross compiler for the host" {
@@ -249,6 +305,20 @@ test "bare-metal arguments include the linker script policy" {
         "/toolchain/ld.lld",    "-m", "elf_x86_64", "-T",       "kernel.ld", "-z",
         "max-page-size=0x1000", "-o", "kernel.elf", "kernel.o",
     }, &args);
+}
+
+test "bare-metal arguments reject a missing linker script" {
+    var args: [10][]const u8 = undefined;
+    try std.testing.expectError(error.InvalidArgument, populateBaseArgs(&args, .{
+        .target = .bare_metal_x86_64,
+        .object_path = "kernel.o",
+        .output_path = "kernel.elf",
+    }));
+}
+
+test "Windows arguments reject a missing output argument" {
+    var args: [13][]const u8 = undefined;
+    try std.testing.expectError(error.InvalidArgument, populateWindowsBaseArgs(&args, "program.obj", ""));
 }
 
 test "hosted Linux entry retry preserves target compiler and native arguments" {

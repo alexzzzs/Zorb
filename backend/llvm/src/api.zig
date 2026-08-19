@@ -54,6 +54,25 @@ fn configuredValue(environ: std.process.Environ.Map, key: []const u8, fallback: 
     return environ.get(key) orelse fallback;
 }
 
+const TargetPolicyError = error{
+    LinkerScriptUnsupported,
+    RunUnsupported,
+};
+
+fn validateTargetPolicy(
+    target: link_args.LinkTarget,
+    requested_linker_script: []const u8,
+    emit_linker_script: []const u8,
+    run_after_link: c_int,
+) TargetPolicyError!void {
+    if (!target.requiresLinkerScript() and
+        (requested_linker_script.len > 0 or emit_linker_script.len > 0))
+    {
+        return error.LinkerScriptUnsupported;
+    }
+    if (!target.supportsRun() and run_after_link != 0) return error.RunUnsupported;
+}
+
 fn writeLinkerScript(io: std.Io, path: []const u8, contents: []const u8) !void {
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = contents });
 }
@@ -214,18 +233,21 @@ export fn zorb_llvm_link_object(
         reportError(io, "target is not supported on this host", error.UnsupportedHost);
         return 1;
     }
-    if (!target.isBareMetal() and (requested_linker_script.len > 0 or emit_linker_script.len > 0)) {
-        reportError(io, "linker scripts require bare-metal-x86_64", error.InvalidArgument);
+    validateTargetPolicy(target, requested_linker_script, emit_linker_script, run_after_link) catch |err| {
+        switch (err) {
+            error.LinkerScriptUnsupported => reportError(
+                io,
+                "linker scripts require bare-metal-x86_64",
+                error.InvalidArgument,
+            ),
+            error.RunUnsupported => reportError(io, "bare-metal targets cannot run", error.InvalidArgument),
+        }
         return 1;
-    }
+    };
     if (emit_linker_script.len > 0 and
         (std.mem.eql(u8, emit_linker_script, object) or std.mem.eql(u8, emit_linker_script, output)))
     {
         reportError(io, "linker script output conflicts with a build artifact", error.InvalidArgument);
-        return 1;
-    }
-    if (target.isBareMetal() and run_after_link != 0) {
-        reportError(io, "bare-metal targets cannot run", error.InvalidArgument);
         return 1;
     }
 
@@ -235,7 +257,7 @@ export fn zorb_llvm_link_object(
         allocator.free(path);
     };
     var selected_linker_script: []const u8 = requested_linker_script;
-    if (target.isBareMetal() and selected_linker_script.len == 0) {
+    if (target.requiresLinkerScript() and selected_linker_script.len == 0) {
         generated_script = createTemporaryLinkerScript(
             allocator,
             io,
@@ -246,7 +268,7 @@ export fn zorb_llvm_link_object(
         };
         selected_linker_script = generated_script.?;
     }
-    if (target.isBareMetal()) {
+    if (target.requiresLinkerScript()) {
         emitSelectedLinkerScript(
             allocator,
             io,
@@ -305,9 +327,7 @@ export fn zorb_llvm_link_object(
     };
     defer allocator.free(link_result.stdout);
     defer allocator.free(link_result.stderr);
-    if (!processSucceeded(&link_result) and
-        (target == .host_windows or target == .host_linux or target == .host_linux_aarch64))
-    {
+    if (!processSucceeded(&link_result) and target.isHosted()) {
         const retry_argv = if (target == .host_windows)
             link_args.prepareWindowsEntryRetry(allocator, argv)
         else
@@ -340,4 +360,39 @@ export fn zorb_llvm_link_object(
         reportError(io, "unable to run compiled program", err);
         return 1;
     };
+}
+
+test "target policy validation accepts each supported target's valid combinations" {
+    const targets = [_]link_args.LinkTarget{
+        .host_linux,
+        .freestanding_linux,
+        .host_linux_aarch64,
+        .freestanding_linux_aarch64,
+        .bare_metal_x86_64,
+        .host_windows,
+    };
+    for (targets) |target| {
+        if (target.requiresLinkerScript()) {
+            try validateTargetPolicy(target, "kernel.ld", "", 0);
+            try validateTargetPolicy(target, "", "generated.ld", 0);
+        } else {
+            try validateTargetPolicy(target, "", "", 0);
+            try validateTargetPolicy(target, "", "", 1);
+        }
+    }
+}
+
+test "target policy validation rejects unsupported linker and run combinations" {
+    try std.testing.expectError(
+        error.LinkerScriptUnsupported,
+        validateTargetPolicy(.host_linux, "kernel.ld", "", 0),
+    );
+    try std.testing.expectError(
+        error.LinkerScriptUnsupported,
+        validateTargetPolicy(.host_windows, "", "generated.ld", 0),
+    );
+    try std.testing.expectError(
+        error.RunUnsupported,
+        validateTargetPolicy(.bare_metal_x86_64, "", "", 1),
+    );
 }
