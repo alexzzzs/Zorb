@@ -15,7 +15,9 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from project_version import read_project_version  # noqa: E402
 from test_compiler import (  # noqa: E402
     COMMAND_TIMEOUT_ENVIRONMENT_VARIABLE,
+    CommandResult,
     ExclusionTracker,
+    JSON_DIAGNOSTIC_FIELDS,
     NativeCompilerSuite,
     SuiteFailure,
     expected_phase_from_code,
@@ -24,6 +26,7 @@ from test_compiler import (  # noqa: E402
     load_runtime_expectation,
     load_suite_exclusions,
     parse_arguments,
+    parse_json_diagnostics,
 )
 
 
@@ -62,6 +65,25 @@ class CompilerRunnerTests(unittest.TestCase):
         self.assertEqual(expected_phase_from_code("flow.missing-return"), "semantic-failure")
         with self.assertRaisesRegex(SuiteFailure, "unrecognized structured diagnostic code"):
             expected_phase_from_code("backend.invalid")
+
+    def test_json_diagnostics_parse_stable_json_lines(self) -> None:
+        diagnostic = {
+            "kind": "diagnostic",
+            "severity": "error",
+            "phase": "semantic",
+            "code": "name.unknown",
+            "file": "main.zorb",
+            "line": 2,
+            "column": 3,
+            "length": 1,
+            "message": "unknown name or type",
+        }
+        result = CommandResult(1, json.dumps(diagnostic) + "\n", "")
+
+        self.assertEqual(parse_json_diagnostics(result), [diagnostic])
+        self.assertEqual(set(diagnostic), JSON_DIAGNOSTIC_FIELDS)
+        with self.assertRaisesRegex(SuiteFailure, "unstable fields"):
+            parse_json_diagnostics(CommandResult(1, '{"kind":"diagnostic"}\n', ""))
 
     def test_command_timeout_uses_environment_and_cli_override(self) -> None:
         environment = {COMMAND_TIMEOUT_ENVIRONMENT_VARIABLE: "75"}
