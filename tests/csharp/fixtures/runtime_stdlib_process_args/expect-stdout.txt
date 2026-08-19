@@ -1,0 +1,4 @@
+argc=1
+argv0=present
+invalid-negative=null
+invalid-end=null

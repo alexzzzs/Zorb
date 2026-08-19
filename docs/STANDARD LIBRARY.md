@@ -20,6 +20,8 @@ Stable module expectations:
 
 - `std.os`, `std.io`, `std.str`, and `std.mem` are the base library surface for the repo's supported targets, with target-specific differences documented below.
 - `std.fs` is hosted-only and currently stable on Linux and Windows hosted targets.
+- `std.process` is hosted-only and currently stable on `host-linux`,
+  `host-linux-aarch64`, and `host-windows` for borrowed command-line arguments.
 - `std.net` is hosted-only and currently stable on Linux and Windows hosted targets for low-level TCP sockets and readiness polling.
 - `std.task` is stable only on targets where `std.task.is_supported()` returns `true`.
 - `std.async` is stable only on targets where both `std.task` and `std.net` are supported, and portable code should gate it with `std.async.is_supported()`.
@@ -232,6 +234,103 @@ fn main() -> i64 {
     return cast(i64, pages)
 }
 ```
+
+## Process Arguments: `std/process.zorb`
+
+`std.process` is the hosted command-line API. It wraps the `argc`/`argv`
+values passed to a program's native C entry point. It does not spawn
+processes or inspect or modify the environment.
+
+The supported public surface is:
+
+```zorb
+export struct std.process {}
+
+export struct std.process.Arguments {
+    count: i64,
+    values: **u8
+}
+
+export fn std.process.from_native(argc: i64, argv: **u8) -> std.process.Arguments
+export fn std.process.len(self: std.process.Arguments) -> i64
+export fn std.process.at(self: std.process.Arguments, index: i64) -> string
+```
+
+### Hosted Entry Point
+
+Use a hosted `main` with the native argument shape:
+
+```zorb
+import "std/process.zorb"
+
+fn main(argc: i64, argv: **u8) -> i64 {
+    args: std.process.Arguments = std.process.from_native(argc, argv)
+    return std.process.len(args)
+}
+```
+
+The hosted linker calls this as the C `main(int, char **)` entry point. Zorb
+models the count as `i64` and the argument vector as `**u8`; use this exact
+parameter layout. On Linux, the supported x86_64 and AArch64 targets use the
+platform C runtime and their native calling conventions. On Windows,
+`host-windows` uses the clang-cl/MSVC-compatible hosted ABI on the supported
+x86_64 and AArch64 hosts; GNU/MinGW hosted output is not part of the current
+support contract. A source `_start` is wrapped as a no-argument hosted entry
+and does not receive `argc` or `argv`; freestanding Linux and bare-metal
+targets do not provide this hosted command-line contract.
+
+### Ownership And Lifetime
+
+`from_native` stores `argc` and `argv` in an `Arguments` value without
+allocating or copying either one. The argument vector and each NUL-terminated
+argument string are owned by the host runtime and are borrowed by Zorb. They
+remain valid for the lifetime of the hosted process; callers must not free,
+transfer, retain ownership of, or use them after that lifetime. Treat the
+`**u8` view as read-only even though the low-level pointer type is mutable.
+
+`argc` is expected to be the non-negative count supplied by the hosted entry
+ABI. `len` returns that stored count; it does not scan for the trailing null
+pointer or infer a count from the contents of `argv`. The host commonly places
+an executable name at index `0`, but its spelling, path shape, and absolute vs.
+relative form are platform- and launcher-dependent. Programs must not make
+its contents a correctness assumption. The terminating `argv[argc]` null
+sentinel is not part of the view returned by `len`.
+
+### Construction
+
+```zorb
+export fn std.process.from_native(argc: i64, argv: **u8) -> std.process.Arguments
+```
+
+Builds the borrowed view from the matching native values. It performs no
+allocation, copy, or ownership transfer.
+
+### Length
+
+```zorb
+export fn std.process.len(self: std.process.Arguments) -> i64
+```
+
+Returns `self.count` and does not access `self.values`.
+
+### Safe Indexing
+
+```zorb
+export fn std.process.at(self: std.process.Arguments, index: i64) -> string
+```
+
+Returns the borrowed NUL-terminated string when
+`0 <= index < std.process.len(self)`. A negative index, an index equal to or
+greater than the length, a null argument-vector table, or a null entry pointer
+returns a null `string` pointer without dereferencing that invalid pointer.
+This is not an error union. Check the pointer before passing the result to
+`std.str` or `std.io`; those APIs expect a valid string and do not make a null
+result safe.
+
+The Linux and Windows implementations expose native bytes through `**u8`;
+this API does not decode command-line text or normalize quoting/encoding. It
+is intentionally only an `argc`/`argv` adapter and adds no process-spawning or
+environment API.
 
 ## I/O: `std/io.zorb`
 
@@ -1650,6 +1749,43 @@ export fn std.io.read(fd: i32, buf: []u8) -> i64 {
     }
 
     return -1
+}
+```
+
+### `std/process.zorb`
+
+```zorb
+export struct std.process {}
+
+export struct std.process.Arguments {
+    count: i64,
+    values: **u8
+}
+
+export fn std.process.from_native(argc: i64, argv: **u8) -> std.process.Arguments {
+    result: std.process.Arguments
+    result.count = argc
+    result.values = argv
+    return result
+}
+
+export fn std.process.len(self: std.process.Arguments) -> i64 {
+    return self.count
+}
+
+export fn std.process.at(self: std.process.Arguments, index: i64) -> string {
+    // Invalid indices and malformed borrowed views return a null string.
+    if index < 0 || index >= self.count || self.values == cast(**u8, 0) {
+        return cast(string, cast(*u8, 0))
+    }
+
+    // Native argv entries are non-null by contract. Keep malformed borrowed
+    // views safe at this public boundary as well.
+    if cast(i64, self.values[index]) == 0 {
+        return cast(string, cast(*u8, 0))
+    }
+
+    return cast(string, self.values[index])
 }
 ```
 

@@ -1,5 +1,5 @@
-// Minimal hosted-process surface for programs that need their command line.
-// The compiler passes these values directly from the platform C entry point.
+// Hosted command-line arguments are a borrowed view of the platform C entry
+// point values. This module does not allocate, copy, or own the arguments.
 
 export struct std.process {}
 
@@ -10,7 +10,7 @@ export struct std.process.Arguments {
 
 export fn std.process.from_native(argc: i64, argv: **u8) -> std.process.Arguments {
     // Keep construction explicit while the self-hosted frontend is still
-    // gaining struct-literal parsing. The returned ABI record is unchanged.
+    // gaining struct-literal parsing. The returned view borrows both inputs.
     result: std.process.Arguments
     result.count = argc
     result.values = argv
@@ -22,7 +22,14 @@ export fn std.process.len(self: std.process.Arguments) -> i64 {
 }
 
 export fn std.process.at(self: std.process.Arguments, index: i64) -> string {
-    if index < 0 || index >= self.count {
+    // Invalid indices are a null string, not an error and not a dereference.
+    if index < 0 || index >= self.count || self.values == cast(**u8, 0) {
+        return cast(string, cast(*u8, 0))
+    }
+
+    // Native argv entries are non-null by contract. Keep malformed borrowed
+    // views safe at this public boundary as well.
+    if cast(i64, self.values[index]) == 0 {
         return cast(string, cast(*u8, 0))
     }
 
