@@ -1,0 +1,75 @@
+import "../../../../runtime/std/errors.zorb"
+import "../../../../runtime/std/io.zorb"
+import "../../../../runtime/std/os.zorb"
+import "../../../../runtime/std/process.zorb"
+
+fn fill_command(argv: *string, command: string) {
+    if std.os.is_windows() {
+        argv[0] = "cmd.exe"
+        argv[1] = "/c"
+        argv[2] = command
+    } else {
+        argv[0] = "/bin/sh"
+        argv[1] = "-c"
+        argv[2] = command
+    }
+
+    argv[3] = cast(string, cast(*u8, 0))
+}
+
+fn run_process_checks() -> i64 {
+    if !std.process.is_supported() {
+        return 1
+    }
+
+    first: [4]string
+    fill_command(&first[0], "exit 7")
+    child: std.process.Child = std.process.spawn(cast(**u8, &first[0])) catch |err| {
+        return 2
+    }
+
+    if !std.process.is_active(child) {
+        return 3
+    }
+
+    first_status: i32 = std.process.wait(&child) catch |err| {
+        return 4
+    }
+
+    if std.process.is_active(child) {
+        return 5
+    }
+
+    repeated_wait_failed: bool = false
+    std.process.wait(&child) catch |err| {
+        if err != error.InvalidArgument {
+            return 6
+        }
+        repeated_wait_failed = true
+    }
+
+    second: [4]string
+    fill_command(&second[0], "exit 3")
+    second_status: i32 = std.process.run(cast(**u8, &second[0])) catch |err| {
+        return 7
+    }
+
+    if !repeated_wait_failed {
+        return 8
+    }
+
+    std.io.print("spawn=")
+    std.io.println_i64(cast(i64, first_status))
+    std.io.print("run=")
+    std.io.println_i64(cast(i64, second_status))
+    return 0
+}
+
+fn _start() {
+    result: i64 = run_process_checks()
+    std.os.exit(cast(i32, result))
+}
+
+fn main() -> i64 {
+    return run_process_checks()
+}

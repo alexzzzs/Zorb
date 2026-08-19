@@ -1,7 +1,20 @@
-// Hosted command-line arguments are a borrowed view of the platform C entry
-// point values. This module does not allocate, copy, or own the arguments.
+// Hosted process helpers and command-line arguments. Process argument vectors
+// passed to spawn/run are borrowed for the duration of the native launch call;
+// the child inherits the parent's standard handles. Linux uses an empty
+// environment through execve; Windows follows the native CRT environment.
+
+import "errors.zorb"
+
+import c "process.h"
+extern fn _spawnvp(mode: i32, file: *u8, argv: **u8) -> i64
+extern fn _cwait(termstat: *i32, process: i64, action: i32) -> i64
 
 export struct std.process {}
+
+export struct std.process.Child {
+    handle: i64,
+    active: bool
+}
 
 export struct std.process.Arguments {
     count: i64,
@@ -34,4 +47,200 @@ export fn std.process.at(self: std.process.Arguments, index: i64) -> string {
     }
 
     return cast(string, self.values[index])
+}
+
+const WINDOWS_SPAWN_NOWAIT: i32 = 1
+const WINDOWS_WAIT_CHILD: i32 = 0
+const LINUX_EXIT_STATUS_MASK: i32 = 127
+const LINUX_EXIT_STATUS_SHIFT: i32 = 8
+const LINUX_SIGNAL_EXIT_BASE: i32 = 128
+const LINUX_CHILD_EXEC_FAILURE: i32 = 127
+const LINUX_SIGCHLD: i64 = 17
+
+fn std.process.linux_clone_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 57
+    }
+
+    if Builtin.IsAArch64 {
+        return 220
+    }
+
+    return 0
+}
+
+fn std.process.linux_execve_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 59
+    }
+
+    if Builtin.IsAArch64 {
+        return 221
+    }
+
+    return 0
+}
+
+fn std.process.linux_wait4_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 61
+    }
+
+    if Builtin.IsAArch64 {
+        return 260
+    }
+
+    return 0
+}
+
+fn std.process.linux_exit_nr() -> i64 {
+    if Builtin.IsX86_64 {
+        return 60
+    }
+
+    if Builtin.IsAArch64 {
+        return 93
+    }
+
+    return 0
+}
+
+export fn std.process.is_supported() -> bool {
+    if Builtin.IsBareMetal {
+        return false
+    }
+
+    if Builtin.IsLinux {
+        return std.process.linux_clone_nr() != 0 &&
+            std.process.linux_execve_nr() != 0 &&
+            std.process.linux_wait4_nr() != 0 &&
+            std.process.linux_exit_nr() != 0
+    }
+
+    if Builtin.IsWindows {
+        return Builtin.IsX86_64
+    }
+
+    return false
+}
+
+// Launches argv[0] with the supplied null-terminated argv vector. The vector
+// must remain valid until this function returns and must contain at least one
+// non-null entry. The child inherits standard input, output, and error. Linux
+// uses an empty environment; Windows follows the native CRT environment.
+export fn std.process.spawn(argv: **u8) !std.process.Child {
+    child: std.process.Child
+    child.handle = 0
+    child.active = false
+
+    if !std.process.is_supported() {
+        return error.UnsupportedPlatform
+    }
+
+    if cast(i64, argv) == 0 || cast(i64, argv[0]) == 0 {
+        return error.InvalidArgument
+    }
+
+    if Builtin.IsLinux {
+        clone_nr: i64 = std.process.linux_clone_nr()
+        execve_nr: i64 = std.process.linux_execve_nr()
+        exit_nr: i64 = std.process.linux_exit_nr()
+        pid: i64 = 0
+        if Builtin.IsX86_64 {
+            pid = syscall(clone_nr)
+        }
+        if Builtin.IsAArch64 {
+            pid = syscall(clone_nr, LINUX_SIGCHLD, 0, 0, 0, 0)
+        }
+        if pid < 0 {
+            return error.IOError
+        }
+
+        if pid == 0 {
+            // The syscall path passes a null environment pointer. This keeps
+            // process control available to freestanding Linux, where there is
+            // no libc environment object to inherit.
+            exec_result: i64 = syscall(execve_nr, cast(i64, argv[0]), cast(i64, argv), 0)
+            if exec_result < 0 {
+                syscall(exit_nr, cast(i64, LINUX_CHILD_EXEC_FAILURE))
+            }
+
+            // execve and exit do not return. Keep the child from falling
+            // through if a non-standard target violates that contract.
+            while true {}
+        }
+
+        child.handle = pid
+        child.active = true
+        return child
+    }
+
+    if Builtin.IsWindows {
+        handle: i64 = cast(i64, _spawnvp(WINDOWS_SPAWN_NOWAIT, cast(*u8, argv[0]), argv))
+        if handle < 0 {
+            return error.NotFound
+        }
+
+        child.handle = handle
+        child.active = true
+        return child
+    }
+
+    return error.UnsupportedPlatform
+}
+
+export fn std.process.is_active(self: std.process.Child) -> bool {
+    return self.active
+}
+
+// Waits for a child and consumes its native process handle. The returned value
+// is the normal exit code. A Linux child terminated by a signal is represented
+// as 128 plus the signal number, matching common command-line conventions.
+export fn std.process.wait(self: *std.process.Child) !i32 {
+    if !self.active || self.handle <= 0 {
+        return error.InvalidArgument
+    }
+
+    if Builtin.IsLinux {
+        wait4_nr: i64 = std.process.linux_wait4_nr()
+        status: i32 = 0
+        result: i64 = syscall(wait4_nr, self.handle, cast(i64, &status), 0, 0)
+        if result < 0 {
+            return error.IOError
+        }
+
+        self.handle = 0
+        self.active = false
+
+        if (status & LINUX_EXIT_STATUS_MASK) == 0 {
+            return (status >> LINUX_EXIT_STATUS_SHIFT) & LINUX_EXIT_STATUS_MASK
+        }
+
+        return LINUX_SIGNAL_EXIT_BASE + (status & LINUX_EXIT_STATUS_MASK)
+    }
+
+    if Builtin.IsWindows {
+        status: i32 = 0
+        result: i64 = _cwait(&status, self.handle, WINDOWS_WAIT_CHILD)
+        if result < 0 {
+            return error.IOError
+        }
+        self.handle = 0
+        self.active = false
+        return status
+    }
+
+    return error.UnsupportedPlatform
+}
+
+// Convenience form of spawn followed by wait. argv must follow the same
+// null-terminated vector contract as std.process.spawn.
+export fn std.process.run(argv: **u8) !i32 {
+    child: std.process.Child = std.process.spawn(argv) catch |err| {
+        return err
+    }
+
+    return std.process.wait(&child) catch |err| {
+        return err
+    }
 }
