@@ -93,6 +93,12 @@ class RuntimeExpectation:
 
 
 @dataclass(frozen=True)
+class SuiteExclusion:
+    key: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class SuiteExclusions:
     llvm: dict[str, str]
     llvm_by_target: dict[str, dict[str, str]]
@@ -575,92 +581,131 @@ class NativeCompilerSuite:
         index: int,
         exclusions: SuiteExclusions,
     ) -> None:
+        checked = self._check_frontend_outcome(case)
+        if case.expected != "success":
+            return
+
+        self._validate_warning_expectations(case, checked, exclusions)
+        if self.frontend_only:
+            return
+
+        exclusion = self._resolve_llvm_exclusion(case, exclusions)
+        llvm_ir = self._emit_llvm(case, output_root, index, exclusion)
+        self._assert_llvm_expectations(case, llvm_ir, exclusions)
+
+    def _check_frontend_outcome(self, case: FixtureCase) -> CommandResult:
         checked = self._run_command([self.compiler, "check", case.path])
         if case.expected == "success":
             if checked.returncode != 0:
-                raise SuiteFailure(format_command_failure("native check rejected successful input", checked))
-            warning_expectations = read_expectation_lines(case.path.parent / "expect-warnings.txt")
-            native_warning_codes = read_expectation_lines(
-                case.path.parent / "expect-native-warning-codes.txt"
-            )
-            warning_assertions = [*warning_expectations, *native_warning_codes]
-            if warning_assertions:
-                if case.name in exclusions.warnings:
-                    exclusion_key = f"warnings:{case.name}"
-                    exclusion_reason = exclusions.warnings[case.name]
-                    self.exclusion_tracker.register(exclusion_key, exclusion_reason)
-                    diagnostics = self._normalized_diagnostics(case, checked)
-                    missing_warnings = [
-                        expected
-                        for expected in warning_assertions
-                        if expected not in diagnostics
-                    ]
-                    if missing_warnings:
-                        self.exclusion_tracker.consume(exclusion_key)
-                        print(f"SKIP warning/{case.name}: {exclusion_reason}")
-                else:
-                    self._assert_warnings(case, checked, warning_assertions)
-            if self.frontend_only:
-                return
-            target_exclusions = exclusions.llvm_by_target.get(self.target, {})
-            exclusion_key: str | None = None
-            exclusion_reason = exclusions.llvm.get(case.name)
-            if exclusion_reason is not None:
-                exclusion_key = f"llvm:{case.name}"
-            elif case.name in target_exclusions:
-                exclusion_reason = target_exclusions[case.name]
-                exclusion_key = f"llvm_by_target:{self.target}:{case.name}"
-            if exclusion_key is not None and exclusion_reason is not None:
-                self.exclusion_tracker.register(exclusion_key, exclusion_reason)
-            output = output_root / f"fixture-{index}.ll"
-            built = self._run_command(
-                [
-                    self.compiler,
-                    "build",
-                    case.path,
-                    "--target",
-                    self.target,
-                    "--output-kind",
-                    "llvm-ir",
-                    "-o",
-                    output,
-                ],
-            )
-            if built.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
-                if exclusion_key is not None and exclusion_reason is not None:
-                    self.exclusion_tracker.consume(exclusion_key)
-                    raise SuiteSkip(exclusion_reason)
-                raise SuiteFailure(format_command_failure("LLVM IR emission failed", built))
-            llvm_ir = output.read_text(encoding="utf-8")
-            if "target triple =" not in llvm_ir:
-                raise SuiteFailure("LLVM output did not contain a target triple")
-            if case.name in exclusions.llvm_assertions:
-                exclusion_key = f"llvm_assertions:{case.name}"
-                exclusion_reason = exclusions.llvm_assertions[case.name]
-                self.exclusion_tracker.register(exclusion_key, exclusion_reason)
-                missing_assertions = [
-                    expected
-                    for expected in llvm_expectations(case.path.parent, self.target)
-                    if expected not in llvm_ir
-                ]
-                if missing_assertions:
-                    self.exclusion_tracker.consume(exclusion_key)
-                    print(f"SKIP llvm-assertion/{case.name}: {exclusion_reason}")
-            else:
-                for expected in llvm_expectations(case.path.parent, self.target):
-                    if expected not in llvm_ir:
-                        raise SuiteFailure(f"LLVM output did not contain {expected!r}")
-            return
+                raise SuiteFailure(
+                    format_command_failure("native check rejected successful input", checked)
+                )
+            return checked
 
         phase = diagnostic_phase(checked)
         if checked.returncode == 0:
             raise SuiteFailure(f"native check accepted input expecting {case.expected}")
         if phase is None:
-            raise SuiteFailure(format_command_failure("native check emitted no structured diagnostic", checked))
+            raise SuiteFailure(
+                format_command_failure("native check emitted no structured diagnostic", checked)
+            )
         if phase != case.expected:
             raise SuiteFailure(
                 f"expected {case.expected}, got {phase}\n{checked.output.strip()}"
             )
+        return checked
+
+    def _validate_warning_expectations(
+        self, case: FixtureCase, checked: CommandResult, exclusions: SuiteExclusions
+    ) -> None:
+        warning_expectations = read_expectation_lines(case.path.parent / "expect-warnings.txt")
+        native_warning_codes = read_expectation_lines(
+            case.path.parent / "expect-native-warning-codes.txt"
+        )
+        warning_assertions = [*warning_expectations, *native_warning_codes]
+        if not warning_assertions:
+            return
+
+        exclusion_reason = exclusions.warnings.get(case.name)
+        if exclusion_reason is None:
+            self._assert_warnings(case, checked, warning_assertions)
+            return
+
+        exclusion = SuiteExclusion(f"warnings:{case.name}", exclusion_reason)
+        self.exclusion_tracker.register(exclusion.key, exclusion.reason)
+        diagnostics = self._normalized_diagnostics(case, checked)
+        missing_warnings = [
+            expected for expected in warning_assertions if expected not in diagnostics
+        ]
+        if missing_warnings:
+            self.exclusion_tracker.consume(exclusion.key)
+            print(f"SKIP warning/{case.name}: {exclusion.reason}")
+
+    def _resolve_llvm_exclusion(
+        self, case: FixtureCase, exclusions: SuiteExclusions
+    ) -> SuiteExclusion | None:
+        target_exclusions = exclusions.llvm_by_target.get(self.target, {})
+        exclusion_reason = exclusions.llvm.get(case.name)
+        if exclusion_reason is not None:
+            return SuiteExclusion(f"llvm:{case.name}", exclusion_reason)
+        if case.name in target_exclusions:
+            return SuiteExclusion(
+                f"llvm_by_target:{self.target}:{case.name}", target_exclusions[case.name]
+            )
+        return None
+
+    def _emit_llvm(
+        self,
+        case: FixtureCase,
+        output_root: Path,
+        index: int,
+        exclusion: SuiteExclusion | None,
+    ) -> str:
+        if exclusion is not None:
+            self.exclusion_tracker.register(exclusion.key, exclusion.reason)
+
+        output = output_root / f"fixture-{index}.ll"
+        built = self._run_command(
+            [
+                self.compiler,
+                "build",
+                case.path,
+                "--target",
+                self.target,
+                "--output-kind",
+                "llvm-ir",
+                "-o",
+                output,
+            ],
+        )
+        if built.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
+            if exclusion is not None:
+                self.exclusion_tracker.consume(exclusion.key)
+                raise SuiteSkip(exclusion.reason)
+            raise SuiteFailure(format_command_failure("LLVM IR emission failed", built))
+
+        llvm_ir = output.read_text(encoding="utf-8")
+        if "target triple =" not in llvm_ir:
+            raise SuiteFailure("LLVM output did not contain a target triple")
+        return llvm_ir
+
+    def _assert_llvm_expectations(
+        self, case: FixtureCase, llvm_ir: str, exclusions: SuiteExclusions
+    ) -> None:
+        expectations = llvm_expectations(case.path.parent, self.target)
+        exclusion_reason = exclusions.llvm_assertions.get(case.name)
+        if exclusion_reason is None:
+            for expected in expectations:
+                if expected not in llvm_ir:
+                    raise SuiteFailure(f"LLVM output did not contain {expected!r}")
+            return
+
+        exclusion = SuiteExclusion(f"llvm_assertions:{case.name}", exclusion_reason)
+        self.exclusion_tracker.register(exclusion.key, exclusion.reason)
+        missing_assertions = [expected for expected in expectations if expected not in llvm_ir]
+        if missing_assertions:
+            self.exclusion_tracker.consume(exclusion.key)
+            print(f"SKIP llvm-assertion/{case.name}: {exclusion.reason}")
 
     def _assert_warnings(
         self, case: FixtureCase, result: CommandResult, expectations: Sequence[str]

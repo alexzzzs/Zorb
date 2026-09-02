@@ -17,9 +17,12 @@ from test_compiler import (  # noqa: E402
     COMMAND_TIMEOUT_ENVIRONMENT_VARIABLE,
     CommandResult,
     ExclusionTracker,
+    FixtureCase,
     JSON_DIAGNOSTIC_FIELDS,
     NativeCompilerSuite,
     SuiteFailure,
+    SuiteExclusions,
+    SuiteSkip,
     expected_phase_from_code,
     load_fixture_manifest,
     llvm_expectations,
@@ -31,6 +34,18 @@ from test_compiler import (  # noqa: E402
 
 
 class CompilerRunnerTests(unittest.TestCase):
+    def _make_suite(self) -> NativeCompilerSuite:
+        return NativeCompilerSuite(
+            project_root=PROJECT_ROOT,
+            compiler=Path("zorb"),
+            environment={},
+            target="host-linux",
+            runtime_targets=[],
+            command_timeout_seconds=123,
+            frontend_only=False,
+            selected_case=None,
+        )
+
     def test_repository_manifest_classifies_the_complete_native_corpus(self) -> None:
         cases = load_fixture_manifest(PROJECT_ROOT)
         self.assertGreater(len(cases), 300)
@@ -96,19 +111,83 @@ class CompilerRunnerTests(unittest.TestCase):
         )
 
     def test_suite_command_uses_resolved_timeout(self) -> None:
-        suite = NativeCompilerSuite(
-            project_root=PROJECT_ROOT,
-            compiler=Path("zorb"),
-            environment={},
-            target="host-linux",
-            runtime_targets=[],
-            command_timeout_seconds=123,
-            frontend_only=True,
-            selected_case=None,
-        )
+        suite = self._make_suite()
         with patch("test_compiler.run_command") as run_command:
             suite._run_command(["zorb", "check", "input.zorb"])
         self.assertEqual(run_command.call_args.args[3], 123)
+
+    def test_frontend_only_case_stops_before_llvm_emission(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            fixture_dir = Path(temp)
+            case = FixtureCase(
+                name="frontend_only_case",
+                path=fixture_dir / "main.zorb",
+                classification="differential",
+                feature="frontend",
+                expected="success",
+                gate="frontend",
+                reason="",
+            )
+            suite = self._make_suite()
+            suite.frontend_only = True
+            exclusions = SuiteExclusions({}, {}, {}, {}, {}, {})
+            with patch.object(
+                suite, "_run_command", return_value=CommandResult(0, "", "")
+            ):
+                with patch.object(suite, "_emit_llvm") as emit_llvm:
+                    suite._test_case(case, fixture_dir, 0, exclusions)
+
+            emit_llvm.assert_not_called()
+
+    def test_warning_exclusion_is_consumed_when_warning_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            fixture_dir = Path(temp)
+            (fixture_dir / "expect-native-warning-codes.txt").write_text(
+                "warning.pointer-alignment\n", encoding="utf-8"
+            )
+            case = FixtureCase(
+                name="warning_case",
+                path=fixture_dir / "main.zorb",
+                classification="differential",
+                feature="warnings",
+                expected="success",
+                gate="frontend",
+                reason="",
+            )
+            exclusions = SuiteExclusions(
+                {}, {}, {}, {}, {}, {case.name: "not yet native"}
+            )
+            suite = self._make_suite()
+
+            suite._validate_warning_expectations(case, CommandResult(0, "", ""), exclusions)
+
+            suite.exclusion_tracker.require_no_stale_exclusions()
+
+    def test_llvm_exclusion_is_consumed_when_emission_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            fixture_dir = Path(temp)
+            case = FixtureCase(
+                name="llvm_case",
+                path=fixture_dir / "main.zorb",
+                classification="differential",
+                feature="backend",
+                expected="success",
+                gate="frontend",
+                reason="",
+            )
+            exclusion = SuiteExclusions(
+                {case.name: "not yet native"}, {}, {}, {}, {}, {}
+            )
+            suite = self._make_suite()
+            with patch.object(
+                suite, "_run_command", return_value=CommandResult(1, "", "backend failed")
+            ):
+                with self.assertRaisesRegex(SuiteSkip, "not yet native"):
+                    suite._emit_llvm(
+                        case, Path(temp), 0, suite._resolve_llvm_exclusion(case, exclusion)
+                    )
+
+            suite.exclusion_tracker.require_no_stale_exclusions()
 
     def test_unconsumed_exclusion_is_stale(self) -> None:
         tracker = ExclusionTracker()
