@@ -1,0 +1,704 @@
+import "../../runtime/std/errors.zorb"
+import "../../runtime/std/mem.zorb"
+import "../../runtime/std/str.zorb"
+import "../token.zorb"
+import "types.zorb"
+import "../ast.zorb"
+import "resolution.zorb"
+
+export fn ZAstModule.init(allocator: *std.mem.HeapAllocator, initial_capacity: i64) !ZAstModule {
+    module: ZAstModule = ZAstModule{
+        decls: cast(*ZAstDecl, 0),
+        len: 0,
+        capacity: 0,
+        types: cast(*ZAstType, 0),
+        type_count: 0,
+        type_capacity: 0,
+        generic_params: cast(*ZAstText, 0),
+        generic_default_types: cast(*i64, 0),
+        generic_param_count_total: 0,
+        generic_param_capacity: 0,
+        params: cast(*ZAstParam, 0),
+        param_count_total: 0,
+        param_capacity: 0,
+        members: cast(*ZAstMember, 0),
+        member_count_total: 0,
+        member_capacity: 0,
+        stmts: cast(*ZAstStmt, 0),
+        stmt_count_total: 0,
+        stmt_capacity: 0,
+        exprs: cast(*ZAstExpr, 0),
+        expr_count: 0,
+        expr_capacity: 0,
+        expr_args: cast(*i64, 0),
+        expr_arg_count: 0,
+        expr_arg_capacity: 0,
+        literal_fields: cast(*ZAstLiteralField, 0),
+        literal_field_count: 0,
+        literal_field_capacity: 0,
+        import_count: 0,
+        extern_count: 0,
+        error_count: 0,
+        const_count: 0,
+        global_count: 0,
+        struct_count: 0,
+        enum_count: 0,
+        union_count: 0,
+        function_count: 0,
+        semantic_error_span: ZAstSpan.empty(),
+        semantic_error_category: ZAstSemanticErrorNone,
+        warnings: cast(*ZAstWarning, 0),
+        warning_count: 0,
+        warning_capacity: 0
+    }
+
+    if initial_capacity < 0 {
+        return error.InvalidSize
+    }
+
+    if initial_capacity > 0 {
+        ZAstModule.reserve(&module, allocator, initial_capacity) catch |err| {
+            if err == error.InvalidSize {
+                return error.InvalidSize
+            }
+            return error.OutOfMemory
+        }
+    }
+
+    return module
+}
+
+
+export fn zast_reserve_types(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.type_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.type_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstType)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstType = cast(*ZAstType, raw)
+    i: i64 = 0
+    while i < self.type_count {
+        new_items[i] = self.types[i]
+        i = i + 1
+    }
+    self.types = new_items
+    self.type_capacity = new_capacity
+    return 0
+}
+
+
+export fn zast_reserve_params(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.param_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.param_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstParam)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstParam = cast(*ZAstParam, raw)
+    i: i64 = 0
+    while i < self.param_count_total {
+        new_items[i] = self.params[i]
+        i = i + 1
+    }
+    self.params = new_items
+    self.param_capacity = new_capacity
+    return 0
+}
+
+
+export fn zast_reserve_generic_params(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.generic_param_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.generic_param_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstText)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstText = cast(*ZAstText, raw)
+    default_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(i64)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_defaults: *i64 = cast(*i64, default_raw)
+    i: i64 = 0
+    while i < self.generic_param_count_total {
+        new_items[i] = self.generic_params[i]
+        new_defaults[i] = self.generic_default_types[i]
+        i = i + 1
+    }
+    self.generic_params = new_items
+    self.generic_default_types = new_defaults
+    self.generic_param_capacity = new_capacity
+    return 0
+}
+
+
+export fn zast_reserve_members(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.member_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.member_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstMember)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstMember = cast(*ZAstMember, raw)
+    i: i64 = 0
+    while i < self.member_count_total {
+        new_items[i] = self.members[i]
+        i = i + 1
+    }
+    self.members = new_items
+    self.member_capacity = new_capacity
+    return 0
+}
+
+
+export fn zast_reserve_stmts(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.stmt_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.stmt_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstStmt)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstStmt = cast(*ZAstStmt, raw)
+    i: i64 = 0
+    while i < self.stmt_count_total {
+        new_items[i] = self.stmts[i]
+        i = i + 1
+    }
+    self.stmts = new_items
+    self.stmt_capacity = new_capacity
+    return 0
+}
+
+
+export fn zast_reserve_warnings(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.warning_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.warning_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstWarning)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstWarning = cast(*ZAstWarning, raw)
+    i: i64 = 0
+    while i < self.warning_count {
+        new_items[i] = self.warnings[i]
+        i = i + 1
+    }
+    self.warnings = new_items
+    self.warning_capacity = new_capacity
+    return 0
+}
+
+
+export fn zast_append_warning(self: *ZAstModule, allocator: *std.mem.HeapAllocator, warning: ZAstWarning) !i64 {
+    zast_reserve_warnings(self, allocator, self.warning_count + 1) catch |err| { return err }
+    self.warnings[self.warning_count] = warning
+    self.warning_count = self.warning_count + 1
+    return 0
+}
+
+
+export fn zast_reserve_exprs(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.expr_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.expr_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstExpr)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstExpr = cast(*ZAstExpr, raw)
+    i: i64 = 0
+    while i < self.expr_count {
+        new_items[i] = self.exprs[i]
+        i = i + 1
+    }
+    self.exprs = new_items
+    self.expr_capacity = new_capacity
+    return 0
+}
+
+
+export fn zast_reserve_expr_args(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.expr_arg_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.expr_arg_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(i64)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *i64 = cast(*i64, raw)
+    i: i64 = 0
+    while i < self.expr_arg_count {
+        new_items[i] = self.expr_args[i]
+        i = i + 1
+    }
+    self.expr_args = new_items
+    self.expr_arg_capacity = new_capacity
+    return 0
+}
+
+
+export fn zast_reserve_literal_fields(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed <= self.literal_field_capacity {
+        return 0
+    }
+    new_capacity: i64 = zast_next_capacity(self.literal_field_capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstLiteralField)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_items: *ZAstLiteralField = cast(*ZAstLiteralField, raw)
+    i: i64 = 0
+    while i < self.literal_field_count {
+        new_items[i] = self.literal_fields[i]
+        i = i + 1
+    }
+    self.literal_fields = new_items
+    self.literal_field_capacity = new_capacity
+    return 0
+}
+
+
+export fn ZAstModule.reserve_arenas(
+    self: *ZAstModule,
+    allocator: *std.mem.HeapAllocator,
+    needed: i64
+) !i64 {
+    if needed < 0 { return error.InvalidSize }
+    ZAstModule.reserve(self, allocator, needed) catch |err| { return err }
+    zast_reserve_types(self, allocator, needed) catch |err| { return err }
+    zast_reserve_generic_params(self, allocator, needed) catch |err| { return err }
+    zast_reserve_params(self, allocator, needed) catch |err| { return err }
+    zast_reserve_members(self, allocator, needed) catch |err| { return err }
+    zast_reserve_stmts(self, allocator, needed) catch |err| { return err }
+    zast_reserve_exprs(self, allocator, needed) catch |err| { return err }
+    zast_reserve_expr_args(self, allocator, needed) catch |err| { return err }
+    zast_reserve_literal_fields(self, allocator, needed) catch |err| { return err }
+    return 0
+}
+
+
+export fn ZAstModule.append_type(self: *ZAstModule, allocator: *std.mem.HeapAllocator, text: ZAstText) !i64 {
+    zast_reserve_types(self, allocator, self.type_count + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.type_count
+    self.types[index].text = text
+    self.types[index].scope_declaration_start = ZAstNoIndex
+    self.types[index].scope_statement = ZAstNoIndex
+    self.type_count = self.type_count + 1
+    return index
+}
+
+
+export fn ZAstModule.append_param(self: *ZAstModule, allocator: *std.mem.HeapAllocator, param: ZAstParam) !i64 {
+    zast_reserve_params(self, allocator, self.param_count_total + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.param_count_total
+    self.params[index] = param
+    self.param_count_total = self.param_count_total + 1
+    return index
+}
+
+
+export fn ZAstModule.append_generic_param(self: *ZAstModule, allocator: *std.mem.HeapAllocator, name: ZAstText) !i64 {
+    zast_reserve_generic_params(self, allocator, self.generic_param_count_total + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.generic_param_count_total
+    self.generic_params[index] = name
+    self.generic_default_types[index] = ZAstNoIndex
+    self.generic_param_count_total = self.generic_param_count_total + 1
+    return index
+}
+
+
+export fn ZAstModule.append_member(self: *ZAstModule, allocator: *std.mem.HeapAllocator, member: ZAstMember) !i64 {
+    zast_reserve_members(self, allocator, self.member_count_total + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.member_count_total
+    self.members[index] = member
+    self.member_count_total = self.member_count_total + 1
+    return index
+}
+
+
+export fn ZAstModule.append_stmt(self: *ZAstModule, allocator: *std.mem.HeapAllocator, stmt: ZAstStmt) !i64 {
+    zast_reserve_stmts(self, allocator, self.stmt_count_total + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.stmt_count_total
+    self.stmts[index] = stmt
+    self.stmt_count_total = self.stmt_count_total + 1
+    return index
+}
+
+
+export fn ZAstModule.append_expr(self: *ZAstModule, allocator: *std.mem.HeapAllocator, expr: ZAstExpr) !i64 {
+    zast_reserve_exprs(self, allocator, self.expr_count + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.expr_count
+    self.exprs[index] = expr
+    self.expr_count = self.expr_count + 1
+    return index
+}
+
+
+export fn ZAstModule.append_expr_arg(self: *ZAstModule, allocator: *std.mem.HeapAllocator, expr_index: i64) !i64 {
+    zast_reserve_expr_args(self, allocator, self.expr_arg_count + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.expr_arg_count
+    self.expr_args[index] = expr_index
+    self.expr_arg_count = self.expr_arg_count + 1
+    return index
+}
+
+
+export fn ZAstModule.append_literal_field(self: *ZAstModule, allocator: *std.mem.HeapAllocator, field: ZAstLiteralField) !i64 {
+    zast_reserve_literal_fields(self, allocator, self.literal_field_count + 1) catch |err| {
+        return err
+    }
+    index: i64 = self.literal_field_count
+    self.literal_fields[index] = field
+    self.literal_field_count = self.literal_field_count + 1
+    return index
+}
+
+
+export fn ZAstModule.append(self: *ZAstModule, allocator: *std.mem.HeapAllocator, decl: ZAstDecl) !i64 {
+    ZAstModule.reserve(self, allocator, self.len + 1) catch |err| {
+        if err == error.InvalidSize {
+            return error.InvalidSize
+        }
+        return error.OutOfMemory
+    }
+
+    self.decls[self.len] = decl
+    self.len = self.len + 1
+
+    if decl.kind == ZAstDeclImport {
+        self.import_count = self.import_count + 1
+    }
+    if decl.kind == ZAstDeclExternFunction {
+        self.extern_count = self.extern_count + 1
+    }
+    if decl.kind == ZAstDeclError {
+        self.error_count = self.error_count + 1
+    }
+    if decl.kind == ZAstDeclConst {
+        self.const_count = self.const_count + 1
+    }
+    if decl.kind == ZAstDeclGlobal {
+        self.global_count = self.global_count + 1
+    }
+    if decl.kind == ZAstDeclStruct {
+        self.struct_count = self.struct_count + 1
+    }
+    if decl.kind == ZAstDeclEnum {
+        self.enum_count = self.enum_count + 1
+    }
+    if decl.kind == ZAstDeclUnion {
+        self.union_count = self.union_count + 1
+    }
+    if decl.kind == ZAstDeclFunction {
+        self.function_count = self.function_count + 1
+    }
+
+    return self.len - 1
+}
+
+
+export fn zast_type_known(self: *ZAstModule, decl: ZAstDecl, type_index: i64) -> bool {
+    if type_index == ZAstNoIndex {
+        return true
+    }
+    text: ZAstText = zast_type_text_base(self.types[type_index].text)
+    if text.len == 0 {
+        return true
+    }
+    if zast_is_builtin_type(text) {
+        return true
+    }
+    if zast_is_function_type(text) {
+        return true
+    }
+    if zast_decl_has_generic_param(self, decl, text) {
+        return true
+    }
+    decl_index: i64 = ZAstModule.find_decl(self, text)
+    if decl_index == ZAstNoIndex {
+        return false
+    }
+    kind: i64 = self.decls[decl_index].kind
+    return kind == ZAstDeclStruct || kind == ZAstDeclEnum || kind == ZAstDeclUnion || kind == ZAstDeclExternType
+}
+
+
+export fn zast_decl_has_duplicate_generic_params(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    left: i64 = 0
+    while left < decl.generic_param_count {
+        right: i64 = left + 1
+        while right < decl.generic_param_count {
+            if zast_text_same(self.generic_params[decl.generic_param_start + left], self.generic_params[decl.generic_param_start + right]) {
+                return true
+            }
+            right = right + 1
+        }
+        left = left + 1
+    }
+    return false
+}
+
+
+export fn zast_expr_is_constant(self: *ZAstModule, expr_index: i64) -> bool {
+    if expr_index == ZAstNoIndex { return true }
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind == ZAstExprInteger || expr.kind == ZAstExprString || expr.kind == ZAstExprBool { return true }
+    if expr.kind == ZAstExprBinary {
+        return zast_expr_is_constant(self, expr.left) && zast_expr_is_constant(self, expr.right)
+    }
+    if expr.kind == ZAstExprIdentifier {
+        decl_index: i64 = ZAstModule.find_decl(self, expr.name)
+        return decl_index != ZAstNoIndex && self.decls[decl_index].kind == ZAstDeclConst
+    }
+    return false
+}
+
+
+// Array sizes may be arbitrary constant expressions. The current semantic
+// subset can validate the common literal-size form immediately and defers
+// symbolic expressions to the constant-evaluation pass.
+export fn zast_array_literal_count_matches_type(type_text: ZAstText, element_count: i64) -> bool {
+    type_text = zast_text_skip_ws(type_text)
+    if type_text.len < 3 || type_text.ptr[0] != 91 {
+        return true
+    }
+    index: i64 = 1
+    declared_count: i64 = 0
+    has_digits: bool = false
+    while index < type_text.len && type_text.ptr[index] != 93 {
+        ch: u8 = type_text.ptr[index]
+        if ch < 48 || ch > 57 {
+            return true
+        }
+        declared_count = declared_count * 10 + cast(i64, ch - 48)
+        has_digits = true
+        index = index + 1
+    }
+    if index >= type_text.len || !has_digits {
+        return true
+    }
+    return declared_count == element_count
+}
+
+
+export fn zast_array_size_name_is_constant(self: *ZAstModule, decl: ZAstDecl, name: ZAstText, through_stmt: i64) -> bool {
+    statement_index: i64 = 0
+    while statement_index < through_stmt {
+        statement: ZAstStmt = self.stmts[decl.stmt_start + statement_index]
+        if statement.kind == ZAstStmtVar && zast_text_same(statement.name, name) {
+            return statement.is_constant
+        }
+        statement_index = statement_index + 1
+    }
+    declaration_index: i64 = ZAstModule.find_decl(self, name)
+    return declaration_index != ZAstNoIndex && self.decls[declaration_index].kind == ZAstDeclConst
+}
+
+
+// Array bounds retain their source text in the compact type arena. Validate
+// identifier references directly from that text so local/global constants are
+// accepted without treating mutable values as compile-time sizes.
+export fn zast_type_array_sizes_are_constant(self: *ZAstModule, decl: ZAstDecl, type_index: i64, through_stmt: i64) -> bool {
+    if type_index == ZAstNoIndex { return true }
+    type_text: ZAstText = self.types[type_index].text
+    index: i64 = 0
+    while index < type_text.len {
+        if type_text.ptr[index] != 91 {
+            index = index + 1
+            continue
+        }
+        index = index + 1
+        while index < type_text.len && type_text.ptr[index] != 93 {
+            ch: u8 = type_text.ptr[index]
+            is_identifier_start: bool = (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch == 95
+            if !is_identifier_start {
+                index = index + 1
+                continue
+            }
+            start: i64 = index
+            index = index + 1
+            while index < type_text.len {
+                ch = type_text.ptr[index]
+                if !((ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || (ch >= 48 && ch <= 57) || ch == 95) {
+                    break
+                }
+                index = index + 1
+            }
+            name: ZAstText
+            name.ptr = type_text.ptr + start
+            name.len = index - start
+            if !zast_array_size_name_is_constant(self, decl, name, through_stmt) {
+                return false
+            }
+        }
+        if index >= type_text.len { return false }
+        index = index + 1
+    }
+    return true
+}
+
+
+// Struct literal fields are stored separately from values so the compact AST
+// can retain source locations for unknown/duplicate members. This validator
+// intentionally shares declared-member lookup with normal field expressions.
+export fn zast_literal_field_index_at(self: *ZAstModule, literal: ZAstExpr, wanted: i64) -> i64 {
+    field_index: i64 = literal.field_start
+    index: i64 = 0
+    while field_index != ZAstNoIndex && index < wanted {
+        field_index = self.literal_fields[field_index].next_index
+        index = index + 1
+    }
+    return field_index
+}
+
+
+export fn zast_literal_field_value_at(self: *ZAstModule, literal: ZAstExpr, wanted: i64) -> i64 {
+    return self.literal_fields[zast_literal_field_index_at(self, literal, wanted)].value_expr
+}
+
+
+export fn zast_struct_literal_fields_valid(self: *ZAstModule, decl: ZAstDecl, literal: ZAstExpr, target: ZAstDecl, through_stmt: i64) -> bool {
+    literal_index: i64 = 0
+    while literal_index < literal.arg_count {
+        literal_field: ZAstLiteralField = self.literal_fields[zast_literal_field_index_at(self, literal, literal_index)]
+        earlier_index: i64 = 0
+        while earlier_index < literal_index {
+            earlier: ZAstLiteralField = self.literal_fields[zast_literal_field_index_at(self, literal, earlier_index)]
+            if zast_text_same(earlier.name, literal_field.name) {
+                self.semantic_error_span = literal_field.span
+                return false
+            }
+            earlier_index = earlier_index + 1
+        }
+
+        member_index: i64 = 0
+        while member_index < target.member_count {
+            if zast_text_same(self.members[target.member_start + member_index].name, literal_field.name) {
+                break
+            }
+            member_index = member_index + 1
+        }
+        if member_index == target.member_count {
+            self.semantic_error_span = literal_field.span
+            return false
+        }
+
+        literal_index = literal_index + 1
+    }
+
+    member_index: i64 = 0
+    while member_index < target.member_count {
+        member: ZAstMember = self.members[target.member_start + member_index]
+        found: bool = false
+        literal_index = 0
+        while literal_index < literal.arg_count {
+            if zast_text_same(self.literal_fields[zast_literal_field_index_at(self, literal, literal_index)].name, member.name) {
+                found = true
+            }
+            literal_index = literal_index + 1
+        }
+        if !found {
+            self.semantic_error_span = self.exprs[literal.left].span
+            return false
+        }
+        member_index = member_index + 1
+    }
+    return true
+}
+
+
+export fn zast_text_same_ignoring_ws(left: ZAstText, right: ZAstText) -> bool {
+    left_index: i64 = 0
+    right_index: i64 = 0
+    while true {
+        while left_index < left.len && (left.ptr[left_index] == 32 || left.ptr[left_index] == 9) { left_index = left_index + 1 }
+        while right_index < right.len && (right.ptr[right_index] == 32 || right.ptr[right_index] == 9) { right_index = right_index + 1 }
+        if left_index >= left.len || right_index >= right.len {
+            return left_index >= left.len && right_index >= right.len
+        }
+        if left.ptr[left_index] != right.ptr[right_index] {
+            return false
+        }
+        left_index = left_index + 1
+        right_index = right_index + 1
+    }
+    return false
+}
+
+
+export fn zast_function_type_param_count(type_text: ZAstText) -> i64 {
+    open_index: i64 = 0
+    while open_index < type_text.len && type_text.ptr[open_index] != 40 { open_index = open_index + 1 }
+    if open_index >= type_text.len { return -1 }
+    index: i64 = open_index + 1
+    if index < type_text.len && type_text.ptr[index] == 41 { return 0 }
+    count: i64 = 1
+    depth: i64 = 1
+    while index < type_text.len {
+        if type_text.ptr[index] == 40 { depth = depth + 1 }
+        if type_text.ptr[index] == 41 {
+            depth = depth - 1
+            if depth == 0 { return count }
+        }
+        if type_text.ptr[index] == 44 && depth == 1 { count = count + 1 }
+        index = index + 1
+    }
+    return -1
+}
+
+
+export fn zast_function_type_param(type_text: ZAstText, wanted_index: i64) -> ZAstText {
+    open_index: i64 = 0
+    while open_index < type_text.len && type_text.ptr[open_index] != 40 { open_index = open_index + 1 }
+    if open_index >= type_text.len { return ZAstText.empty() }
+    start: i64 = open_index + 1
+    index: i64 = start
+    current_index: i64 = 0
+    depth: i64 = 1
+    while index < type_text.len {
+        if type_text.ptr[index] == 40 { depth = depth + 1 }
+        if type_text.ptr[index] == 41 {
+            depth = depth - 1
+            if depth == 0 {
+                if current_index == wanted_index {
+                    result: ZAstText
+                    result.ptr = type_text.ptr + start
+                    result.len = index - start
+                    return zast_text_skip_ws(result)
+                }
+                return ZAstText.empty()
+            }
+        }
+        if type_text.ptr[index] == 44 && depth == 1 {
+            if current_index == wanted_index {
+                result: ZAstText
+                result.ptr = type_text.ptr + start
+                result.len = index - start
+                return zast_text_skip_ws(result)
+            }
+            current_index = current_index + 1
+            start = index + 1
+        }
+        index = index + 1
+    }
+    return ZAstText.empty()
+}

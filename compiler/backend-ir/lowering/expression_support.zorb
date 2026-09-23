@@ -1,0 +1,684 @@
+import "../../../runtime/std/errors.zorb"
+import "../../../runtime/std/collections.zorb"
+import "../../../runtime/std/mem.zorb"
+import "../../../runtime/std/str.zorb"
+import "../../ast/types.zorb"
+import "../../ast.zorb"
+import "../../ast/resolution.zorb"
+import "../../ast/arena.zorb"
+import "../../ast/type_check.zorb"
+import "../../ast/statement_check.zorb"
+import "../../ast/validation.zorb"
+import "../../ast/warnings.zorb"
+import "../../frontend/diagnostic.zorb"
+import "../../token.zorb"
+import "../model.zorb"
+import "types.zorb"
+import "core.zorb"
+import "generics.zorb"
+import "type_layout.zorb"
+
+export fn zbackend_ir_function_payload_type_id(
+    type_layout: *ZBackendIrTypeLayout,
+    ast: *ZAstModule,
+    declaration: ZAstDecl
+) !i64 {
+    if declaration.return_type_index == ZAstNoIndex {
+        if type_layout.void_type_id == ZBACKEND_IR_NO_TYPE_ID {
+            type_layout.void_type_id = zbackend_ir_type_layout_intern_scalar(
+                type_layout, "void"
+            ) catch |err| { return err }
+        }
+        return type_layout.void_type_id
+    }
+    return zbackend_ir_type_layout_type_id(
+        type_layout, ast, declaration.return_type_index
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_function_return_type_id(
+    type_layout: *ZBackendIrTypeLayout,
+    ast: *ZAstModule,
+    declaration: ZAstDecl
+) !i64 {
+    payload_type_id: i64 = zbackend_ir_function_payload_type_id(
+        type_layout, ast, declaration
+    ) catch |err| { return err }
+    if !declaration.return_is_error_union { return payload_type_id }
+    error_union_type_id: i64 = zbackend_ir_type_layout_find_error_union(
+        type_layout, payload_type_id
+    )
+    if error_union_type_id == ZBACKEND_IR_NO_TYPE_ID { return error.NotImplemented }
+    return error_union_type_id
+}
+
+
+export fn zbackend_ir_call_return_type_id(
+    type_layout: *ZBackendIrTypeLayout,
+    expression: ZAstExpr,
+    declaration: ZAstDecl,
+    generic_suffix: ZAstText
+) !i64 {
+    previous_declaration: i64 = type_layout.active_generic_declaration
+    previous_suffix: ZAstText = type_layout.active_generic_suffix
+    if declaration.generic_param_count > 0 {
+        if generic_suffix.len == 0 {
+            if expression.left == ZAstNoIndex { return error.InvalidArgument }
+            callee: ZAstExpr = type_layout.ast.exprs[expression.left]
+            if callee.type_index == ZAstNoIndex { return error.InvalidArgument }
+            generic_suffix = type_layout.ast.types[callee.type_index].text
+        }
+        declaration_index: i64 = zbackend_ir_owning_declaration_index(
+            type_layout.ast, declaration.name
+        )
+        if declaration_index == ZAstNoIndex { return error.InvalidArgument }
+        type_layout.active_generic_declaration = declaration_index
+        type_layout.active_generic_suffix = generic_suffix
+    }
+    result: i64 = zbackend_ir_function_return_type_id(
+        type_layout, type_layout.ast, declaration
+    ) catch |err| { return err }
+    type_layout.active_generic_declaration = previous_declaration
+    type_layout.active_generic_suffix = previous_suffix
+    return result
+}
+
+
+export fn zbackend_ir_binary_op(token: i64, is_signed: bool) !string {
+    if token == ZTokenPlus { return "add" }
+    if token == ZTokenMinus { return "sub" }
+    if token == ZTokenStar { return "mul" }
+    if token == ZTokenSlash {
+        if is_signed { return "signed_div" }
+        return "unsigned_div"
+    }
+    if token == ZTokenPercent {
+        if is_signed { return "signed_rem" }
+        return "unsigned_rem"
+    }
+    if token == ZTokenAmp { return "bit_and" }
+    if token == ZTokenPipe { return "bit_or" }
+    if token == ZTokenCaret { return "bit_xor" }
+    if token == ZTokenLShift { return "shift_left" }
+    if token == ZTokenRShift {
+        if is_signed { return "arithmetic_shift_right" }
+        return "logical_shift_right"
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_is_comparison(token: i64) -> bool {
+    return token == ZTokenEqualEqual || token == ZTokenBangEqual || token == ZTokenLess ||
+        token == ZTokenLessEqual || token == ZTokenGreater || token == ZTokenGreaterEqual
+}
+
+
+export fn zbackend_ir_compare_op(token: i64, is_signed: bool) !string {
+    if token == ZTokenEqualEqual { return "equal" }
+    if token == ZTokenBangEqual { return "not_equal" }
+    if token == ZTokenLess {
+        if is_signed { return "signed_less" }
+        return "unsigned_less"
+    }
+    if token == ZTokenLessEqual {
+        if is_signed { return "signed_less_equal" }
+        return "unsigned_less_equal"
+    }
+    if token == ZTokenGreater {
+        if is_signed { return "signed_greater" }
+        return "unsigned_greater"
+    }
+    if token == ZTokenGreaterEqual {
+        if is_signed { return "signed_greater_equal" }
+        return "unsigned_greater_equal"
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_new_instruction(id: i64, op: string, type_id: i64) -> ZBackendIrInstruction {
+    return ZBackendIrInstruction{
+        id: id,
+        op: op,
+        type_id: type_id,
+        integer: 0,
+        text: "",
+        binary_op: "",
+        compare_op: "",
+        cast_op: "",
+        lhs: 0,
+        rhs: 0,
+        callee: 0,
+        arguments: cast(*i64, 0),
+        argument_count: 0,
+        incoming_values: cast(*i64, 0),
+        incoming_blocks: cast(*i64, 0),
+        incoming_count: 0,
+        field_index: 0,
+        source_type: ZBACKEND_IR_NO_TYPE_ID,
+        global_id: 0,
+        asm_template: "",
+        constraints: "",
+        output_types: cast(*i64, 0),
+        output_addresses: cast(*i64, 0),
+        output_count: 0
+    }
+}
+
+
+export fn zbackend_ir_new_terminator(op: string) -> ZBackendIrTerminator {
+    return ZBackendIrTerminator{
+        op: op,
+        value: 0,
+        target: 0,
+        condition: 0,
+        true_target: 0,
+        false_target: 0
+    }
+}
+
+
+export fn zbackend_ir_return_terminator(value: i64) -> ZBackendIrTerminator {
+    terminator: ZBackendIrTerminator = zbackend_ir_new_terminator("return_value")
+    terminator.value = value
+    return terminator
+}
+
+
+export fn zbackend_ir_branch_terminator(target: i64) -> ZBackendIrTerminator {
+    terminator: ZBackendIrTerminator = zbackend_ir_new_terminator("branch")
+    terminator.target = target
+    return terminator
+}
+
+
+export fn zbackend_ir_has_local(local_names: *ZAstText, local_count: i64, name: ZAstText) -> bool {
+    index: i64 = local_count
+    while index > 0 {
+        index = index - 1
+        if ZAstText.eql(local_names[index], name) { return true }
+    }
+    return false
+}
+
+
+export fn zbackend_ir_append_instruction(context: *ZBackendIrExpressionLowering, instruction: ZBackendIrInstruction) !i64 {
+    if context.instruction_count >= context.instruction_capacity { return error.OutOfBounds }
+    context.instructions[context.instruction_count] = instruction
+    context.instruction_count = context.instruction_count + 1
+    return instruction.id
+}
+
+
+export fn zbackend_ir_local_address_from_arrays(
+    local_names: *ZAstText,
+    local_addresses: *i64,
+    local_count: i64,
+    name: ZAstText
+) !i64 {
+    index: i64 = local_count
+    while index > 0 {
+        index = index - 1
+        if ZAstText.eql(local_names[index], name) { return local_addresses[index] }
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_local_address(context: *ZBackendIrExpressionLowering, name: ZAstText) !i64 {
+    return zbackend_ir_local_address_from_arrays(
+        context.local_names, context.local_addresses, context.local_count, name
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_literal_nominal_type_id(
+    type_layout: *ZBackendIrTypeLayout,
+    ast: *ZAstModule,
+    expression: ZAstExpr
+) !i64 {
+    if expression.left == ZAstNoIndex { return error.NotImplemented }
+    prefix: ZAstExpr = ast.exprs[expression.left]
+    if prefix.kind != ZAstExprIdentifier && prefix.kind != ZAstExprField {
+        return error.NotImplemented
+    }
+    base_length: i64 = zbackend_ir_qualified_expression_length(
+        ast, expression.left
+    ) catch |err| { return err }
+    suffix: ZAstText = ZAstText.empty()
+    if prefix.type_index != ZAstNoIndex {
+        suffix = ast.types[prefix.type_index].text
+    }
+    raw: *u8 = std.mem.HeapAllocator.alloc(
+        type_layout.allocator, base_length + suffix.len + 1
+    ) catch |err| { return error.OutOfMemory }
+    offset: i64 = 0
+    zbackend_ir_write_qualified_expression(
+        ast, expression.left, raw, &offset
+    ) catch |err| { return err }
+    suffix_index: i64 = 0
+    while suffix_index < suffix.len {
+        raw[offset] = suffix.ptr[suffix_index]
+        offset = offset + 1
+        suffix_index = suffix_index + 1
+    }
+    raw[offset] = 0
+    return zbackend_ir_type_layout_intern_text(
+        type_layout, ZAstText{ ptr: raw, len: offset }
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_type_field_index(
+    type_layout: *ZBackendIrTypeLayout,
+    type_id: i64,
+    name: ZAstText
+) !i64 {
+    if type_id <= 0 || type_id > type_layout.type_count { return error.InvalidArgument }
+    item: ZBackendIrType = type_layout.types[type_id - 1]
+    index: i64 = 0
+    while index < item.field_count {
+        if ZAstText.eql_string(name, item.fields[index].name) { return index }
+        index = index + 1
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_field_is_static_enum(ast: *ZAstModule, expression: ZAstExpr) -> bool {
+    if expression.kind != ZAstExprField || expression.left == ZAstNoIndex { return false }
+    declaration_index: i64 = ZAstModule.find_qualified_decl(ast, expression.left)
+    return declaration_index != ZAstNoIndex && ast.decls[declaration_index].kind == ZAstDeclEnum
+}
+
+
+export fn zbackend_ir_static_union_tag_declaration_index(
+    ast: *ZAstModule,
+    expression: ZAstExpr
+) -> i64 {
+    if expression.kind != ZAstExprField || expression.left == ZAstNoIndex {
+        return ZAstNoIndex
+    }
+    tag_expression: ZAstExpr = ast.exprs[expression.left]
+    if tag_expression.kind != ZAstExprField || tag_expression.left == ZAstNoIndex ||
+        !ZAstText.eql_string(tag_expression.name, "Tag") {
+        return ZAstNoIndex
+    }
+    declaration_index: i64 = ZAstModule.find_qualified_decl(
+        ast, tag_expression.left
+    )
+    if declaration_index == ZAstNoIndex { return ZAstNoIndex }
+    declaration: ZAstDecl = ast.decls[declaration_index]
+    if declaration.is_imported && declaration.canonical_name.len > 0 {
+        declaration_index = zbackend_ir_owning_declaration_index(
+            ast, declaration.canonical_name
+        )
+        if declaration_index == ZAstNoIndex { return ZAstNoIndex }
+        declaration = ast.decls[declaration_index]
+    }
+    if declaration.kind != ZAstDeclUnion { return ZAstNoIndex }
+    return declaration_index
+}
+
+
+export fn zbackend_ir_field_is_static_union_tag(
+    ast: *ZAstModule,
+    expression: ZAstExpr
+) -> bool {
+    return zbackend_ir_static_union_tag_declaration_index(ast, expression) != ZAstNoIndex
+}
+
+
+export fn zbackend_ir_union_tag_field_value(
+    ast: *ZAstModule,
+    expression: ZAstExpr
+) !i64 {
+    declaration_index: i64 = zbackend_ir_static_union_tag_declaration_index(
+        ast, expression
+    )
+    if declaration_index == ZAstNoIndex { return error.NotImplemented }
+    declaration: ZAstDecl = ast.decls[declaration_index]
+    member_index: i64 = 0
+    while member_index < declaration.member_count {
+        if ZAstText.eql(
+            ast.members[declaration.member_start + member_index].name,
+            expression.name
+        ) { return member_index }
+        member_index = member_index + 1
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_field_is_static_error(ast: *ZAstModule, expression: ZAstExpr) -> bool {
+    if expression.kind != ZAstExprField || expression.left == ZAstNoIndex { return false }
+    return zbackend_ir_is_error_name(ast, expression.name)
+}
+
+
+export fn zbackend_ir_enum_field_value(
+    ast: *ZAstModule,
+    expression: ZAstExpr
+) !i64 {
+    declaration_index: i64 = ZAstModule.find_qualified_decl(ast, expression.left)
+    if declaration_index == ZAstNoIndex { return error.NotImplemented }
+    declaration: ZAstDecl = ast.decls[declaration_index]
+    if declaration.is_imported && declaration.canonical_name.len > 0 {
+        canonical_index: i64 = zbackend_ir_owning_declaration_index(
+            ast, declaration.canonical_name
+        )
+        if canonical_index != ZAstNoIndex { declaration = ast.decls[canonical_index] }
+    }
+    value: i64 = 0
+    member_index: i64 = 0
+    while member_index < declaration.member_count {
+        member: ZAstMember = ast.members[declaration.member_start + member_index]
+        if member.value_expr != ZAstNoIndex {
+            initializer: ZAstExpr = ast.exprs[member.value_expr]
+            if initializer.kind != ZAstExprInteger { return error.NotImplemented }
+            value = zbackend_ir_parse_positive_integer(
+                initializer.literal
+            ) catch |err| { return err }
+        }
+        if ZAstText.eql(member.name, expression.name) { return value }
+        value = value + 1
+        member_index = member_index + 1
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_expression_parameter_type_id(
+    context: *ZBackendIrExpressionLowering,
+    name: ZAstText
+) !i64 {
+    index: i64 = 0
+    while index < context.declaration.param_count {
+        parameter: ZAstParam = context.ast.params[context.declaration.param_start + index]
+        if ZAstText.eql(parameter.name, name) {
+            return zbackend_ir_type_layout_type_id(
+                context.type_layout, context.ast, parameter.type_index
+            ) catch |err| { return err }
+        }
+        index = index + 1
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_local_type_from_arrays(
+    local_names: *ZAstText,
+    local_type_ids: *i64,
+    local_count: i64,
+    name: ZAstText
+) !i64 {
+    index: i64 = local_count
+    while index > 0 {
+        index = index - 1
+        if ZAstText.eql(local_names[index], name) { return local_type_ids[index] }
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_expression_type_id(
+    context: *ZBackendIrExpressionLowering,
+    expression_index: i64,
+    fallback_type_id: i64
+) !i64 {
+    expression: ZAstExpr = context.ast.exprs[expression_index]
+    if expression.kind == ZAstExprIdentifier {
+        if zbackend_ir_is_error_name(context.ast, expression.name) {
+            return context.type_layout.error_type_id
+        }
+        if zbackend_ir_has_local(context.local_names, context.local_count, expression.name) {
+            return zbackend_ir_local_type_from_arrays(
+                context.local_names, context.local_type_ids, context.local_count, expression.name
+            ) catch |err| { return err }
+        }
+        if !zbackend_ir_is_global_name(context.ast, expression.name) {
+            if zbackend_ir_is_function_name(context.ast, expression.name) {
+                return fallback_type_id
+            }
+            return zbackend_ir_expression_parameter_type_id(
+                context, expression.name
+            ) catch |err| { return err }
+        }
+        global_declaration: ZAstDecl = zbackend_ir_global_declaration(
+            context.ast, expression.name
+        ) catch |err| { return err }
+        return zbackend_ir_type_layout_type_id(
+            context.type_layout, context.ast, global_declaration.type_index
+        ) catch |err| { return err }
+    }
+    if expression.kind == ZAstExprInteger { return fallback_type_id }
+    if expression.kind == ZAstExprBool { return context.bool_type_id }
+    if expression.kind == ZAstExprError { return context.type_layout.error_type_id }
+    if expression.kind == ZAstExprString {
+        return zbackend_ir_type_layout_intern_text(
+            context.type_layout, ZAstText{ ptr: cast(*u8, "string"), len: 6 }
+        ) catch |err| { return err }
+    }
+    if expression.kind == ZAstExprUnary {
+        operand_type_id: i64 = zbackend_ir_expression_type_id(
+            context, expression.left, fallback_type_id
+        ) catch |err| { return err }
+        if expression.op == ZTokenAmp {
+            operand_type: ZBackendIrType = context.type_layout.types[operand_type_id - 1]
+            if operand_type.kind == "array" {
+                return zbackend_ir_type_layout_pointer_to(
+                    context.type_layout, operand_type.element_type
+                ) catch |err| { return err }
+            }
+            return zbackend_ir_type_layout_pointer_to(
+                context.type_layout, operand_type_id
+            ) catch |err| { return err }
+        }
+        if expression.op == ZTokenStar {
+            return zbackend_ir_type_layout_element_type(
+                context.type_layout, operand_type_id
+            ) catch |err| { return err }
+        }
+        return operand_type_id
+    }
+    if expression.kind == ZAstExprIndex {
+        target_type_id: i64 = zbackend_ir_expression_type_id(
+            context, expression.left, fallback_type_id
+        ) catch |err| { return err }
+        return zbackend_ir_type_layout_element_type(
+            context.type_layout, target_type_id
+        ) catch |err| { return err }
+    }
+    if expression.kind == ZAstExprArrayLiteral {
+        return zbackend_ir_type_layout_type_id(
+            context.type_layout, context.ast, expression.type_index
+        ) catch |err| { return err }
+    }
+    if expression.kind == ZAstExprCast {
+        return zbackend_ir_type_layout_type_id(
+            context.type_layout, context.ast, expression.type_index
+        ) catch |err| { return err }
+    }
+    if expression.kind == ZAstExprStructLiteral {
+        return zbackend_ir_literal_nominal_type_id(
+            context.type_layout, context.ast, expression
+        ) catch |err| { return err }
+    }
+    if expression.kind == ZAstExprField {
+        if zbackend_ir_field_is_static_enum(context.ast, expression) {
+            return fallback_type_id
+        }
+        resolved_global: ZAstText = zbackend_ir_resolved_global_name(
+            context.type_layout, expression_index
+        ) catch |err| { return err }
+        if resolved_global.len > 0 {
+            global_declaration: ZAstDecl = zbackend_ir_global_declaration(
+                context.ast, resolved_global
+            ) catch |err| { return err }
+            return zbackend_ir_type_layout_type_id(
+                context.type_layout, context.ast, global_declaration.type_index
+            ) catch |err| { return err }
+        }
+        resolved_function_value: ZAstText = zbackend_ir_resolved_function_value_name(
+            context.type_layout, expression_index
+        ) catch |err| { return err }
+        if resolved_function_value.len > 0 {
+            return fallback_type_id
+        }
+        if zbackend_ir_is_builtin_field(context.ast, expression) {
+            return context.bool_type_id
+        }
+        if zbackend_ir_field_is_static_error(context.ast, expression) {
+            return context.type_layout.error_type_id
+        }
+        if zbackend_ir_field_is_static_union_tag(context.ast, expression) {
+            return fallback_type_id
+        }
+        target_type_id: i64 = zbackend_ir_expression_type_id(
+            context, expression.left, fallback_type_id
+        ) catch |err| { return err }
+        if target_type_id > 0 && target_type_id <= context.type_layout.type_count &&
+            context.type_layout.types[target_type_id - 1].kind == "slice" {
+            if ZAstText.eql_string(expression.name, "len") {
+                return zbackend_ir_type_layout_intern_scalar(
+                    context.type_layout, "i64"
+                ) catch |err| { return err }
+            }
+            if ZAstText.eql_string(expression.name, "ptr") {
+                return zbackend_ir_type_layout_pointer_to(
+                    context.type_layout,
+                    context.type_layout.types[target_type_id - 1].element_type
+                ) catch |err| { return err }
+            }
+        }
+        if target_type_id > 0 && target_type_id <= context.type_layout.type_count &&
+            context.type_layout.types[target_type_id - 1].kind == "error_union" {
+            if ZAstText.eql_string(expression.name, "value") {
+                return context.type_layout.types[target_type_id - 1].element_type
+            }
+            if ZAstText.eql_string(expression.name, "error") {
+                return context.type_layout.error_type_id
+            }
+        }
+        if target_type_id > 0 && target_type_id <= context.type_layout.type_count {
+            target_type: ZBackendIrType = context.type_layout.types[target_type_id - 1]
+            if target_type.kind == "pointer" {
+                target_type_id = target_type.element_type
+                target_type = context.type_layout.types[target_type_id - 1]
+            }
+            if target_type.kind == "struct" || target_type.kind == "union" {
+                if target_type.kind == "union" &&
+                    ZAstText.eql_string(expression.name, "tag") {
+                    return zbackend_ir_type_layout_intern_scalar(
+                        context.type_layout, "i32"
+                    ) catch |err| { return err }
+                }
+                field_index: i64 = zbackend_ir_type_field_index(
+                    context.type_layout, target_type_id, expression.name
+                ) catch |err| { return err }
+                return target_type.fields[field_index].type_id
+            }
+        }
+    }
+    if expression.kind == ZAstExprBinary {
+        if zbackend_ir_is_comparison(expression.op) { return context.bool_type_id }
+        left_type_id: i64 = zbackend_ir_expression_type_id(
+            context, expression.left, fallback_type_id
+        ) catch |err| { return err }
+        if context.ast.exprs[expression.left].kind != ZAstExprInteger { return left_type_id }
+        return zbackend_ir_expression_type_id(
+            context, expression.right, fallback_type_id
+        ) catch |err| { return err }
+    }
+    if expression.kind == ZAstExprCall {
+        expression.name = zbackend_ir_resolved_call_name(
+            context.type_layout, expression
+        ) catch |err| { return err }
+        if ZAstText.eql_string(expression.name, "syscall") {
+            return zbackend_ir_type_layout_intern_scalar(
+                context.type_layout, "i64"
+            ) catch |err| { return err }
+        }
+        if zbackend_ir_is_builtin_sizeof(context.ast, expression) {
+            return zbackend_ir_type_layout_intern_scalar(
+                context.type_layout, "i64"
+            ) catch |err| { return err }
+        }
+        if expression.left != ZAstNoIndex &&
+            !zbackend_ir_is_function_name(context.ast, expression.name) {
+            callee_type_id: i64 = zbackend_ir_expression_type_id(
+                context, expression.left, fallback_type_id
+            ) catch |err| { return err }
+            if callee_type_id > 0 && callee_type_id <= context.type_layout.type_count &&
+                context.type_layout.types[callee_type_id - 1].kind == "function" {
+                return context.type_layout.types[callee_type_id - 1].element_type
+            }
+        }
+        declaration: ZAstDecl = zbackend_ir_function_declaration(
+            context.ast, expression.name
+        ) catch |err| { return err }
+        return zbackend_ir_call_return_type_id(
+            context.type_layout, expression, declaration, ZAstText.empty()
+        ) catch |err| { return err }
+    }
+    return fallback_type_id
+}
+
+
+export fn zbackend_ir_expression_operand_type_id(
+    context: *ZBackendIrExpressionLowering,
+    expression_index: i64,
+    fallback_type_id: i64
+) !i64 {
+    expression: ZAstExpr = context.ast.exprs[expression_index]
+    if expression.kind == ZAstExprBinary && zbackend_ir_is_comparison(expression.op) {
+        left_type_id: i64 = zbackend_ir_expression_type_id(
+            context, expression.left, fallback_type_id
+        ) catch |err| { return err }
+        if context.ast.exprs[expression.left].kind != ZAstExprInteger { return left_type_id }
+        return zbackend_ir_expression_type_id(
+            context, expression.right, fallback_type_id
+        ) catch |err| { return err }
+    }
+    return zbackend_ir_expression_type_id(
+        context, expression_index, fallback_type_id
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_expression_emit_index_address(
+    context: *ZBackendIrExpressionLowering,
+    base_address: i64,
+    index: i64,
+    source_type: i64,
+    element_type: i64
+) !i64 {
+    id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        id, "index_address", element_type
+    )
+    instruction.source_type = source_type
+    instruction.lhs = base_address
+    instruction.rhs = index
+    return zbackend_ir_append_instruction(context, instruction) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_error_value(ast: *ZAstModule, name: ZAstText) !i64 {
+    index: i64 = 0
+    while index < ast.len {
+        declaration: ZAstDecl = ast.decls[index]
+        if declaration.kind == ZAstDeclError &&
+            zbackend_ir_name_matches_qualified_suffix(name, declaration.name) &&
+            declaration.init_expr != ZAstNoIndex {
+            expression: ZAstExpr = ast.exprs[declaration.init_expr]
+            if expression.kind != ZAstExprInteger { return error.NotImplemented }
+            return zbackend_ir_parse_positive_integer(expression.literal) catch |err| { return err }
+        }
+        index = index + 1
+    }
+    return error.NotImplemented
+}

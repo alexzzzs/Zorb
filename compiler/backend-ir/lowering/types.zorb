@@ -1,0 +1,113 @@
+import "../../../runtime/std/mem.zorb"
+import "../../ast/types.zorb"
+import "../model.zorb"
+
+export const ZBACKEND_IR_MAX_I64: i64 = 9223372036854775807
+
+export const ZBACKEND_IR_INITIAL_BLOCK_CAPACITY: i64 = 8
+
+export const ZBACKEND_IR_INITIAL_INSTRUCTION_CAPACITY: i64 = 8
+
+export const ZBACKEND_IR_NO_TYPE_ID: i64 = 0
+
+export const ZBACKEND_IR_INITIAL_TYPE_CAPACITY: i64 = 16
+
+// Array-to-slice conversion emits zero, index_address, length, aggregate, and
+// may materialize a temporary alloca/store for a non-addressable array value.
+export const ZBACKEND_IR_CONTEXTUAL_COERCION_INSTRUCTION_OVERHEAD: i64 = 6
+
+export const ZBACKEND_IR_MAX_CONSTANT_EVALUATION_DEPTH: i64 = 64
+
+
+
+export struct ZBackendIrTypeLayout {
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    target_triple: string,
+    constant_scope_declaration_start: i64,
+    constant_scope_statement: i64,
+    types: *ZBackendIrType,
+    type_count: i64,
+    type_capacity: i64,
+    bool_type_id: i64,
+    error_type_id: i64,
+    void_type_id: i64,
+    active_generic_declaration: i64,
+    active_generic_suffix: ZAstText,
+    generic_context_declarations: *i64,
+    generic_context_suffixes: *ZAstText,
+    generic_context_count: i64,
+    generic_context_capacity: i64,
+    generic_instance_declarations: *i64,
+    generic_instance_suffixes: *ZAstText,
+    generic_instance_count: i64,
+    concrete_function_count: i64
+}
+
+
+export struct ZBackendIrExpressionLowering {
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    declaration: ZAstDecl,
+    instructions: *ZBackendIrInstruction,
+    instruction_capacity: i64,
+    instruction_count: i64,
+    next_value_id: i64,
+    value_type_id: i64,
+    bool_type_id: i64,
+    type_layout: *ZBackendIrTypeLayout,
+    value_is_signed: bool,
+    local_names: *ZAstText,
+    local_addresses: *i64,
+    local_type_ids: *i64,
+    local_count: i64,
+    current_statement_index: i64,
+    lower_expression_fn: fn(*ZBackendIrExpressionLowering, i64) -> !i64
+}
+
+
+export struct ZBackendIrBlockBuilder {
+    id: i64,
+    name: string,
+    instructions: *ZBackendIrInstruction,
+    instruction_count: i64,
+    instruction_capacity: i64,
+    terminator: ZBackendIrTerminator,
+    is_terminated: bool
+}
+
+
+export struct ZBackendIrControlFlowLowering {
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    declaration: ZAstDecl,
+    type_layout: *ZBackendIrTypeLayout,
+    bool_type_id: i64,
+    error_type_id: i64,
+    error_union_type_id: i64,
+    return_payload_type_id: i64,
+    return_type_id: i64,
+    returns_error_union: bool,
+    returns_void: bool,
+    blocks: *ZBackendIrBlockBuilder,
+    block_count: i64,
+    block_capacity: i64,
+    current_block: i64,
+    next_value_id: i64,
+    local_names: *ZAstText,
+    local_addresses: *i64,
+    local_type_ids: *i64,
+    local_is_catch_errors: *i64,
+    local_count: i64,
+    local_capacity: i64,
+    scope_starts: *i64,
+    scope_count: i64,
+    scope_capacity: i64,
+    break_targets: *i64,
+    continue_targets: *i64,
+    loop_count: i64,
+    loop_capacity: i64,
+    active_catch_owner: i64,
+    current_statement_index: i64,
+    lower_catch_expression_fn: fn(*ZBackendIrControlFlowLowering, i64, bool, i64) -> !i64
+}

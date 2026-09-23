@@ -1,0 +1,43 @@
+import "../../runtime/std/errors.zorb"
+import "../../runtime/std/io.zorb"
+import "../../runtime/std/mem.zorb"
+import "../token.zorb"
+import "../ast/types.zorb"
+import "../ast.zorb"
+import "../ast/resolution.zorb"
+import "../ast/arena.zorb"
+import "../ast/type_check.zorb"
+import "../ast/statement_check.zorb"
+import "../ast/validation.zorb"
+import "../ast/warnings.zorb"
+import "types.zorb"
+import "core.zorb"
+import "declarations.zorb"
+
+export fn zparser_parse_extern_type(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule, exported: bool) !i64 {
+    start_index: i64 = self.index
+    zparser_expect(self, ZTokenExtern) catch |err| { return error.InvalidArgument }
+    if !zparser_current_is_type_keyword(self) { return error.InvalidArgument }
+    zparser_advance(self)
+    name: ZAstText = zparser_capture_qualified_name(self, allocator) catch |err| { return err }
+    zparser_skip_optional_semicolon(self)
+    decl: ZAstDecl = ZAstDecl.init(ZAstDeclExternType, exported)
+    decl.span = zparser_span_from_indices(self, start_index, self.index)
+    decl.name = name
+    ZAstModule.append(module, allocator, decl) catch |err| { return err }
+    return 0
+}
+
+
+export fn zparser_skip_top_level(self: *ZParser) {
+    while !zparser_at(self, ZTokenEof) {
+        kind: i64 = zparser_current(self).kind
+        if kind == ZTokenImport || kind == ZTokenFn || kind == ZTokenExport || kind == ZTokenExtern || kind == ZTokenError || kind == ZTokenConst || kind == ZTokenStruct || kind == ZTokenEnum || kind == ZTokenUnion {
+            return
+        }
+        if kind == ZTokenIdentifier && zparser_peek_kind(self, 1) == ZTokenColon {
+            return
+        }
+        zparser_advance(self)
+    }
+}

@@ -1,0 +1,670 @@
+import "../../runtime/std/errors.zorb"
+import "../../runtime/std/mem.zorb"
+import "../../runtime/std/str.zorb"
+import "../token.zorb"
+import "types.zorb"
+import "../ast.zorb"
+import "resolution.zorb"
+import "arena.zorb"
+import "type_check.zorb"
+
+export fn zast_union_tag_case_matches(self: *ZAstModule, case_expr_index: i64, match_type: ZAstText, member_name: ZAstText) -> bool {
+    case_expr: ZAstExpr = self.exprs[case_expr_index]
+    if case_expr.kind != ZAstExprField || !zast_text_same(case_expr.name, member_name) || case_expr.left == ZAstNoIndex { return false }
+    tag_expr: ZAstExpr = self.exprs[case_expr.left]
+    if tag_expr.kind != ZAstExprField || !ZAstText.eql_string(tag_expr.name, "Tag") || tag_expr.left == ZAstNoIndex { return false }
+    owner_index: i64 = tag_expr.left
+    if zast_expr_generic_specializes_type(self, owner_index, match_type) { return true }
+    return zast_expr_matches_qualified_name(self, owner_index, zast_type_text_base(match_type))
+}
+
+
+export fn zast_union_case_variant_index(self: *ZAstModule, case_expr_index: i64) -> i64 {
+    if case_expr_index == ZAstNoIndex { return ZAstNoIndex }
+    case_expr: ZAstExpr = self.exprs[case_expr_index]
+    if case_expr.kind == ZAstExprCall {
+        return case_expr.left
+    }
+    if case_expr.kind == ZAstExprField {
+        return case_expr_index
+    }
+    return ZAstNoIndex
+}
+
+
+export fn zast_union_case_owner_matches(self: *ZAstModule, variant_index: i64, match_type: ZAstText) -> bool {
+    if variant_index == ZAstNoIndex { return false }
+    variant: ZAstExpr = self.exprs[variant_index]
+    if variant.kind != ZAstExprField || variant.left == ZAstNoIndex { return false }
+    owner_index: i64 = variant.left
+    owner: ZAstExpr = self.exprs[owner_index]
+    if owner.kind == ZAstExprField && ZAstText.eql_string(owner.name, "Tag") &&
+        owner.left != ZAstNoIndex {
+        owner_index = owner.left
+    }
+    if zast_expr_generic_specializes_type(self, owner_index, match_type) { return true }
+    return zast_expr_matches_qualified_name(
+        self, owner_index, zast_type_text_base(match_type)
+    )
+}
+
+
+export fn zast_union_case_matches(self: *ZAstModule, case_expr_index: i64, match_type: ZAstText, member_name: ZAstText) -> bool {
+    variant_index: i64 = zast_union_case_variant_index(self, case_expr_index)
+    if variant_index == ZAstNoIndex { return false }
+    variant: ZAstExpr = self.exprs[variant_index]
+    return zast_text_same(variant.name, member_name) &&
+        zast_union_case_owner_matches(self, variant_index, match_type)
+}
+
+
+// The first flow slice covers boolean matches. Enum and union coverage needs
+// nominal variant tracking and is deliberately deferred to the full match
+// semantic pass rather than guessed from names.
+export fn zast_match_is_exhaustive(self: *ZAstModule, decl: ZAstDecl, stmt: ZAstStmt, through_stmt: i64) -> bool {
+    match_type: ZAstText = zast_expr_type_text(self, decl, stmt.expr_index, through_stmt)
+    is_bool_match: bool = ZAstText.eql_string(match_type, "bool")
+    has_true: bool = false
+    has_false: bool = false
+    child_index: i64 = stmt.child_start
+    child_end: i64 = stmt.child_start + stmt.child_count
+    while child_index < child_end {
+        child: ZAstStmt = self.stmts[child_index]
+        if child.kind == ZAstStmtElse {
+            return true
+        }
+        if child.kind == ZAstStmtCase && child.expr_index != ZAstNoIndex {
+            case_expr: ZAstExpr = self.exprs[child.expr_index]
+            if case_expr.kind == ZAstExprBool {
+                if case_expr.literal.len == 4 { has_true = true }
+                if case_expr.literal.len == 5 { has_false = true }
+            }
+        }
+        if zast_stmt_has_children(child.kind) {
+            child_index = child.child_start + child.child_count
+        } else {
+            child_index = child_index + 1
+        }
+    }
+    if is_bool_match {
+        return has_true && has_false
+    }
+
+    enum_index: i64 = ZAstModule.find_owning_decl(
+        self, zast_type_text_base(match_type)
+    )
+    if enum_index == ZAstNoIndex {
+        return true
+    }
+    if self.decls[enum_index].kind == ZAstDeclUnion {
+        // Union alternatives are written as call patterns (`Value.Number(n)`)
+        // rather than the enum's field expressions. Require every declared
+        // variant, so a duplicate case cannot satisfy coverage accidentally.
+        member_index: i64 = 0
+        while member_index < self.decls[enum_index].member_count {
+            member: ZAstMember = self.members[self.decls[enum_index].member_start + member_index]
+            found: bool = false
+            child_index = stmt.child_start
+            while child_index < child_end {
+                child: ZAstStmt = self.stmts[child_index]
+                if child.kind == ZAstStmtCase && child.expr_index != ZAstNoIndex {
+                    if zast_union_case_matches(self, child.expr_index, match_type, member.name) { found = true }
+                    if zast_union_tag_case_matches(self, child.expr_index, match_type, member.name) {
+                        found = true
+                    }
+                }
+                if zast_stmt_has_children(child.kind) {
+                    child_index = child.child_start + child.child_count
+                } else {
+                    child_index = child_index + 1
+                }
+            }
+            if !found { return false }
+            member_index = member_index + 1
+        }
+        return true
+    }
+    if self.decls[enum_index].kind != ZAstDeclEnum {
+        return true
+    }
+    // Enum coverage is determined from the declared member set, rather than
+    // the number of cases, so duplicate cases cannot masquerade as exhaustive.
+    member_index: i64 = 0
+    while member_index < self.decls[enum_index].member_count {
+        member: ZAstMember = self.members[self.decls[enum_index].member_start + member_index]
+        found: bool = false
+        child_index = stmt.child_start
+        while child_index < child_end {
+            child: ZAstStmt = self.stmts[child_index]
+            if child.kind == ZAstStmtCase && child.expr_index != ZAstNoIndex {
+                case_expr: ZAstExpr = self.exprs[child.expr_index]
+                if case_expr.kind == ZAstExprField && zast_text_same(case_expr.name, member.name) {
+                    found = true
+                }
+            }
+            if zast_stmt_has_children(child.kind) {
+                child_index = child.child_start + child.child_count
+            } else {
+                child_index = child_index + 1
+            }
+        }
+        if !found {
+            return false
+        }
+        member_index = member_index + 1
+    }
+    return true
+}
+
+
+// A sequence terminates when any reachable statement is guaranteed to return.
+// Child blocks occupy contiguous ranges in the flattened arena, so advancing
+// by each child range keeps nested statements out of the sibling walk.
+export fn zast_stmt_sequence_always_returns(self: *ZAstModule, decl: ZAstDecl, start_index: i64, end_index: i64) -> bool {
+    statement_index: i64 = start_index
+    while statement_index < end_index {
+        if zast_stmt_always_returns(self, decl, statement_index) {
+            return true
+        }
+        statement: ZAstStmt = self.stmts[statement_index]
+        if zast_stmt_has_children(statement.kind) {
+            statement_index = statement.child_start + statement.child_count
+        } else {
+            statement_index = statement_index + 1
+        }
+    }
+    return false
+}
+
+
+export fn zast_stmt_always_returns(self: *ZAstModule, decl: ZAstDecl, stmt_index: i64) -> bool {
+    statement: ZAstStmt = self.stmts[stmt_index]
+    if statement.kind == ZAstStmtReturn {
+        return true
+    }
+    if statement.kind == ZAstStmtBlock || statement.kind == ZAstStmtCase || statement.kind == ZAstStmtElse {
+        return zast_stmt_sequence_always_returns(self, decl, statement.child_start, statement.child_start + statement.child_count)
+    }
+    if statement.kind == ZAstStmtMatch || statement.kind == ZAstStmtSwitch {
+        return zast_match_is_exhaustive(self, decl, statement, stmt_index - decl.stmt_start) && zast_branch_bodies_always_return(self, decl, statement)
+    }
+    if statement.kind != ZAstStmtIf {
+        return false
+    }
+    if !zast_stmt_sequence_always_returns(self, decl, statement.child_start, statement.child_start + statement.child_count) {
+        return false
+    }
+    else_index: i64 = statement.child_start + statement.child_count
+    if else_index >= decl.stmt_start + decl.stmt_count || self.stmts[else_index].kind != ZAstStmtElse {
+        return false
+    }
+    return zast_stmt_always_returns(self, decl, else_index)
+}
+
+
+// Exhaustiveness and branch termination are intentionally separate: a match
+// can cover every value while still falling through from one branch.
+export fn zast_branch_bodies_always_return(self: *ZAstModule, decl: ZAstDecl, statement: ZAstStmt) -> bool {
+    child_index: i64 = statement.child_start
+    child_end: i64 = statement.child_start + statement.child_count
+    has_branch: bool = false
+    while child_index < child_end {
+        child: ZAstStmt = self.stmts[child_index]
+        if child.kind == ZAstStmtCase || child.kind == ZAstStmtElse {
+            has_branch = true
+            if !zast_stmt_always_returns(self, decl, child_index) {
+                return false
+            }
+        }
+        if zast_stmt_has_children(child.kind) {
+            child_index = child.child_start + child.child_count
+        } else {
+            child_index = child_index + 1
+        }
+    }
+    return has_branch
+}
+
+
+// Statements live in one flattened arena, but every block-like statement
+// owns a contiguous child range. The narrowest containing range is the
+// lexical scope that controls whether a local may be redeclared.
+export fn zast_stmt_scope_container(self: *ZAstModule, decl: ZAstDecl, stmt_index: i64) -> i64 {
+    container_index: i64 = ZAstNoIndex
+    container_size: i64 = 0
+    parent_index: i64 = decl.stmt_start
+    parent_end: i64 = decl.stmt_start + decl.stmt_count
+    while parent_index < parent_end {
+        parent: ZAstStmt = self.stmts[parent_index]
+        if zast_stmt_has_children(parent.kind) && stmt_index >= parent.child_start && stmt_index < parent.child_start + parent.child_count {
+            if container_index == ZAstNoIndex || parent.child_count < container_size {
+                container_index = parent_index
+                container_size = parent.child_count
+            }
+        }
+        parent_index = parent_index + 1
+    }
+    return container_index
+}
+
+
+export fn zast_case_pattern_binds_name(self: *ZAstModule, case_stmt: ZAstStmt, name: ZAstText) -> bool {
+    if case_stmt.kind != ZAstStmtCase || case_stmt.expr_index == ZAstNoIndex {
+        return false
+    }
+    pattern: ZAstExpr = self.exprs[case_stmt.expr_index]
+    if pattern.kind != ZAstExprCall || pattern.left == ZAstNoIndex {
+        return false
+    }
+    callee: ZAstExpr = self.exprs[pattern.left]
+    if callee.kind != ZAstExprField || callee.left == ZAstNoIndex {
+        return false
+    }
+    union_index: i64 = zast_qualified_decl_index(self, callee.left)
+    if union_index == ZAstNoIndex || self.decls[union_index].kind != ZAstDeclUnion {
+        return false
+    }
+    argument_index: i64 = 0
+    while argument_index < pattern.arg_count {
+        binding: ZAstExpr = self.exprs[self.expr_args[pattern.arg_start + argument_index]]
+        if binding.kind == ZAstExprIdentifier && zast_text_same(binding.name, name) {
+            return true
+        }
+        argument_index = argument_index + 1
+    }
+    return false
+}
+
+
+export fn ZAstModule.local_constant_expression(
+    self: *ZAstModule,
+    scope_declaration_start: i64,
+    scope_statement: i64,
+    name: ZAstText
+) -> i64 {
+    if scope_declaration_start == ZAstNoIndex || scope_statement == ZAstNoIndex {
+        return ZAstNoIndex
+    }
+    declaration_index: i64 = 0
+    while declaration_index < self.len {
+        declaration: ZAstDecl = self.decls[declaration_index]
+        if declaration.kind == ZAstDeclFunction &&
+            declaration.stmt_start == scope_declaration_start {
+            scan_end: i64 = scope_statement
+            declaration_end: i64 = declaration.stmt_start + declaration.stmt_count
+            if scan_end > declaration_end { scan_end = declaration_end }
+            if scan_end < declaration.stmt_start { return ZAstNoIndex }
+            query_owner: i64 = ZAstNoIndex
+            if scope_statement >= declaration.stmt_start &&
+                scope_statement < declaration_end {
+                query_owner = self.stmts[scope_statement].catch_owner
+            }
+            scan_index: i64 = scan_end
+            while scan_index > declaration.stmt_start {
+                scan_index = scan_index - 1
+                statement: ZAstStmt = self.stmts[scan_index]
+                if statement.kind == ZAstStmtVar && statement.is_constant &&
+                    statement.expr_index != ZAstNoIndex &&
+                    (query_owner != ZAstNoIndex || statement.catch_owner == ZAstNoIndex) &&
+                    zast_text_same(statement.name, name) {
+                    container_index: i64 = zast_stmt_scope_container(
+                        self, declaration, scan_index
+                    )
+                    if container_index == ZAstNoIndex {
+                        return statement.expr_index
+                    }
+                    container: ZAstStmt = self.stmts[container_index]
+                    if scope_statement >= container.child_start &&
+                        scope_statement < container.child_start + container.child_count {
+                        return statement.expr_index
+                    }
+                }
+            }
+            return ZAstNoIndex
+        }
+        declaration_index = declaration_index + 1
+    }
+    return ZAstNoIndex
+}
+
+
+export fn zast_decl_has_duplicate_locals(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    left_index: i64 = decl.stmt_start
+    statement_end: i64 = decl.stmt_start + decl.stmt_count
+    while left_index < statement_end {
+        left: ZAstStmt = self.stmts[left_index]
+        if left.kind == ZAstStmtVar {
+            left_scope: i64 = zast_stmt_scope_container(self, decl, left_index)
+            if left_scope != ZAstNoIndex &&
+                zast_case_pattern_binds_name(self, self.stmts[left_scope], left.name) {
+                self.semantic_error_span = left.span
+                return true
+            }
+            left_catch_owner: i64 = left.catch_owner
+            right_index: i64 = left_index + 1
+            while right_index < statement_end {
+                right: ZAstStmt = self.stmts[right_index]
+                if right.kind == ZAstStmtVar && left_catch_owner == right.catch_owner && zast_text_same(left.name, right.name) && left_scope == zast_stmt_scope_container(self, decl, right_index) {
+                    self.semantic_error_span = right.span
+                    return true
+                }
+                right_index = right_index + 1
+            }
+        }
+        left_index = left_index + 1
+    }
+    return false
+}
+
+
+export fn zast_decl_has_duplicate_params(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    left_index: i64 = 0
+    while left_index < decl.param_count {
+        left: ZAstParam = self.params[decl.param_start + left_index]
+        right_index: i64 = left_index + 1
+        while right_index < decl.param_count {
+            right: ZAstParam = self.params[decl.param_start + right_index]
+            if zast_text_same(left.name, right.name) {
+                // Stage 0 anchors duplicate-parameter diagnostics at the
+                // function declaration rather than the repeated parameter.
+                self.semantic_error_span = decl.span
+                return true
+            }
+            right_index = right_index + 1
+        }
+        left_index = left_index + 1
+    }
+    return false
+}
+
+
+export fn zast_decl_has_duplicate_members(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    left_index: i64 = 0
+    while left_index < decl.member_count {
+        left: ZAstMember = self.members[decl.member_start + left_index]
+        right_index: i64 = left_index + 1
+        while right_index < decl.member_count {
+            right: ZAstMember = self.members[decl.member_start + right_index]
+            if zast_text_same(left.name, right.name) {
+                self.semantic_error_span = right.span
+                return true
+            }
+            right_index = right_index + 1
+        }
+        left_index = left_index + 1
+    }
+    return false
+}
+
+
+export fn zast_decl_has_duplicate_enum_values(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    if decl.kind != ZAstDeclEnum {
+        return false
+    }
+    left_index: i64 = 0
+    while left_index < decl.member_count {
+        left: ZAstMember = self.members[decl.member_start + left_index]
+        if left.value_expr != ZAstNoIndex && self.exprs[left.value_expr].kind == ZAstExprInteger {
+            left_value: ZAstText = self.exprs[left.value_expr].literal
+            right_index: i64 = left_index + 1
+            while right_index < decl.member_count {
+                right: ZAstMember = self.members[decl.member_start + right_index]
+                if right.value_expr != ZAstNoIndex && self.exprs[right.value_expr].kind == ZAstExprInteger && zast_text_same(left_value, self.exprs[right.value_expr].literal) {
+                    self.semantic_error_span = right.span
+                    return true
+                }
+                right_index = right_index + 1
+            }
+        }
+        left_index = left_index + 1
+    }
+    return false
+}
+
+
+// Enums are represented with their declared backing type in `type_index`.
+// Match Stage 0's declaration-level rule before member values are checked so
+// invalid backing types do not reach lowering as nominal enum storage.
+export fn zast_enum_has_integer_underlying_type(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    if decl.kind != ZAstDeclEnum || decl.type_index == ZAstNoIndex {
+        return true
+    }
+    return zast_is_scalar_integer_type(zast_decl_type_text(self, decl.type_index))
+}
+
+
+// `.tag` is synthesized for every tagged union discriminator, so it cannot be
+// used by a payload variant. Keep the check at declaration validation where
+// duplicate member names are already handled and preserve the member span for
+// the diagnostic anchor.
+export fn zast_union_has_reserved_tag_variant(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    if decl.kind != ZAstDeclUnion {
+        return false
+    }
+    member_index: i64 = 0
+    while member_index < decl.member_count {
+        member: ZAstMember = self.members[decl.member_start + member_index]
+        if ZAstText.eql_string(member.name, "tag") {
+            self.semantic_error_span = member.span
+            return true
+        }
+        member_index = member_index + 1
+    }
+    return false
+}
+
+
+// Fixed-array globals are emitted as static aggregate data. Stage 0 requires
+// their initializer syntax to be an array literal rather than a value-copy
+// expression, even when the source and destination array types match.
+export fn zast_global_array_initializer_is_literal(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    if decl.kind != ZAstDeclGlobal || decl.type_index == ZAstNoIndex || decl.init_expr == ZAstNoIndex {
+        return true
+    }
+    type_text: ZAstText = zast_text_skip_ws(zast_decl_type_text(self, decl.type_index))
+    if type_text.len == 0 || type_text.ptr[0] != 91 {
+        return true
+    }
+    return self.exprs[decl.init_expr].kind == ZAstExprArrayLiteral
+}
+
+
+export fn zast_expr_has_constant_divide_by_zero(self: *ZAstModule, expr_index: i64) -> bool {
+    if expr_index == ZAstNoIndex { return false }
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind != ZAstExprBinary {
+        return false
+    }
+    if expr.op == ZTokenSlash && expr.right != ZAstNoIndex {
+        divisor: ZAstExpr = self.exprs[expr.right]
+        if divisor.kind == ZAstExprInteger && ZAstText.eql_string(divisor.literal, "0") {
+            return true
+        }
+    }
+    return zast_expr_has_constant_divide_by_zero(self, expr.left) || zast_expr_has_constant_divide_by_zero(self, expr.right)
+}
+
+
+export fn zast_decimal_literal_is_nonzero(text: ZAstText) -> bool {
+    index: i64 = 0
+    while index < text.len {
+        if text.ptr[index] != 48 {
+            return true
+        }
+        index = index + 1
+    }
+    return false
+}
+
+
+// The first literal-folding slice detects the overflow boundary without
+// evaluating through the host integer representation. Broader constant
+// folding remains a separate pass for identifiers and nested arithmetic.
+export fn zast_expr_has_direct_i64_addition_overflow(self: *ZAstModule, expr_index: i64) -> bool {
+    if expr_index == ZAstNoIndex { return false }
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind == ZAstExprBinary && expr.op == ZTokenPlus && expr.left != ZAstNoIndex && expr.right != ZAstNoIndex {
+        left: ZAstExpr = self.exprs[expr.left]
+        right: ZAstExpr = self.exprs[expr.right]
+        if left.kind == ZAstExprInteger && right.kind == ZAstExprInteger {
+            if (ZAstText.eql_string(left.literal, "9223372036854775807") && zast_decimal_literal_is_nonzero(right.literal)) || (ZAstText.eql_string(right.literal, "9223372036854775807") && zast_decimal_literal_is_nonzero(left.literal)) {
+                return true
+            }
+        }
+    }
+    return zast_expr_has_direct_i64_addition_overflow(self, expr.left) || zast_expr_has_direct_i64_addition_overflow(self, expr.right)
+}
+
+
+export fn zast_global_integer_initializer_is_valid(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    if (decl.kind != ZAstDeclGlobal && decl.kind != ZAstDeclConst) || decl.type_index == ZAstNoIndex || decl.init_expr == ZAstNoIndex {
+        return true
+    }
+    if !zast_is_scalar_integer_type(zast_decl_type_text(self, decl.type_index)) {
+        return true
+    }
+    if zast_expr_has_constant_divide_by_zero(self, decl.init_expr) {
+        self.semantic_error_span = self.exprs[decl.init_expr].span
+        return false
+    }
+    if zast_expr_has_direct_i64_addition_overflow(self, decl.init_expr) {
+        self.semantic_error_span = self.exprs[decl.init_expr].span
+        return false
+    }
+    return true
+}
+
+
+export fn zast_global_initializer_has_no_catch(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    if decl.kind != ZAstDeclGlobal || !decl.initializer_has_catch {
+        return true
+    }
+    if decl.init_expr != ZAstNoIndex {
+        self.semantic_error_span = decl.initializer_catch_span
+        if self.semantic_error_span.line == 0 {
+            self.semantic_error_span = self.exprs[decl.init_expr].span
+        }
+    } else {
+        self.semantic_error_span = decl.span
+    }
+    return false
+}
+
+
+export fn zast_error_declarations_valid(self: *ZAstModule) -> bool {
+    declaration_index: i64 = 0
+    while declaration_index < self.len {
+        declaration: ZAstDecl = self.decls[declaration_index]
+        if declaration.kind == ZAstDeclError && !declaration.is_imported {
+            if declaration.init_expr == ZAstNoIndex || self.exprs[declaration.init_expr].kind != ZAstExprInteger {
+                self.semantic_error_span = declaration.span
+                return false
+            }
+            value: ZAstText = self.exprs[declaration.init_expr].literal
+            other_index: i64 = declaration_index + 1
+            while other_index < self.len {
+                other: ZAstDecl = self.decls[other_index]
+                if other.kind == ZAstDeclError && !other.is_imported && other.init_expr != ZAstNoIndex && self.exprs[other.init_expr].kind == ZAstExprInteger && zast_text_same(value, self.exprs[other.init_expr].literal) {
+                    self.semantic_error_span = other.span
+                    return false
+                }
+                other_index = other_index + 1
+            }
+        }
+        declaration_index = declaration_index + 1
+    }
+    return true
+}
+
+
+// Explicit-layout records require an offset on every field. The parser stores
+// the offset payload as `attribute_expr`, letting this semantic pass report the
+// declaration rule separately from ordinary member/type parsing.
+export fn zast_explicit_layout_members_valid(self: *ZAstModule, decl: ZAstDecl) -> bool {
+    if !decl.has_explicit_layout || decl.kind != ZAstDeclStruct {
+        return true
+    }
+    member_index: i64 = decl.member_start
+    member_end: i64 = decl.member_start + decl.member_count
+    while member_index < member_end {
+        member: ZAstMember = self.members[member_index]
+        if member.attribute_expr == ZAstNoIndex {
+            self.semantic_error_span = decl.span
+            return false
+        }
+        // Layout offsets are compile-time expressions, including global
+        // constants and arithmetic over them.
+        if !zast_expr_is_constant(self, member.attribute_expr) {
+            self.semantic_error_span = self.exprs[member.attribute_expr].span
+            return false
+        }
+        member_index = member_index + 1
+    }
+    return true
+}
+
+
+// Comparisons must preserve declared pointer/array wrappers. Direct local and
+// parameter lookup supplies that exact type even when the broader expression
+// resolver defers an incomplete projection.
+export fn zast_comparison_operand_type(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, through_stmt: i64) -> ZAstText {
+    if expr_index != ZAstNoIndex && self.exprs[expr_index].kind == ZAstExprIdentifier {
+        name: ZAstText = self.exprs[expr_index].name
+        parameter_index: i64 = 0
+        while parameter_index < decl.param_count {
+            parameter: ZAstParam = self.params[decl.param_start + parameter_index]
+            if zast_text_same(parameter.name, name) {
+                return zast_text_skip_ws(zast_decl_type_text(self, parameter.type_index))
+            }
+            parameter_index = parameter_index + 1
+        }
+        statement_index: i64 = decl.stmt_start
+        statement_end: i64 = decl.stmt_start + decl.stmt_count
+        while statement_index < statement_end {
+            statement: ZAstStmt = self.stmts[statement_index]
+            if statement.kind == ZAstStmtVar && zast_text_same(statement.name, name) {
+                return zast_text_skip_ws(zast_decl_type_text(self, statement.type_index))
+            }
+            statement_index = statement_index + 1
+        }
+    }
+    return zast_text_skip_ws(zast_expr_type_text(self, decl, expr_index, through_stmt))
+}
+
+
+export fn zast_pointer_element_type_text(type_text: ZAstText) -> ZAstText {
+    type_text = zast_text_skip_ws(type_text)
+    if type_text.len < 2 || type_text.ptr[0] != 42 {
+        return ZAstText.empty()
+    }
+    element_type: ZAstText
+    element_type.ptr = type_text.ptr + 1
+    element_type.len = type_text.len - 1
+    return zast_text_skip_ws(element_type)
+}
+
+
+export fn zast_pointer_difference_types_match(left: ZAstText, right: ZAstText) -> bool {
+    left_element: ZAstText = zast_pointer_element_type_text(left)
+    right_element: ZAstText = zast_pointer_element_type_text(right)
+    if left_element.len == 0 || right_element.len == 0 {
+        return false
+    }
+    if ZAstText.eql_string(zast_type_text_unwrap(left_element), "void") ||
+        ZAstText.eql_string(zast_type_text_unwrap(right_element), "void") {
+        return false
+    }
+    return zast_text_same_ignoring_ws(left_element, right_element)
+}
+
+
+export fn zast_type_has_generic_arguments(type_text: ZAstText) -> bool {
+    index: i64 = 0
+    while index < type_text.len {
+        if type_text.ptr[index] == 60 {
+            return true
+        }
+        index = index + 1
+    }
+    return false
+}

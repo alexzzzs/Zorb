@@ -1,0 +1,910 @@
+import "../../../runtime/std/errors.zorb"
+import "../../../runtime/std/collections.zorb"
+import "../../../runtime/std/mem.zorb"
+import "../../../runtime/std/str.zorb"
+import "../../ast/types.zorb"
+import "../../ast.zorb"
+import "../../ast/resolution.zorb"
+import "../../ast/arena.zorb"
+import "../../ast/type_check.zorb"
+import "../../ast/statement_check.zorb"
+import "../../ast/validation.zorb"
+import "../../ast/warnings.zorb"
+import "../../frontend/diagnostic.zorb"
+import "../../token.zorb"
+import "../model.zorb"
+import "types.zorb"
+import "core.zorb"
+import "type_text.zorb"
+import "generics.zorb"
+import "type_layout.zorb"
+import "expression_support.zorb"
+import "expressions.zorb"
+import "cfg_core.zorb"
+import "cfg_helpers.zorb"
+
+export fn zbackend_ir_cfg_lower_logical_expression(
+    context: *ZBackendIrControlFlowLowering,
+    expression: ZAstExpr
+) !i64 {
+    lhs: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.left, context.bool_type_id
+    ) catch |err| { return err }
+    lhs_block: i64 = context.current_block + 1
+    rhs_block: i64 = zbackend_ir_cfg_create_block(
+        context, "logical.rhs"
+    ) catch |err| { return err }
+    merge_block: i64 = zbackend_ir_cfg_create_block(
+        context, "logical.merge"
+    ) catch |err| { return err }
+    branch: ZBackendIrTerminator = zbackend_ir_new_terminator("conditional_branch")
+    branch.condition = lhs
+    if expression.op == ZTokenAndAnd {
+        branch.true_target = rhs_block
+        branch.false_target = merge_block
+    } else {
+        branch.true_target = merge_block
+        branch.false_target = rhs_block
+    }
+    zbackend_ir_cfg_terminate(context, branch) catch |err| { return err }
+    zbackend_ir_cfg_activate_block(context, rhs_block) catch |err| { return err }
+    rhs: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.right, context.bool_type_id
+    ) catch |err| { return err }
+    rhs_predecessor: i64 = context.current_block + 1
+    zbackend_ir_cfg_branch(context, merge_block) catch |err| { return err }
+    zbackend_ir_cfg_activate_block(context, merge_block) catch |err| { return err }
+    incoming_values: *i64 = zbackend_ir_cfg_allocate_i64_array(
+        context.allocator, 2
+    ) catch |err| { return err }
+    incoming_blocks: *i64 = zbackend_ir_cfg_allocate_i64_array(
+        context.allocator, 2
+    ) catch |err| { return err }
+    incoming_values[0] = lhs
+    incoming_values[1] = rhs
+    incoming_blocks[0] = lhs_block
+    incoming_blocks[1] = rhs_predecessor
+    return zbackend_ir_cfg_emit_phi(
+        context, context.bool_type_id, incoming_values, incoming_blocks, 2
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_lower_cast_expression(
+    context: *ZBackendIrControlFlowLowering,
+    expression: ZAstExpr
+) !i64 {
+    target_type_id: i64 = zbackend_ir_cfg_type_id(
+        context, expression.type_index
+    ) catch |err| { return err }
+    target_type: ZBackendIrType = context.type_layout.types[target_type_id - 1]
+    operand_expression: ZAstExpr = context.ast.exprs[expression.left]
+    if (target_type.kind == "pointer" || target_type.kind == "function") &&
+        operand_expression.kind == ZAstExprInteger {
+        integer: i64 = zbackend_ir_parse_positive_integer(
+            operand_expression.literal
+        ) catch |err| { return err }
+        if integer == 0 {
+            id: i64 = context.next_value_id
+            context.next_value_id = context.next_value_id + 1
+            return zbackend_ir_cfg_append_instruction(
+                context, zbackend_ir_new_instruction(id, "zero_constant", target_type_id)
+            ) catch |err| { return err }
+        }
+    }
+    source_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+        context, expression.left, target_type_id
+    ) catch |err| { return err }
+    operand: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.left, source_type_id
+    ) catch |err| { return err }
+    cast_op: string = zbackend_ir_cast_op(
+        context.type_layout, source_type_id, target_type_id
+    ) catch |err| { return err }
+    if std.str.len(cast_op) == 0 { return operand }
+    id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    cast_instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        id, "cast", target_type_id
+    )
+    cast_instruction.cast_op = cast_op
+    cast_instruction.lhs = operand
+    return zbackend_ir_cfg_append_instruction(
+        context, cast_instruction
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_lower_logical_not_expression(
+    context: *ZBackendIrControlFlowLowering,
+    expression: ZAstExpr
+) !i64 {
+    operand: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.left, context.bool_type_id
+    ) catch |err| { return err }
+    zero: i64 = zbackend_ir_cfg_emit_integer_constant(
+        context, 0, context.bool_type_id
+    ) catch |err| { return err }
+    id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    comparison: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        id, "compare", context.bool_type_id
+    )
+    comparison.compare_op = "equal"
+    comparison.lhs = operand
+    comparison.rhs = zero
+    return zbackend_ir_cfg_append_instruction(
+        context, comparison
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_lower_direct_call_expression(
+    context: *ZBackendIrControlFlowLowering,
+    expression: ZAstExpr
+) !i64 {
+    callee_declaration: ZAstDecl = zbackend_ir_function_declaration(
+        context.ast, expression.name
+    ) catch |err| { return err }
+    if expression.arg_count != callee_declaration.param_count { return error.InvalidArgument }
+    previous_generic_declaration: i64 = context.type_layout.active_generic_declaration
+    previous_generic_suffix: ZAstText = context.type_layout.active_generic_suffix
+    call_generic_suffix: ZAstText = ZAstText.empty()
+    if callee_declaration.generic_param_count > 0 {
+        declaration_index: i64 = zbackend_ir_owning_declaration_index(
+            context.ast, callee_declaration.name
+        )
+        if declaration_index == ZAstNoIndex { return error.InvalidArgument }
+        call_generic_suffix = zbackend_ir_resolve_call_generic_suffix(
+            context.type_layout,
+            context.declaration,
+            expression,
+            callee_declaration,
+            context.current_statement_index - context.declaration.stmt_start
+        ) catch |err| { return err }
+        context.type_layout.active_generic_declaration = declaration_index
+        context.type_layout.active_generic_suffix = call_generic_suffix
+    }
+    arguments: *i64 = zbackend_ir_cfg_allocate_i64_array(
+        context.allocator, expression.arg_count
+    ) catch |err| { return err }
+    argument_index: i64 = 0
+    while argument_index < expression.arg_count {
+        if argument_index >= callee_declaration.param_count { return error.InvalidArgument }
+        parameter: ZAstParam = context.ast.params[
+            callee_declaration.param_start + argument_index
+        ]
+        argument_type_id: i64 = zbackend_ir_type_layout_type_id(
+            context.type_layout, context.ast, parameter.type_index
+        ) catch |err| { return err }
+        argument_expression_index: i64 = context.ast.expr_args[
+            expression.arg_start + argument_index
+        ]
+        argument_operand_type_id: i64 = zbackend_ir_cfg_expression_operand_type_id(
+            context, argument_expression_index, argument_type_id
+        ) catch |err| { return err }
+        expected_argument_type: ZBackendIrType = context.type_layout.types[argument_type_id - 1]
+        actual_argument_type: ZBackendIrType = context.type_layout.types[argument_operand_type_id - 1]
+        if expected_argument_type.kind == "slice" && actual_argument_type.kind == "array" &&
+            expected_argument_type.element_type == actual_argument_type.element_type {
+            argument_operand_type_id = argument_type_id
+        }
+        if expected_argument_type.kind == "pointer" && actual_argument_type.kind == "array" &&
+            expected_argument_type.element_type == actual_argument_type.element_type {
+            argument_operand_type_id = argument_type_id
+        }
+        argument_value: i64 = zbackend_ir_cfg_lower_expression_as(
+            context, argument_expression_index, argument_operand_type_id
+        ) catch |err| { return err }
+        cast_op: string = zbackend_ir_cast_op(
+            context.type_layout, argument_operand_type_id, argument_type_id
+        ) catch |err| { return err }
+        if std.str.len(cast_op) > 0 {
+            cast_id: i64 = context.next_value_id
+            context.next_value_id = context.next_value_id + 1
+            cast_instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(
+                cast_id, "cast", argument_type_id
+            )
+            cast_instruction.cast_op = cast_op
+            cast_instruction.lhs = argument_value
+            argument_value = zbackend_ir_cfg_append_instruction(
+                context, cast_instruction
+            ) catch |err| { return err }
+        }
+        arguments[argument_index] = argument_value
+        argument_index = argument_index + 1
+    }
+    callee: i64 = zbackend_ir_call_function_id(
+        context.type_layout, expression, call_generic_suffix
+    ) catch |err| { return err }
+    call_type_id: i64 = zbackend_ir_function_return_type_id(
+        context.type_layout, context.ast, callee_declaration
+    ) catch |err| { return err }
+    context.type_layout.active_generic_declaration = previous_generic_declaration
+    context.type_layout.active_generic_suffix = previous_generic_suffix
+    id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        id, "call", call_type_id
+    )
+    instruction.callee = callee
+    instruction.arguments = arguments
+    instruction.argument_count = expression.arg_count
+    return zbackend_ir_cfg_append_instruction(
+        context, instruction
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_lower_pointer_arithmetic(
+    context: *ZBackendIrControlFlowLowering,
+    expression: ZAstExpr,
+    pointer_type_id: i64
+) !i64 {
+    pointer_type: ZBackendIrType = context.type_layout.types[pointer_type_id - 1]
+    if pointer_type.kind != "pointer" { return error.InvalidArgument }
+    index_type_id: i64 = zbackend_ir_type_layout_intern_scalar(
+        context.type_layout, "i64"
+    ) catch |err| { return err }
+    pointer: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.left, pointer_type_id
+    ) catch |err| { return err }
+    index: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.right, index_type_id
+    ) catch |err| { return err }
+    if expression.op == ZTokenMinus {
+        zero: i64 = zbackend_ir_cfg_emit_integer_constant(
+            context, 0, index_type_id
+        ) catch |err| { return err }
+        negated_id: i64 = context.next_value_id
+        context.next_value_id = context.next_value_id + 1
+        negated: ZBackendIrInstruction = zbackend_ir_new_instruction(
+            negated_id, "binary", index_type_id
+        )
+        negated.binary_op = "sub"
+        negated.lhs = zero
+        negated.rhs = index
+        index = zbackend_ir_cfg_append_instruction(
+            context, negated
+        ) catch |err| { return err }
+    }
+    id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    address: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        id, "index_address", pointer_type.element_type
+    )
+    address.source_type = pointer_type.element_type
+    address.lhs = pointer
+    address.rhs = index
+    return zbackend_ir_cfg_append_instruction(context, address) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_lower_pointer_difference(
+    context: *ZBackendIrControlFlowLowering,
+    expression: ZAstExpr,
+    lhs_pointer_type_id: i64,
+    rhs_pointer_type_id: i64
+) !i64 {
+    if lhs_pointer_type_id <= 0 || lhs_pointer_type_id > context.type_layout.type_count ||
+        rhs_pointer_type_id <= 0 || rhs_pointer_type_id > context.type_layout.type_count {
+        return error.InvalidArgument
+    }
+    lhs_pointer_type: ZBackendIrType = context.type_layout.types[lhs_pointer_type_id - 1]
+    rhs_pointer_type: ZBackendIrType = context.type_layout.types[rhs_pointer_type_id - 1]
+    if lhs_pointer_type.kind != "pointer" || rhs_pointer_type.kind != "pointer" ||
+        lhs_pointer_type.element_type != rhs_pointer_type.element_type {
+        return error.InvalidArgument
+    }
+    result_type_id: i64 = zbackend_ir_type_layout_intern_scalar(
+        context.type_layout, "i64"
+    ) catch |err| { return err }
+    lhs: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.left, lhs_pointer_type_id
+    ) catch |err| { return err }
+    rhs: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.right, rhs_pointer_type_id
+    ) catch |err| { return err }
+    id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    difference: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        id, "pointer_difference", result_type_id
+    )
+    difference.source_type = lhs_pointer_type.element_type
+    difference.lhs = lhs
+    difference.rhs = rhs
+    return zbackend_ir_cfg_append_instruction(context, difference) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_lower_struct_literal_expression(
+    context: *ZBackendIrControlFlowLowering,
+    expression: ZAstExpr
+) !i64 {
+    struct_type_id: i64 = zbackend_ir_literal_nominal_type_id(
+        context.type_layout, context.ast, expression
+    ) catch |err| { return err }
+    struct_type: ZBackendIrType = context.type_layout.types[struct_type_id - 1]
+    if struct_type.kind == "union" {
+        if expression.arg_count != 1 { return error.InvalidArgument }
+        variant_index: i64 = zbackend_ir_type_field_index(
+            context.type_layout, struct_type_id,
+            context.ast.literal_fields[expression.field_start].name
+        ) catch |err| { return err }
+        values: *i64 = zbackend_ir_cfg_allocate_i64_array(
+            context.allocator, struct_type.field_count + 1
+        ) catch |err| { return err }
+        tag_type_id: i64 = zbackend_ir_type_layout_intern_scalar(
+            context.type_layout, "i32"
+        ) catch |err| { return err }
+        values[0] = zbackend_ir_cfg_emit_integer_constant(
+            context, variant_index, tag_type_id
+        ) catch |err| { return err }
+        field_index: i64 = 0
+        while field_index < struct_type.field_count {
+            if field_index == variant_index {
+                values[field_index + 1] = zbackend_ir_cfg_lower_expression_as(
+                    context,
+                    context.ast.literal_fields[expression.field_start].value_expr,
+                    struct_type.fields[field_index].type_id
+                ) catch |err| { return err }
+            } else {
+                id: i64 = context.next_value_id
+                context.next_value_id = context.next_value_id + 1
+                values[field_index + 1] = zbackend_ir_cfg_append_instruction(
+                    context,
+                    zbackend_ir_new_instruction(
+                        id, "zero_constant", struct_type.fields[field_index].type_id
+                    )
+                ) catch |err| { return err }
+            }
+            field_index = field_index + 1
+        }
+        return zbackend_ir_cfg_emit_aggregate(
+            context, struct_type_id, values, struct_type.field_count + 1
+        ) catch |err| { return err }
+    }
+    if struct_type.kind != "struct" { return error.NotImplemented }
+    values: *i64 = zbackend_ir_cfg_allocate_i64_array(
+        context.allocator, struct_type.field_count
+    ) catch |err| { return err }
+    field_index: i64 = 0
+    while field_index < struct_type.field_count {
+        literal_field_index: i64 = expression.field_start
+        found_expression: i64 = ZAstNoIndex
+        while literal_field_index != ZAstNoIndex {
+            literal_field: ZAstLiteralField = context.ast.literal_fields[literal_field_index]
+            if ZAstText.eql_string(literal_field.name, struct_type.fields[field_index].name) {
+                found_expression = literal_field.value_expr
+                literal_field_index = ZAstNoIndex
+            } else {
+                literal_field_index = literal_field.next_index
+            }
+        }
+        if found_expression == ZAstNoIndex { return error.InvalidArgument }
+        values[field_index] = zbackend_ir_cfg_lower_expression_as(
+            context, found_expression, struct_type.fields[field_index].type_id
+        ) catch |err| { return err }
+        field_index = field_index + 1
+    }
+    return zbackend_ir_cfg_emit_aggregate(
+        context, struct_type_id, values, struct_type.field_count
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_lower_expression_as(
+    context: *ZBackendIrControlFlowLowering,
+    expression_index: i64,
+    value_type_id: i64
+) !i64 {
+    if context.current_block < 0 { return error.InvalidArgument }
+    if expression_index != ZAstNoIndex && context.ast.exprs[expression_index].kind == ZAstExprCatch {
+        protected_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+            context, context.ast.exprs[expression_index].left, value_type_id
+        ) catch |err| { return err }
+        if protected_type_id <= 0 || protected_type_id > context.type_layout.type_count {
+            return error.InvalidArgument
+        }
+        protected_type: ZBackendIrType = context.type_layout.types[protected_type_id - 1]
+        if protected_type.kind != "error_union" { return error.InvalidArgument }
+        result: i64 = context.lower_catch_expression_fn(
+            context, expression_index, false, protected_type_id
+        ) catch |err| { return err }
+        return zbackend_ir_cfg_emit_cast_value(
+            context, result, protected_type.element_type, value_type_id
+        ) catch |err| { return err }
+    }
+    if expression_index != ZAstNoIndex {
+        expression: ZAstExpr = context.ast.exprs[expression_index]
+        if expression.kind == ZAstExprBinary &&
+            (expression.op == ZTokenAndAnd || expression.op == ZTokenOrOr) {
+            return zbackend_ir_cfg_lower_logical_expression(
+                context, expression
+            ) catch |err| { return err }
+        }
+        if expression.kind == ZAstExprCast {
+            return zbackend_ir_cfg_lower_cast_expression(
+                context, expression
+            ) catch |err| { return err }
+        }
+        if expression.kind == ZAstExprUnary && expression.op == ZTokenBang {
+            return zbackend_ir_cfg_lower_logical_not_expression(
+                context, expression
+            ) catch |err| { return err }
+        }
+        if expression.kind == ZAstExprStructLiteral {
+            return zbackend_ir_cfg_lower_struct_literal_expression(
+                context, expression
+            ) catch |err| { return err }
+        }
+        if expression.kind == ZAstExprCall {
+            expression.name = zbackend_ir_resolved_call_name(
+                context.type_layout, expression
+            ) catch |err| { return err }
+            if zbackend_ir_is_function_name(context.ast, expression.name) {
+                return zbackend_ir_cfg_lower_direct_call_expression(
+                    context, expression
+                ) catch |err| { return err }
+            }
+        }
+        if expression.kind == ZAstExprBinary {
+            lhs_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+                context, expression.left, value_type_id
+            ) catch |err| { return err }
+            rhs_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+                context, expression.right, value_type_id
+            ) catch |err| { return err }
+            lhs_is_pointer: bool = lhs_type_id > 0 && lhs_type_id <= context.type_layout.type_count &&
+                context.type_layout.types[lhs_type_id - 1].kind == "pointer"
+            rhs_is_pointer: bool = rhs_type_id > 0 && rhs_type_id <= context.type_layout.type_count &&
+                context.type_layout.types[rhs_type_id - 1].kind == "pointer"
+            if expression.op == ZTokenMinus && lhs_is_pointer && rhs_is_pointer {
+                return zbackend_ir_cfg_lower_pointer_difference(
+                    context, expression, lhs_type_id, rhs_type_id
+                ) catch |err| { return err }
+            }
+            if (expression.op == ZTokenPlus || expression.op == ZTokenMinus) && lhs_is_pointer {
+                return zbackend_ir_cfg_lower_pointer_arithmetic(
+                    context, expression, lhs_type_id
+                ) catch |err| { return err }
+            }
+            if expression.op == ZTokenPlus && rhs_is_pointer {
+                normalized: ZAstExpr = expression
+                normalized.left = expression.right
+                normalized.right = expression.left
+                return zbackend_ir_cfg_lower_pointer_arithmetic(
+                    context, normalized, rhs_type_id
+                ) catch |err| { return err }
+            }
+            operand_type_id: i64 = lhs_type_id
+            if context.ast.exprs[expression.left].kind == ZAstExprInteger {
+                operand_type_id = rhs_type_id
+            } else if context.ast.exprs[expression.right].kind != ZAstExprInteger &&
+                lhs_type_id > 0 && rhs_type_id > 0 &&
+                lhs_type_id <= context.type_layout.type_count && rhs_type_id <= context.type_layout.type_count {
+                lhs_type: ZBackendIrType = context.type_layout.types[lhs_type_id - 1]
+                rhs_type: ZBackendIrType = context.type_layout.types[rhs_type_id - 1]
+                if lhs_type.kind == "scalar" && rhs_type.kind == "scalar" &&
+                    zbackend_ir_scalar_bit_width(rhs_type.scalar) > zbackend_ir_scalar_bit_width(lhs_type.scalar) {
+                    operand_type_id = rhs_type_id
+                }
+            }
+            lhs: i64 = zbackend_ir_cfg_lower_expression_as(
+                context, expression.left, operand_type_id
+            ) catch |err| { return err }
+            rhs: i64 = zbackend_ir_cfg_lower_expression_as(
+                context, expression.right, operand_type_id
+            ) catch |err| { return err }
+            id: i64 = context.next_value_id
+            context.next_value_id = context.next_value_id + 1
+            if zbackend_ir_is_comparison(expression.op) {
+                compare: ZBackendIrInstruction = zbackend_ir_new_instruction(
+                    id, "compare", context.bool_type_id
+                )
+                compare.compare_op = zbackend_ir_compare_op(
+                    expression.op,
+                    zbackend_ir_type_layout_is_signed(context.type_layout, operand_type_id)
+                ) catch |err| { return err }
+                compare.lhs = lhs
+                compare.rhs = rhs
+                return zbackend_ir_cfg_append_instruction(context, compare) catch |err| { return err }
+            }
+            binary: ZBackendIrInstruction = zbackend_ir_new_instruction(
+                id, "binary", operand_type_id
+            )
+            binary.binary_op = zbackend_ir_binary_op(
+                expression.op,
+                zbackend_ir_type_layout_is_signed(context.type_layout, operand_type_id)
+            ) catch |err| { return err }
+            binary.lhs = lhs
+            binary.rhs = rhs
+            return zbackend_ir_cfg_append_instruction(context, binary) catch |err| { return err }
+        }
+        if expression.kind == ZAstExprIndex {
+            target_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+                context, expression.left, value_type_id
+            ) catch |err| { return err }
+            if target_type_id > 0 && target_type_id <= context.type_layout.type_count &&
+                context.type_layout.types[target_type_id - 1].kind == "slice" {
+                address: i64 = zbackend_ir_cfg_lower_slice_index_address(
+                    context, expression, target_type_id
+                ) catch |err| { return err }
+                id: i64 = context.next_value_id
+                context.next_value_id = context.next_value_id + 1
+                load: ZBackendIrInstruction = zbackend_ir_new_instruction(
+                    id,
+                    "load",
+                    context.type_layout.types[target_type_id - 1].element_type
+                )
+                load.lhs = address
+                return zbackend_ir_cfg_append_instruction(context, load) catch |err| { return err }
+            }
+        }
+        if expression.kind == ZAstExprField &&
+            !zbackend_ir_expression_is_function_value(
+                context.type_layout, expression_index
+            ) &&
+            !zbackend_ir_field_is_static_enum(context.ast, expression) &&
+            !zbackend_ir_field_is_static_union_tag(context.ast, expression) &&
+            !zbackend_ir_field_is_static_error(context.ast, expression) &&
+            !zbackend_ir_is_builtin_field(context.ast, expression) {
+            target_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+                context, expression.left, value_type_id
+            ) catch |err| { return err }
+            if target_type_id > 0 && target_type_id <= context.type_layout.type_count &&
+                context.type_layout.types[target_type_id - 1].kind == "slice" {
+                slice: i64 = zbackend_ir_cfg_lower_expression_as(
+                    context, expression.left, target_type_id
+                ) catch |err| { return err }
+                if ZAstText.eql_string(expression.name, "ptr") {
+                    pointer_type_id: i64 = zbackend_ir_type_layout_pointer_to(
+                        context.type_layout,
+                        context.type_layout.types[target_type_id - 1].element_type
+                    ) catch |err| { return err }
+                    return zbackend_ir_cfg_emit_extract_value(
+                        context, slice, pointer_type_id, 0
+                    ) catch |err| { return err }
+                }
+                if ZAstText.eql_string(expression.name, "len") {
+                    length_type_id: i64 = zbackend_ir_type_layout_intern_scalar(
+                        context.type_layout, "i64"
+                    ) catch |err| { return err }
+                    return zbackend_ir_cfg_emit_extract_value(
+                        context, slice, length_type_id, 1
+                    ) catch |err| { return err }
+                }
+            }
+            if target_type_id > 0 && target_type_id <= context.type_layout.type_count &&
+                context.type_layout.types[target_type_id - 1].kind == "error_union" {
+                aggregate: i64 = zbackend_ir_cfg_lower_expression_as(
+                    context, expression.left, target_type_id
+                ) catch |err| { return err }
+                if ZAstText.eql_string(expression.name, "value") {
+                    return zbackend_ir_cfg_emit_extract_value(
+                        context, aggregate,
+                        context.type_layout.types[target_type_id - 1].element_type, 0
+                    ) catch |err| { return err }
+                }
+                if ZAstText.eql_string(expression.name, "error") {
+                    return zbackend_ir_cfg_emit_extract_value(
+                        context, aggregate, context.error_type_id, 1
+                    ) catch |err| { return err }
+                }
+            }
+            if target_type_id > 0 && target_type_id <= context.type_layout.type_count &&
+                context.type_layout.types[target_type_id - 1].kind == "union" &&
+                ZAstText.eql_string(expression.name, "tag") {
+                aggregate: i64 = zbackend_ir_cfg_lower_expression_as(
+                    context, expression.left, target_type_id
+                ) catch |err| { return err }
+                tag_type_id: i64 = zbackend_ir_type_layout_intern_scalar(
+                    context.type_layout, "i32"
+                ) catch |err| { return err }
+                return zbackend_ir_cfg_emit_extract_value(
+                    context, aggregate, tag_type_id, 0
+                ) catch |err| { return err }
+            }
+        }
+    }
+    if expression_index != ZAstNoIndex {
+        expression: ZAstExpr = context.ast.exprs[expression_index]
+        resolved_global: ZAstText = zbackend_ir_resolved_global_name(
+            context.type_layout, expression_index
+        ) catch |err| { return err }
+        if expression.kind == ZAstExprField && expression.left != ZAstNoIndex &&
+            resolved_global.len == 0 &&
+            !zbackend_ir_expression_is_function_value(
+                context.type_layout, expression_index
+            ) &&
+            !zbackend_ir_field_is_static_enum(context.ast, expression) &&
+            !zbackend_ir_field_is_static_union_tag(context.ast, expression) &&
+            !zbackend_ir_field_is_static_error(context.ast, expression) &&
+            !zbackend_ir_is_builtin_field(context.ast, expression) {
+            field_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+                context, expression_index, value_type_id
+            ) catch |err| { return err }
+            address: i64 = zbackend_ir_cfg_lower_address(
+                context, expression_index, value_type_id
+            ) catch |err| { return err }
+            id: i64 = context.next_value_id
+            context.next_value_id = context.next_value_id + 1
+            load: ZBackendIrInstruction = zbackend_ir_new_instruction(
+                id, "load", field_type_id
+            )
+            load.lhs = address
+            value: i64 = zbackend_ir_cfg_append_instruction(
+                context, load
+            ) catch |err| { return err }
+            return zbackend_ir_cfg_emit_cast_value(
+                context, value, field_type_id, value_type_id
+            ) catch |err| { return err }
+        }
+    }
+    if expression_index != ZAstNoIndex && zbackend_ir_expression_is_error_union_call(
+        context.type_layout, context.ast.exprs[expression_index]
+    ) {
+        call_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+            context, expression_index, value_type_id
+        ) catch |err| { return err }
+        if value_type_id != call_type_id { return error.NotImplemented }
+    }
+    capacity: i64 = zbackend_ir_expression_instruction_capacity(
+        context.ast, expression_index
+    ) catch |err| { return err }
+    capacity = capacity + ZBACKEND_IR_CONTEXTUAL_COERCION_INSTRUCTION_OVERHEAD
+    block_index: i64 = context.current_block
+    instruction_start: i64 = context.blocks[block_index].instruction_count
+    zbackend_ir_cfg_reserve_instructions(
+        context, block_index, instruction_start + capacity
+    ) catch |err| { return err }
+    expression_context: ZBackendIrExpressionLowering = zbackend_ir_expression_context(
+        context.allocator,
+        context.ast,
+        context.declaration,
+        context.blocks[block_index].instructions + instruction_start,
+        context.blocks[block_index].instruction_capacity - instruction_start,
+        context.next_value_id,
+        value_type_id,
+        context.bool_type_id,
+        context.type_layout,
+        zbackend_ir_type_layout_is_signed(context.type_layout, value_type_id),
+        context.current_statement_index
+    )
+    zbackend_ir_set_locals(
+        &expression_context,
+        context.local_names,
+        context.local_addresses,
+        context.local_type_ids,
+        context.local_count
+    )
+    result: i64 = zbackend_ir_lower_expression(
+        &expression_context, expression_index
+    ) catch |err| { return err }
+    actual_type_id: i64 = zbackend_ir_expression_type_id(
+        &expression_context, expression_index, value_type_id
+    ) catch |err| { return err }
+    if actual_type_id != value_type_id {
+        expected_type: ZBackendIrType = context.type_layout.types[value_type_id - 1]
+        actual_type: ZBackendIrType = context.type_layout.types[actual_type_id - 1]
+        if expected_type.kind == "slice" && actual_type.kind == "array" &&
+            expected_type.element_type == actual_type.element_type {
+            actual_type_id = value_type_id
+        }
+        if expected_type.kind == "pointer" && actual_type.kind == "array" &&
+            expected_type.element_type == actual_type.element_type {
+            actual_type_id = value_type_id
+        }
+    }
+    result = zbackend_ir_expression_emit_cast_value(
+        &expression_context, result, actual_type_id, value_type_id
+    ) catch |err| { return err }
+    context.blocks[block_index].instruction_count = instruction_start + expression_context.instruction_count
+    context.next_value_id = expression_context.next_value_id
+    return result
+}
+
+
+export fn zbackend_ir_cfg_lower_slice_index_address(
+    context: *ZBackendIrControlFlowLowering,
+    expression: ZAstExpr,
+    slice_type_id: i64
+) !i64 {
+    slice_type: ZBackendIrType = context.type_layout.types[slice_type_id - 1]
+    if slice_type.kind != "slice" { return error.InvalidArgument }
+    pointer_type_id: i64 = zbackend_ir_type_layout_pointer_to(
+        context.type_layout, slice_type.element_type
+    ) catch |err| { return err }
+    index_type_id: i64 = zbackend_ir_type_layout_intern_scalar(
+        context.type_layout, "i64"
+    ) catch |err| { return err }
+    slice: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.left, slice_type_id
+    ) catch |err| { return err }
+    pointer: i64 = zbackend_ir_cfg_emit_extract_value(
+        context, slice, pointer_type_id, 0
+    ) catch |err| { return err }
+    length: i64 = zbackend_ir_cfg_emit_extract_value(
+        context, slice, index_type_id, 1
+    ) catch |err| { return err }
+    actual_index_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+        context, expression.right, index_type_id
+    ) catch |err| { return err }
+    index: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.right, actual_index_type_id
+    ) catch |err| { return err }
+    index = zbackend_ir_cfg_emit_cast_value(
+        context, index, actual_index_type_id, index_type_id
+    ) catch |err| { return err }
+    zero: i64 = zbackend_ir_cfg_emit_integer_constant(
+        context, 0, index_type_id
+    ) catch |err| { return err }
+    past_end_id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    past_end: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        past_end_id, "compare", context.bool_type_id
+    )
+    past_end.compare_op = "unsigned_greater_equal"
+    past_end.lhs = index
+    past_end.rhs = length
+    zbackend_ir_cfg_append_instruction(context, past_end) catch |err| { return err }
+    failed: i64 = past_end_id
+    if zbackend_ir_type_layout_is_signed(context.type_layout, actual_index_type_id) {
+        negative_id: i64 = context.next_value_id
+        context.next_value_id = context.next_value_id + 1
+        negative: ZBackendIrInstruction = zbackend_ir_new_instruction(
+            negative_id, "compare", context.bool_type_id
+        )
+        negative.compare_op = "signed_less"
+        negative.lhs = index
+        negative.rhs = zero
+        zbackend_ir_cfg_append_instruction(context, negative) catch |err| { return err }
+        failed_id: i64 = context.next_value_id
+        context.next_value_id = context.next_value_id + 1
+        combined: ZBackendIrInstruction = zbackend_ir_new_instruction(
+            failed_id, "binary", context.bool_type_id
+        )
+        combined.binary_op = "bit_or"
+        combined.lhs = negative_id
+        combined.rhs = past_end_id
+        zbackend_ir_cfg_append_instruction(context, combined) catch |err| { return err }
+        failed = failed_id
+    }
+    failure_block: i64 = zbackend_ir_cfg_create_block(
+        context, "slice.oob"
+    ) catch |err| { return err }
+    success_block: i64 = zbackend_ir_cfg_create_block(
+        context, "slice.index"
+    ) catch |err| { return err }
+    branch: ZBackendIrTerminator = zbackend_ir_new_terminator("conditional_branch")
+    branch.condition = failed
+    branch.true_target = failure_block
+    branch.false_target = success_block
+    zbackend_ir_cfg_terminate(context, branch) catch |err| { return err }
+    zbackend_ir_cfg_activate_block(context, failure_block) catch |err| { return err }
+    exit_code: i64 = zbackend_ir_cfg_emit_integer_constant(
+        context, 1, context.error_type_id
+    ) catch |err| { return err }
+    exit_id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    exit: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        exit_id, "process_exit", context.type_layout.void_type_id
+    )
+    exit.lhs = exit_code
+    zbackend_ir_cfg_append_instruction(context, exit) catch |err| { return err }
+    zbackend_ir_cfg_terminate(
+        context, zbackend_ir_new_terminator("unreachable")
+    ) catch |err| { return err }
+    zbackend_ir_cfg_activate_block(context, success_block) catch |err| { return err }
+    address_id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    address: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        address_id, "index_address", slice_type.element_type
+    )
+    address.source_type = slice_type.element_type
+    address.lhs = pointer
+    address.rhs = index
+    return zbackend_ir_cfg_append_instruction(context, address) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_lower_address(
+    context: *ZBackendIrControlFlowLowering,
+    expression_index: i64,
+    value_type_id: i64
+) !i64 {
+    if context.current_block < 0 || expression_index == ZAstNoIndex {
+        return error.InvalidArgument
+    }
+    expression: ZAstExpr = context.ast.exprs[expression_index]
+    if expression.kind == ZAstExprIndex {
+        target_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+            context, expression.left, value_type_id
+        ) catch |err| { return err }
+        if target_type_id > 0 && target_type_id <= context.type_layout.type_count &&
+            context.type_layout.types[target_type_id - 1].kind == "slice" {
+            return zbackend_ir_cfg_lower_slice_index_address(
+                context, expression, target_type_id
+            ) catch |err| { return err }
+        }
+    }
+    if expression.kind == ZAstExprField {
+        target_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+            context, expression.left, value_type_id
+        ) catch |err| { return err }
+        if target_type_id > 0 && target_type_id <= context.type_layout.type_count {
+            target_type: ZBackendIrType = context.type_layout.types[target_type_id - 1]
+            container_type_id: i64 = target_type_id
+            container_type: ZBackendIrType = target_type
+            base_address: i64 = 0
+            if target_type.kind == "pointer" {
+                container_type_id = target_type.element_type
+                if container_type_id <= 0 || container_type_id > context.type_layout.type_count {
+                    return error.InvalidArgument
+                }
+                container_type = context.type_layout.types[container_type_id - 1]
+                base_address = zbackend_ir_cfg_lower_expression_as(
+                    context, expression.left, target_type_id
+                ) catch |err| { return err }
+            } else if target_type.kind == "struct" || target_type.kind == "union" {
+                base_address = zbackend_ir_cfg_lower_address(
+                    context, expression.left, target_type_id
+                ) catch |err| { return err }
+            }
+            if container_type.kind == "struct" || container_type.kind == "union" {
+                field_index: i64 = zbackend_ir_type_field_index(
+                    context.type_layout, container_type_id, expression.name
+                ) catch |err| { return err }
+                id: i64 = context.next_value_id
+                context.next_value_id = context.next_value_id + 1
+                field_address: ZBackendIrInstruction = zbackend_ir_new_instruction(
+                    id, "field_address", container_type.fields[field_index].type_id
+                )
+                field_address.source_type = container_type_id
+                field_address.field_index = field_index
+                if container_type.kind == "union" {
+                    field_address.field_index = field_index + 1
+                }
+                field_address.lhs = base_address
+                return zbackend_ir_cfg_append_instruction(
+                    context, field_address
+                ) catch |err| { return err }
+            }
+        }
+    }
+    capacity: i64 = zbackend_ir_expression_instruction_capacity(
+        context.ast, expression_index
+    ) catch |err| { return err }
+    capacity = capacity + 4
+    block_index: i64 = context.current_block
+    instruction_start: i64 = context.blocks[block_index].instruction_count
+    zbackend_ir_cfg_reserve_instructions(
+        context, block_index, instruction_start + capacity
+    ) catch |err| { return err }
+    expression_context: ZBackendIrExpressionLowering = zbackend_ir_expression_context(
+        context.allocator,
+        context.ast,
+        context.declaration,
+        context.blocks[block_index].instructions + instruction_start,
+        context.blocks[block_index].instruction_capacity - instruction_start,
+        context.next_value_id,
+        value_type_id,
+        context.bool_type_id,
+        context.type_layout,
+        zbackend_ir_type_layout_is_signed(context.type_layout, value_type_id),
+        context.current_statement_index
+    )
+    zbackend_ir_set_locals(
+        &expression_context,
+        context.local_names,
+        context.local_addresses,
+        context.local_type_ids,
+        context.local_count
+    )
+    result: i64 = zbackend_ir_expression_lower_address(
+        &expression_context, expression_index
+    ) catch |err| { return err }
+    context.blocks[block_index].instruction_count = instruction_start + expression_context.instruction_count
+    context.next_value_id = expression_context.next_value_id
+    return result
+}

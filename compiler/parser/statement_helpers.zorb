@@ -1,0 +1,55 @@
+import "../../runtime/std/errors.zorb"
+import "../../runtime/std/io.zorb"
+import "../../runtime/std/mem.zorb"
+import "../token.zorb"
+import "../ast/types.zorb"
+import "../ast.zorb"
+import "../ast/resolution.zorb"
+import "../ast/arena.zorb"
+import "../ast/type_check.zorb"
+import "../ast/statement_check.zorb"
+import "../ast/validation.zorb"
+import "../ast/warnings.zorb"
+import "types.zorb"
+import "core.zorb"
+
+export fn zparser_expr_is_builtin_sizeof(module: *ZAstModule, expr_index: i64) -> bool {
+    expr: ZAstExpr = module.exprs[expr_index]
+    if expr.kind != ZAstExprField || expr.name.len != 6 || expr.name.ptr[0] != 115 || expr.name.ptr[1] != 105 || expr.name.ptr[2] != 122 || expr.name.ptr[3] != 101 || expr.name.ptr[4] != 111 || expr.name.ptr[5] != 102 {
+        return false
+    }
+    base: ZAstExpr = module.exprs[expr.left]
+    return base.kind == ZAstExprIdentifier && base.name.len == 7 && base.name.ptr[0] == 66 && base.name.ptr[1] == 117 && base.name.ptr[2] == 105 && base.name.ptr[3] == 108 && base.name.ptr[4] == 116 && base.name.ptr[5] == 105 && base.name.ptr[6] == 110
+}
+
+
+export fn zparser_current_is_asm(self: *ZParser) -> bool {
+    token: ZToken = zparser_current(self)
+    return token.kind == ZTokenIdentifier && token.len == 3 && token.ptr[0] == 97 && token.ptr[1] == 115 && token.ptr[2] == 109
+}
+
+
+// Catch bodies are parsed as opaque recovery/control-flow regions until the
+// full catch-expression AST is available. Consuming the balanced body keeps
+// the enclosing declaration synchronized with following statements.
+export fn zparser_skip_catch_clause(self: *ZParser) !i64 {
+    zparser_expect(self, ZTokenCatch) catch |err| { return err }
+    if zparser_at(self, ZTokenPipe) {
+        zparser_advance(self)
+        if zparser_at(self, ZTokenIdentifier) { zparser_advance(self) }
+        zparser_expect(self, ZTokenPipe) catch |err| { return err }
+    }
+    if !zparser_at(self, ZTokenLBrace) {
+        return error.InvalidArgument
+    }
+    depth: i64 = 0
+    while !zparser_at(self, ZTokenEof) {
+        kind: i64 = zparser_advance(self).kind
+        if kind == ZTokenLBrace { depth = depth + 1 }
+        if kind == ZTokenRBrace {
+            depth = depth - 1
+            if depth == 0 { return 0 }
+        }
+    }
+    return error.EndOfFile
+}

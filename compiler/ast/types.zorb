@@ -1,0 +1,326 @@
+
+export const ZAstDeclImport: i64 = 1
+
+export const ZAstDeclExternFunction: i64 = 2
+
+export const ZAstDeclError: i64 = 3
+
+export const ZAstDeclConst: i64 = 4
+
+export const ZAstDeclGlobal: i64 = 5
+
+export const ZAstDeclStruct: i64 = 6
+
+export const ZAstDeclEnum: i64 = 7
+
+export const ZAstDeclUnion: i64 = 8
+
+export const ZAstDeclFunction: i64 = 9
+
+export const ZAstDeclExternType: i64 = 10
+
+
+export const ZAstExprMissing: i64 = 0
+
+export const ZAstExprIdentifier: i64 = 1
+
+export const ZAstExprInteger: i64 = 2
+
+export const ZAstExprString: i64 = 3
+
+export const ZAstExprBool: i64 = 4
+
+export const ZAstExprBinary: i64 = 5
+
+export const ZAstExprCall: i64 = 6
+
+export const ZAstExprUnary: i64 = 7
+
+export const ZAstExprField: i64 = 8
+
+export const ZAstExprIndex: i64 = 9
+
+export const ZAstExprCast: i64 = 10
+
+export const ZAstExprError: i64 = 11
+
+// A struct literal keeps its type expression in `left`, field values in
+// `expr_args`, and field names/spans in the compact literal-field arena.
+export const ZAstExprStructLiteral: i64 = 12
+
+// Array literals retain their full declared array type in `type_index` and
+// element expressions in `expr_args`, mirroring the ownership model used by
+// calls and struct literals.
+export const ZAstExprArrayLiteral: i64 = 13
+
+// Catch owns a protected expression, a scoped error binding, and a contiguous
+// range of recovery statements in the function statement arena.
+export const ZAstExprCatch: i64 = 14
+
+
+export const ZAstStmtVar: i64 = 1
+
+export const ZAstStmtReturn: i64 = 2
+
+export const ZAstStmtExpr: i64 = 3
+
+export const ZAstStmtBlock: i64 = 4
+
+export const ZAstStmtAssign: i64 = 5
+
+export const ZAstStmtMatch: i64 = 6
+
+export const ZAstStmtCase: i64 = 7
+
+export const ZAstStmtElse: i64 = 8
+
+export const ZAstStmtFor: i64 = 9
+
+export const ZAstStmtIf: i64 = 10
+
+export const ZAstStmtWhile: i64 = 11
+
+export const ZAstStmtSwitch: i64 = 12
+
+export const ZAstStmtBreak: i64 = 13
+
+export const ZAstStmtContinue: i64 = 14
+
+export const ZAstStmtAsm: i64 = 15
+
+
+export const ZAstNoIndex: i64 = -1
+
+export const ZAstSemanticErrorNone: i64 = 0
+
+export const ZAstSemanticErrorArrayElementCount: i64 = 1
+
+export const ZAstSemanticErrorMatchNotExhaustive: i64 = 2
+
+export const ZAstSemanticErrorConditionNotBool: i64 = 3
+
+export const ZAstSemanticErrorUnionLiteralVariantCount: i64 = 4
+
+// A constrained generic call was rejected before substitution can produce a
+// complete call type. This is a type-validation failure, not an unknown name.
+export const ZAstSemanticErrorGenericConstraint: i64 = 5
+
+export const ZAstSemanticErrorUnknownName: i64 = 6
+
+export const ZAstSemanticErrorNotAssignable: i64 = 7
+
+export const ZAstSemanticErrorPointerDifference: i64 = 8
+
+export const ZAstCallExplicitTypeArguments: i64 = 1
+
+export const ZAstWarningMixedSignednessComparison: i64 = 1
+
+export const ZAstWarningPointerAlignment: i64 = 2
+
+export const ZAstWarningUnreachableStatement: i64 = 3
+
+
+export struct ZAstText {
+    ptr: *u8,
+    len: i64
+}
+
+
+// AST nodes retain their own source extent rather than relying on a caller's
+// current token.  The frontend works one source file at a time, so a span only
+// needs the one-based location and byte length; the owning source is supplied
+// by the module/session.
+export struct ZAstSpan {
+    line: i64,
+    column: i64,
+    length: i64
+}
+
+
+// Semantic analysis records warning facts without rendering them. The session
+// layer owns message construction and output so warnings remain non-fatal and
+// use the same human/JSON presentation contract as errors.
+export struct ZAstWarning {
+    category: i64,
+    span: ZAstSpan,
+    op: i64,
+    left_type: ZAstText,
+    right_type: ZAstText
+}
+
+
+export struct ZAstType {
+    text: ZAstText,
+    // Absolute statement position and owning declaration start captured where
+    // the type was written. Array-bound constant lookup uses this lexical
+    // context instead of scanning unrelated functions by local name.
+    scope_declaration_start: i64,
+    scope_statement: i64
+}
+
+
+export struct ZAstParam {
+    name: ZAstText,
+    type_index: i64,
+    span: ZAstSpan
+}
+
+
+export struct ZAstMember {
+    name: ZAstText,
+    type_index: i64,
+    value_expr: i64,
+    attribute_expr: i64,
+    span: ZAstSpan
+}
+
+
+export struct ZAstLiteralField {
+    name: ZAstText,
+    span: ZAstSpan,
+    next_index: i64,
+    value_expr: i64
+}
+
+
+export struct ZAstExpr {
+    kind: i64,
+    span: ZAstSpan,
+    name: ZAstText,
+    literal: ZAstText,
+    asm_constraint: ZAstText,
+    op: i64,
+    left: i64,
+    right: i64,
+    type_index: i64,
+    arg_start: i64,
+    arg_count: i64
+    field_start: i64
+}
+
+
+export struct ZAstStmt {
+    kind: i64,
+    span: ZAstSpan,
+    name: ZAstText,
+    type_index: i64,
+    expr_index: i64,
+    value_expr: i64,
+    // Statement-level alignment retains its expression separately from the
+    // initializer so local declarations can be validated like globals.
+    attribute_expr: i64,
+    is_constant: bool,
+    // Recovery expressions retain only their prefix until catch receives a
+    // dedicated expression node. Their condition type is therefore unknown.
+    condition_has_recovery: bool,
+    recovery_span: ZAstSpan,
+    // Non-root statements in a catch recovery are checked through their
+    // owning expression, never as independent function-body statements.
+    catch_owner: i64,
+    asm_output_start: i64,
+    asm_output_count: i64,
+    asm_input_start: i64,
+    asm_input_count: i64,
+    asm_clobber_start: i64,
+    asm_clobber_count: i64,
+    // A for statement owns initializer, update, and body statements in one
+    // flattened child range. Explicit clause counts keep those regions
+    // unambiguous for semantic consumers and Backend IR lowering.
+    for_initializer_count: i64,
+    for_update_count: i64,
+    child_start: i64,
+    child_count: i64
+}
+
+
+export struct ZAstDecl {
+    kind: i64,
+    span: ZAstSpan,
+    // Set when source modules are flattened for graph-wide lowering. Keeping
+    // source ownership beside the declaration lets later compiler phases
+    // report an imported declaration against its defining file.
+    source_index: i64,
+    exported: bool,
+    name: ZAstText,
+    path: ZAstText,
+    alias: ZAstText,
+    is_c_import: bool,
+    // Imported declarations are symbol projections owned by another module.
+    // They participate in lookup but are never re-checked or re-exported from
+    // the importing module.
+    is_imported: bool,
+    // Imported projections retain the defining declaration's identity so
+    // graph-wide lowering can resolve an alias without emitting the projection.
+    canonical_name: ZAstText,
+    type_index: i64,
+    return_type_index: i64,
+    return_is_error_union: bool,
+    init_expr: i64,
+    // Declaration alignment retains its expression for the same constant
+    // validation applied to local and member alignment attributes.
+    attribute_expr: i64,
+    initializer_has_catch: bool,
+    initializer_catch_span: ZAstSpan,
+    generic_param_start: i64,
+    generic_param_count: i64,
+    generic_required_param_count: i64,
+    has_generic_constraints: bool,
+    has_explicit_layout: bool,
+    param_start: i64,
+    param_count: i64,
+    member_start: i64,
+    member_count: i64,
+    stmt_start: i64,
+    stmt_count: i64,
+    local_count: i64,
+    return_count: i64,
+    call_count: i64,
+    binary_count: i64
+}
+
+
+export struct ZAstModule {
+    decls: *ZAstDecl,
+    len: i64,
+    capacity: i64,
+    types: *ZAstType,
+    type_count: i64,
+    type_capacity: i64,
+    generic_params: *ZAstText,
+    // Parallel to generic_params: ZAstNoIndex means required/no default.
+    generic_default_types: *i64,
+    generic_param_count_total: i64,
+    generic_param_capacity: i64,
+    params: *ZAstParam,
+    param_count_total: i64,
+    param_capacity: i64,
+    members: *ZAstMember,
+    member_count_total: i64,
+    member_capacity: i64,
+    stmts: *ZAstStmt,
+    stmt_count_total: i64,
+    stmt_capacity: i64,
+    exprs: *ZAstExpr,
+    expr_count: i64,
+    expr_capacity: i64,
+    expr_args: *i64,
+    expr_arg_count: i64,
+    expr_arg_capacity: i64,
+    literal_fields: *ZAstLiteralField,
+    literal_field_count: i64,
+    literal_field_capacity: i64,
+    import_count: i64,
+    extern_count: i64,
+    error_count: i64,
+    const_count: i64,
+    global_count: i64,
+    struct_count: i64,
+    enum_count: i64,
+    union_count: i64,
+    function_count: i64
+    semantic_error_span: ZAstSpan
+    semantic_error_category: i64
+    warnings: *ZAstWarning
+    warning_count: i64
+    warning_capacity: i64
+}

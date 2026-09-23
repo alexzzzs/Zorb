@@ -1,0 +1,645 @@
+import "../../../runtime/std/errors.zorb"
+import "../../../runtime/std/collections.zorb"
+import "../../../runtime/std/mem.zorb"
+import "../../../runtime/std/str.zorb"
+import "../../ast/types.zorb"
+import "../../ast.zorb"
+import "../../ast/resolution.zorb"
+import "../../ast/arena.zorb"
+import "../../ast/type_check.zorb"
+import "../../ast/statement_check.zorb"
+import "../../ast/validation.zorb"
+import "../../ast/warnings.zorb"
+import "../../frontend/diagnostic.zorb"
+import "../../token.zorb"
+import "../model.zorb"
+import "types.zorb"
+import "core.zorb"
+import "type_text.zorb"
+import "generics.zorb"
+import "type_layout.zorb"
+import "expression_support.zorb"
+import "cfg_helpers.zorb"
+import "cfg_expressions.zorb"
+import "cfg_statements.zorb"
+import "cfg_catch.zorb"
+
+export fn zbackend_ir_cfg_lower_catch_expression(
+    context: *ZBackendIrControlFlowLowering,
+    expression_index: i64,
+    discard_result: bool,
+    known_protected_type_id: i64
+) !i64 {
+    if context.error_type_id == ZBACKEND_IR_NO_TYPE_ID {
+        return error.NotImplemented
+    }
+    expression: ZAstExpr = context.ast.exprs[expression_index]
+    if expression.kind != ZAstExprCatch || expression.left == ZAstNoIndex {
+        return error.InvalidArgument
+    }
+
+    protected_type_id: i64 = known_protected_type_id
+    if protected_type_id == ZBACKEND_IR_NO_TYPE_ID {
+        protected_type_id = zbackend_ir_cfg_expression_type_id(
+            context, expression.left, context.return_payload_type_id
+        ) catch |err| { return err }
+    }
+    if protected_type_id <= 0 || protected_type_id > context.type_layout.type_count {
+        return error.InvalidArgument
+    }
+    protected_type: ZBackendIrType = context.type_layout.types[protected_type_id - 1]
+    if protected_type.kind != "error_union" { return error.InvalidArgument }
+    payload_type_id: i64 = protected_type.element_type
+    result: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.left, protected_type_id
+    ) catch |err| { return err }
+    success_value: i64 = zbackend_ir_cfg_emit_extract_value(
+        context, result, payload_type_id, 0
+    ) catch |err| { return err }
+    error_value: i64 = zbackend_ir_cfg_emit_extract_value(
+        context, result, context.error_type_id, 1
+    ) catch |err| { return err }
+    zero: i64 = zbackend_ir_cfg_emit_integer_constant(
+        context, 0, context.error_type_id
+    ) catch |err| { return err }
+    has_error: i64 = zbackend_ir_cfg_emit_equal(context, error_value, zero) catch |err| { return err }
+
+    error_block: i64 = zbackend_ir_cfg_create_block(context, "catch.error") catch |err| { return err }
+    success_block: i64 = zbackend_ir_cfg_create_block(context, "catch.success") catch |err| { return err }
+    merge_block: i64 = zbackend_ir_cfg_create_block(context, "catch.end") catch |err| { return err }
+    dispatch: ZBackendIrTerminator = zbackend_ir_new_terminator("conditional_branch")
+    dispatch.condition = has_error
+    dispatch.true_target = success_block
+    dispatch.false_target = error_block
+    zbackend_ir_cfg_terminate(context, dispatch) catch |err| { return err }
+
+    zbackend_ir_cfg_activate_block(context, success_block) catch |err| { return err }
+    zbackend_ir_cfg_branch(context, merge_block) catch |err| { return err }
+
+    zbackend_ir_cfg_activate_block(context, error_block) catch |err| { return err }
+    zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+    error_address: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    zbackend_ir_cfg_append_instruction(
+        context, zbackend_ir_new_instruction(error_address, "alloca", context.error_type_id)
+    ) catch |err| { return err }
+    error_store_id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    error_store: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        error_store_id, "store", context.error_type_id
+    )
+    error_store.lhs = error_address
+    error_store.rhs = error_value
+    zbackend_ir_cfg_append_instruction(context, error_store) catch |err| { return err }
+    zbackend_ir_cfg_declare_local(
+        context, expression.name, error_address, context.error_type_id, true
+    ) catch |err| { return err }
+
+    body_end: i64 = expression.arg_start + expression.arg_count
+    top_level_index: i64 = expression.arg_start
+    fallback_statement: i64 = ZAstNoIndex
+    while top_level_index < body_end {
+        fallback_statement = top_level_index
+        top_level: ZAstStmt = context.ast.stmts[top_level_index]
+        next_top_level: i64 = top_level_index + 1
+        if top_level.child_count > 0 {
+            next_top_level = top_level.child_start + top_level.child_count
+        }
+        if next_top_level <= top_level_index || next_top_level > body_end {
+            return error.InvalidArgument
+        }
+        top_level_index = next_top_level
+    }
+    fallback_expression: i64 = ZAstNoIndex
+    recovery_end: i64 = body_end
+    if !discard_result && fallback_statement != ZAstNoIndex &&
+        context.ast.stmts[fallback_statement].kind == ZAstStmtExpr {
+        fallback_expression = context.ast.stmts[fallback_statement].expr_index
+        recovery_end = fallback_statement
+    }
+
+    previous_catch_owner: i64 = context.active_catch_owner
+    context.active_catch_owner = expression_index
+    zbackend_ir_cfg_lower_sequence(
+        context, expression.arg_start, recovery_end
+    ) catch |err| { return err }
+    fallback_value: i64 = 0
+    fallback_block: i64 = ZAstNoIndex
+    if context.current_block >= 0 && fallback_expression != ZAstNoIndex {
+        fallback_value = zbackend_ir_cfg_lower_expression_as(
+            context, fallback_expression, payload_type_id
+        ) catch |err| { return err }
+        fallback_block = context.current_block + 1
+        zbackend_ir_cfg_branch(context, merge_block) catch |err| { return err }
+    } else if context.current_block >= 0 && discard_result {
+        fallback_block = context.current_block + 1
+        zbackend_ir_cfg_branch(context, merge_block) catch |err| { return err }
+    } else if context.current_block >= 0 {
+        return error.NotImplemented
+    }
+    context.active_catch_owner = previous_catch_owner
+    zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+
+    zbackend_ir_cfg_activate_block(
+        context, merge_block
+    ) catch |err| { return err }
+    if fallback_block == ZAstNoIndex || discard_result { return success_value }
+    incoming_values: *i64 = zbackend_ir_cfg_allocate_i64_array(context.allocator, 2) catch |err| { return err }
+    incoming_blocks: *i64 = zbackend_ir_cfg_allocate_i64_array(context.allocator, 2) catch |err| { return err }
+    incoming_values[0] = success_value
+    incoming_values[1] = fallback_value
+    incoming_blocks[0] = success_block
+    incoming_blocks[1] = fallback_block
+    return zbackend_ir_cfg_emit_phi(
+        context, payload_type_id, incoming_values, incoming_blocks, 2
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_lower_function(
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    declaration: ZAstDecl,
+    function_id: i64,
+    function_name: string,
+    parameters: *ZBackendIrParameter,
+    type_layout: *ZBackendIrTypeLayout,
+    diagnostic: *ZDiagnostic
+) !ZBackendIrFunction {
+    // Catch error bindings are scoped locals but are not counted as source
+    // variable declarations. The statement arena is a safe upper bound for
+    // those additional bindings while the frontend keeps a compact AST.
+    local_capacity: i64 = declaration.param_count + declaration.local_count + declaration.stmt_count + 1
+    local_names: *ZAstText = cast(*ZAstText, 0)
+    if local_capacity > 0 {
+        names_raw: *u8 = std.mem.HeapAllocator.alloc(
+            allocator, local_capacity * Builtin.sizeof(ZAstText)
+        ) catch |err| { return error.OutOfMemory }
+        local_names = cast(*ZAstText, names_raw)
+    }
+    local_addresses: *i64 = zbackend_ir_cfg_allocate_i64_array(allocator, local_capacity) catch |err| { return err }
+    local_type_ids: *i64 = zbackend_ir_cfg_allocate_i64_array(allocator, local_capacity) catch |err| { return err }
+    local_is_catch_errors: *i64 = zbackend_ir_cfg_allocate_i64_array(
+        allocator, local_capacity
+    ) catch |err| { return err }
+    stack_capacity: i64 = declaration.stmt_count + 1
+    return_payload_type_id: i64 = zbackend_ir_function_payload_type_id(
+        type_layout, ast, declaration
+    ) catch |err| { return err }
+    return_type_id: i64 = zbackend_ir_function_return_type_id(
+        type_layout, ast, declaration
+    ) catch |err| { return err }
+    error_union_type_id: i64 = ZBACKEND_IR_NO_TYPE_ID
+    if declaration.return_is_error_union { error_union_type_id = return_type_id }
+    context: ZBackendIrControlFlowLowering = ZBackendIrControlFlowLowering{
+        allocator: allocator,
+        ast: ast,
+        declaration: declaration,
+        type_layout: type_layout,
+        bool_type_id: type_layout.bool_type_id,
+        error_type_id: type_layout.error_type_id,
+        error_union_type_id: error_union_type_id,
+        return_payload_type_id: return_payload_type_id,
+        return_type_id: return_type_id,
+        returns_error_union: declaration.return_is_error_union,
+        returns_void: declaration.return_type_index == ZAstNoIndex ||
+            ZAstText.eql_string(ast.types[declaration.return_type_index].text, "void"),
+        blocks: cast(*ZBackendIrBlockBuilder, 0),
+        block_count: 0,
+        block_capacity: 0,
+        current_block: -1,
+        next_value_id: declaration.param_count + 1,
+        local_names: local_names,
+        local_addresses: local_addresses,
+        local_type_ids: local_type_ids,
+        local_is_catch_errors: local_is_catch_errors,
+        local_count: 0,
+        local_capacity: local_capacity,
+        scope_starts: zbackend_ir_cfg_allocate_i64_array(allocator, stack_capacity) catch |err| { return err },
+        scope_count: 0,
+        scope_capacity: stack_capacity,
+        break_targets: zbackend_ir_cfg_allocate_i64_array(allocator, stack_capacity) catch |err| { return err },
+        continue_targets: zbackend_ir_cfg_allocate_i64_array(allocator, stack_capacity) catch |err| { return err },
+        loop_count: 0,
+        loop_capacity: stack_capacity,
+        active_catch_owner: ZAstNoIndex,
+        current_statement_index: declaration.stmt_start,
+        lower_catch_expression_fn: zbackend_ir_cfg_lower_catch_expression
+    }
+    entry: i64 = zbackend_ir_cfg_create_block(&context, "entry") catch |err| { return err }
+    zbackend_ir_cfg_activate_block(&context, entry) catch |err| { return err }
+    parameter_index: i64 = 0
+    while parameter_index < declaration.param_count {
+        parameter: ZAstParam = ast.params[declaration.param_start + parameter_index]
+        parameter_type_id: i64 = zbackend_ir_type_layout_type_id(
+            type_layout, ast, parameter.type_index
+        ) catch |err| { return err }
+        address_id: i64 = context.next_value_id
+        context.next_value_id = context.next_value_id + 1
+        zbackend_ir_cfg_append_instruction(
+            &context, zbackend_ir_new_instruction(address_id, "alloca", parameter_type_id)
+        ) catch |err| { return err }
+        store_id: i64 = context.next_value_id
+        context.next_value_id = context.next_value_id + 1
+        store: ZBackendIrInstruction = zbackend_ir_new_instruction(
+            store_id, "store", parameter_type_id
+        )
+        store.lhs = address_id
+        store.rhs = parameter_index + 1
+        zbackend_ir_cfg_append_instruction(&context, store) catch |err| { return err }
+        zbackend_ir_cfg_declare_local(
+            &context, parameter.name, address_id, parameter_type_id, false
+        ) catch |err| { return err }
+        parameter_index = parameter_index + 1
+    }
+    zbackend_ir_cfg_push_scope(&context) catch |err| { return err }
+    zbackend_ir_cfg_lower_sequence(
+        &context, declaration.stmt_start, declaration.stmt_start + declaration.stmt_count
+    ) catch |err| {
+        span: ZAstSpan = declaration.span
+        if context.current_statement_index >= declaration.stmt_start &&
+            context.current_statement_index < declaration.stmt_start + declaration.stmt_count {
+            span = ast.stmts[context.current_statement_index].span
+        }
+        zbackend_ir_set_failure_diagnostic(
+            diagnostic,
+            declaration,
+            span,
+            err,
+            "backend IR lowering does not support a source construct in this statement"
+        )
+        return err
+    }
+    zbackend_ir_cfg_pop_scope(&context) catch |err| { return err }
+    if context.current_block >= 0 {
+        if !context.returns_void { return error.NotImplemented }
+        zbackend_ir_cfg_terminate(
+            &context, zbackend_ir_new_terminator("return_void")
+        ) catch |err| { return err }
+    }
+
+    blocks_raw: *u8 = std.mem.HeapAllocator.alloc(
+        allocator, context.block_count * Builtin.sizeof(ZBackendIrBlock)
+    ) catch |err| { return error.OutOfMemory }
+    blocks: *ZBackendIrBlock = cast(*ZBackendIrBlock, blocks_raw)
+    block_index: i64 = 0
+    while block_index < context.block_count {
+        builder: ZBackendIrBlockBuilder = context.blocks[block_index]
+        if !builder.is_terminated { return error.InvalidArgument }
+        blocks[block_index] = ZBackendIrBlock{
+            id: builder.id,
+            name: builder.name,
+            instructions: builder.instructions,
+            instruction_count: builder.instruction_count,
+            terminator: builder.terminator
+        }
+        block_index = block_index + 1
+    }
+    return ZBackendIrFunction{
+        id: function_id,
+        name: function_name,
+        linkage: "external",
+        return_type: context.return_type_id,
+        parameters: parameters,
+        parameter_count: declaration.param_count,
+        blocks: blocks,
+        block_count: context.block_count
+    }
+}
+
+
+export fn zbackend_ir_lower_function(
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    declaration: ZAstDecl,
+    function_id: i64,
+    type_layout: *ZBackendIrTypeLayout,
+    generic_declaration_index: i64,
+    generic_suffix: ZAstText,
+    diagnostic: *ZDiagnostic
+) !ZBackendIrFunction {
+    previous_generic_declaration: i64 = type_layout.active_generic_declaration
+    previous_generic_suffix: ZAstText = type_layout.active_generic_suffix
+    type_layout.active_generic_declaration = generic_declaration_index
+    type_layout.active_generic_suffix = generic_suffix
+    function_name: string = zbackend_ir_copy_text(allocator, declaration.name) catch |err| { return err }
+    if generic_declaration_index != ZAstNoIndex {
+        builder: std.collections.StringBuilder = std.collections.StringBuilder.init(
+            allocator, declaration.name.len + 24
+        ) catch |err| { return error.OutOfMemory }
+        base_name: string = zbackend_ir_copy_text(
+            allocator, declaration.name
+        ) catch |err| { return err }
+        std.collections.StringBuilder.append(
+            &builder, allocator, base_name
+        ) catch |err| { return error.OutOfMemory }
+        std.collections.StringBuilder.append(
+            &builder, allocator, "$g$"
+        ) catch |err| { return error.OutOfMemory }
+        std.collections.StringBuilder.append_i64(
+            &builder, allocator, function_id
+        ) catch |err| { return error.OutOfMemory }
+        function_name = cast(string, std.collections.StringBuilder.c_string(
+            &builder, allocator
+        ) catch |err| { return error.OutOfMemory })
+    }
+
+    parameters: *ZBackendIrParameter = cast(*ZBackendIrParameter, 0)
+    if declaration.param_count > 0 {
+        parameters_raw: *u8 = std.mem.HeapAllocator.alloc(allocator, declaration.param_count * Builtin.sizeof(ZBackendIrParameter)) catch |err| {
+            return error.OutOfMemory
+        }
+        parameters = cast(*ZBackendIrParameter, parameters_raw)
+        parameter_index: i64 = 0
+        while declaration.param_count > parameter_index {
+            ast_parameter: ZAstParam = ast.params[declaration.param_start + parameter_index]
+            if ast_parameter.type_index == ZAstNoIndex { return error.NotImplemented }
+            parameter_name: string = zbackend_ir_copy_text(allocator, ast_parameter.name) catch |err| { return err }
+            parameter_type_id: i64 = zbackend_ir_type_layout_type_id(
+                type_layout, ast, ast_parameter.type_index
+            ) catch |err| { return err }
+            parameters[parameter_index] = ZBackendIrParameter{
+                id: parameter_index + 1,
+                name: parameter_name,
+                type_id: parameter_type_id
+            }
+            parameter_index = parameter_index + 1
+        }
+    }
+
+    if declaration.kind == ZAstDeclExternFunction {
+        result: ZBackendIrFunction = ZBackendIrFunction{
+            id: function_id,
+            name: function_name,
+            linkage: "external",
+            return_type: zbackend_ir_function_return_type_id(
+                type_layout, ast, declaration
+            ) catch |err| { return err },
+            parameters: parameters,
+            parameter_count: declaration.param_count,
+            blocks: cast(*ZBackendIrBlock, 0),
+            block_count: 0
+        }
+        type_layout.active_generic_declaration = previous_generic_declaration
+        type_layout.active_generic_suffix = previous_generic_suffix
+        return result
+    }
+
+    result: ZBackendIrFunction = zbackend_ir_cfg_lower_function(
+        allocator, ast, declaration, function_id, function_name, parameters, type_layout, diagnostic
+    ) catch |err| {
+        zbackend_ir_set_failure_diagnostic(
+            diagnostic,
+            declaration,
+            declaration.span,
+            err,
+            "backend IR lowering does not support this function declaration"
+        )
+        return err
+    }
+    type_layout.active_generic_declaration = previous_generic_declaration
+    type_layout.active_generic_suffix = previous_generic_suffix
+    return result
+}
+
+
+export fn zbackend_ir_zero_constant() -> ZBackendIrConstant {
+    return ZBackendIrConstant{
+        kind: "zero",
+        integer: 0,
+        text: "",
+        function_id: 0,
+        elements: cast(*ZBackendIrConstant, 0),
+        element_count: 0
+    }
+}
+
+
+export fn zbackend_ir_lower_global_initializer(
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    expression_index: i64,
+    type_layout: *ZBackendIrTypeLayout,
+    expected_type_id: i64
+) !ZBackendIrConstant {
+    if expression_index == ZAstNoIndex { return zbackend_ir_zero_constant() }
+    expression: ZAstExpr = ast.exprs[expression_index]
+    constant: ZBackendIrConstant = zbackend_ir_zero_constant()
+    function_value_name: ZAstText = zbackend_ir_resolved_function_value_name(
+        type_layout, expression_index
+    ) catch |err| { return err }
+    if function_value_name.len > 0 {
+        declaration: ZAstDecl = zbackend_ir_function_declaration(
+            ast, function_value_name
+        ) catch |err| { return err }
+        constant.kind = "function"
+        if declaration.generic_param_count > 0 {
+            suffix: ZAstText = ZAstText.empty()
+            if expression.type_index != ZAstNoIndex {
+                candidate_suffix: ZAstText = ast.types[expression.type_index].text
+                if candidate_suffix.len > 0 && candidate_suffix.ptr[0] == 60 {
+                    suffix = candidate_suffix
+                }
+            }
+            if suffix.len == 0 {
+                suffix = zbackend_ir_function_value_generic_suffix(
+                    type_layout, declaration, expected_type_id
+                ) catch |err| { return err }
+            }
+            constant.function_id = zbackend_ir_ensure_generic_instance_id(
+                type_layout, function_value_name, suffix
+            ) catch |err| { return err }
+        } else {
+            constant.function_id = zbackend_ir_function_id(
+                ast, function_value_name
+            ) catch |err| { return err }
+        }
+        return constant
+    }
+    if expression.kind == ZAstExprInteger {
+        constant.kind = "integer"
+        constant.integer = zbackend_ir_parse_positive_integer(
+            expression.literal
+        ) catch |err| { return err }
+        return constant
+    }
+    if expression.kind == ZAstExprBinary ||
+        (expression.kind == ZAstExprIdentifier &&
+            !zbackend_ir_is_function_name(ast, expression.name)) {
+        constant.kind = "integer"
+        constant.integer = zbackend_ir_eval_constant_integer(
+            ast, expression_index, ZBACKEND_IR_MAX_CONSTANT_EVALUATION_DEPTH,
+            ZAstNoIndex, ZAstNoIndex
+        ) catch |err| { return err }
+        return constant
+    }
+    if expression.kind == ZAstExprBool {
+        constant.kind = "integer"
+        if expression.literal.len == 4 { constant.integer = 1 }
+        return constant
+    }
+    if expression.kind == ZAstExprString {
+        constant.kind = "string"
+        constant.text = zbackend_ir_copy_text(
+            allocator, expression.literal
+        ) catch |err| { return err }
+        return constant
+    }
+    if expression.kind == ZAstExprUnary && expression.op == ZTokenMinus &&
+        expression.left != ZAstNoIndex {
+        operand: ZAstExpr = ast.exprs[expression.left]
+        if operand.kind != ZAstExprInteger { return error.NotImplemented }
+        constant.kind = "integer"
+        constant.integer = zbackend_ir_parse_negative_integer(
+            operand.literal
+        ) catch |err| { return err }
+        return constant
+    }
+    if expression.kind == ZAstExprCast && expression.left != ZAstNoIndex {
+        operand: ZAstExpr = ast.exprs[expression.left]
+        if operand.kind == ZAstExprInteger {
+            constant.integer = zbackend_ir_parse_positive_integer(
+                operand.literal
+            ) catch |err| { return err }
+            if constant.integer == 0 {
+                constant.kind = "zero"
+            } else {
+                constant.kind = "pointer_integer"
+            }
+            return constant
+        }
+        if operand.kind == ZAstExprString {
+            constant.kind = "string"
+            constant.text = zbackend_ir_copy_text(
+                allocator, operand.literal
+            ) catch |err| { return err }
+            return constant
+        }
+    }
+    if expression.kind == ZAstExprStructLiteral {
+        if expected_type_id <= 0 || expected_type_id > type_layout.type_count {
+            return error.InvalidArgument
+        }
+        nominal_type: ZBackendIrType = type_layout.types[expected_type_id - 1]
+        if nominal_type.kind != "struct" && nominal_type.kind != "union" {
+            return error.NotImplemented
+        }
+        constant.kind = "aggregate"
+        if nominal_type.kind == "union" {
+            if expression.arg_count != 1 { return error.InvalidArgument }
+            variant_index: i64 = zbackend_ir_type_field_index(
+                type_layout, expected_type_id,
+                ast.literal_fields[expression.field_start].name
+            ) catch |err| { return err }
+            constant.element_count = nominal_type.field_count + 1
+            elements_raw: *u8 = std.mem.HeapAllocator.alloc(
+                allocator,
+                constant.element_count * Builtin.sizeof(ZBackendIrConstant)
+            ) catch |err| { return error.OutOfMemory }
+            constant.elements = cast(*ZBackendIrConstant, elements_raw)
+            constant.elements[0] = zbackend_ir_zero_constant()
+            constant.elements[0].kind = "integer"
+            constant.elements[0].integer = variant_index
+            field_index: i64 = 0
+            while field_index < nominal_type.field_count {
+                if field_index == variant_index {
+                    constant.elements[field_index + 1] =
+                        zbackend_ir_lower_global_initializer(
+                            allocator, ast,
+                            ast.literal_fields[expression.field_start].value_expr,
+                            type_layout, nominal_type.fields[field_index].type_id
+                        ) catch |err| { return err }
+                } else {
+                    constant.elements[field_index + 1] = zbackend_ir_zero_constant()
+                }
+                field_index = field_index + 1
+            }
+            return constant
+        }
+        constant.element_count = nominal_type.field_count
+        if constant.element_count > 0 {
+            elements_raw: *u8 = std.mem.HeapAllocator.alloc(
+                allocator,
+                constant.element_count * Builtin.sizeof(ZBackendIrConstant)
+            ) catch |err| { return error.OutOfMemory }
+            constant.elements = cast(*ZBackendIrConstant, elements_raw)
+        }
+        field_index: i64 = 0
+        while field_index < nominal_type.field_count {
+            literal_field_index: i64 = expression.field_start
+            found_expression: i64 = ZAstNoIndex
+            while literal_field_index != ZAstNoIndex {
+                literal_field: ZAstLiteralField = ast.literal_fields[literal_field_index]
+                if ZAstText.eql_string(
+                    literal_field.name, nominal_type.fields[field_index].name
+                ) {
+                    found_expression = literal_field.value_expr
+                    literal_field_index = ZAstNoIndex
+                } else {
+                    literal_field_index = literal_field.next_index
+                }
+            }
+            if found_expression == ZAstNoIndex { return error.InvalidArgument }
+            constant.elements[field_index] = zbackend_ir_lower_global_initializer(
+                allocator, ast, found_expression, type_layout,
+                nominal_type.fields[field_index].type_id
+            ) catch |err| { return err }
+            field_index = field_index + 1
+        }
+        return constant
+    }
+    if expression.kind == ZAstExprArrayLiteral {
+        constant.kind = "aggregate"
+        constant.element_count = expression.arg_count
+        if expression.arg_count > 0 {
+            elements_raw: *u8 = std.mem.HeapAllocator.alloc(
+                allocator, expression.arg_count * Builtin.sizeof(ZBackendIrConstant)
+            ) catch |err| { return error.OutOfMemory }
+            constant.elements = cast(*ZBackendIrConstant, elements_raw)
+            element_type_id: i64 = zbackend_ir_type_layout_element_type(
+                type_layout, expected_type_id
+            ) catch |err| { return err }
+            element_index: i64 = 0
+            while element_index < expression.arg_count {
+                constant.elements[element_index] = zbackend_ir_lower_global_initializer(
+                    allocator,
+                    ast,
+                    ast.expr_args[expression.arg_start + element_index],
+                    type_layout,
+                    element_type_id
+                ) catch |err| { return err }
+                element_index = element_index + 1
+            }
+        }
+        return constant
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_lower_global(
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    declaration: ZAstDecl,
+    global_id: i64,
+    type_layout: *ZBackendIrTypeLayout
+) !ZBackendIrGlobal {
+    if declaration.type_index == ZAstNoIndex { return error.InvalidArgument }
+    linkage: string = "internal"
+    if declaration.exported { linkage = "external" }
+    type_id: i64 = zbackend_ir_type_layout_type_id(
+        type_layout, ast, declaration.type_index
+    ) catch |err| { return err }
+    return ZBackendIrGlobal{
+        id: global_id,
+        name: zbackend_ir_copy_text(
+            allocator, declaration.name
+        ) catch |err| { return err },
+        type_id: type_id,
+        linkage: linkage,
+        is_constant: declaration.kind == ZAstDeclConst,
+        initializer: zbackend_ir_lower_global_initializer(
+            allocator, ast, declaration.init_expr, type_layout, type_id
+        ) catch |err| { return err }
+    }
+}

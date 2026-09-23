@@ -1,0 +1,45 @@
+import "../ast/types.zorb"
+import "../token.zorb"
+
+export struct ZParser {
+    tokens: *ZTokenList,
+    index: i64,
+    import_count: i64,
+    extern_count: i64,
+    error_count: i64,
+    const_count: i64,
+    global_count: i64,
+    struct_count: i64,
+    enum_count: i64,
+    union_count: i64,
+    last_function_locals: i64,
+    current_call_count: i64,
+    current_binary_count: i64,
+    function_count: i64,
+    parse_error_count: i64,
+    first_error_line: i64,
+    first_error_column: i64,
+    first_error_length: i64,
+    last_expression_had_catch: bool,
+    last_expression_catch_span: ZAstSpan,
+    last_statement_had_attributes: bool,
+    last_declaration_attribute_expr: i64,
+    active_decl: *ZAstDecl,
+    last_attribute_is_explicit_layout: bool,
+    // Parser tracing remains useful for the standalone dogfood fixtures, but
+    // a compilation session must not mix it into diagnostic or JSON output.
+    emit_debug: bool
+}
+
+
+export struct ZParserExpressionBuffer {
+    values: *i64,
+    count: i64,
+    capacity: i64
+}
+
+
+export struct ZParserExpressionRange {
+    start: i64,
+    count: i64
+}

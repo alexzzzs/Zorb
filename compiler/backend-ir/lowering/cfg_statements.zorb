@@ -1,0 +1,540 @@
+import "../../../runtime/std/errors.zorb"
+import "../../../runtime/std/collections.zorb"
+import "../../../runtime/std/mem.zorb"
+import "../../../runtime/std/str.zorb"
+import "../../ast/types.zorb"
+import "../../ast.zorb"
+import "../../ast/resolution.zorb"
+import "../../ast/arena.zorb"
+import "../../ast/type_check.zorb"
+import "../../ast/statement_check.zorb"
+import "../../ast/validation.zorb"
+import "../../ast/warnings.zorb"
+import "../../frontend/diagnostic.zorb"
+import "../../token.zorb"
+import "../model.zorb"
+import "types.zorb"
+import "core.zorb"
+import "type_text.zorb"
+import "generics.zorb"
+import "expression_support.zorb"
+import "cfg_helpers.zorb"
+import "cfg_expressions.zorb"
+
+export fn zbackend_ir_cfg_lower_expression(
+    context: *ZBackendIrControlFlowLowering,
+    expression_index: i64
+) !i64 {
+    operand_type_id: i64 = zbackend_ir_cfg_expression_operand_type_id(
+        context, expression_index, context.return_payload_type_id
+    ) catch |err| { return err }
+    return zbackend_ir_cfg_lower_expression_as(
+        context,
+        expression_index,
+        operand_type_id
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_branch_from(
+    context: *ZBackendIrControlFlowLowering,
+    block_index: i64,
+    target: i64
+) !i64 {
+    if block_index < 0 { return 0 }
+    zbackend_ir_cfg_activate_block(context, block_index + 1) catch |err| { return err }
+    return zbackend_ir_cfg_branch(context, target) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_push_scope(context: *ZBackendIrControlFlowLowering) !i64 {
+    if context.scope_count >= context.scope_capacity { return error.OutOfBounds }
+    context.scope_starts[context.scope_count] = context.local_count
+    context.scope_count = context.scope_count + 1
+    return 0
+}
+
+
+export fn zbackend_ir_cfg_pop_scope(context: *ZBackendIrControlFlowLowering) !i64 {
+    if context.scope_count <= 0 { return error.InvalidArgument }
+    context.scope_count = context.scope_count - 1
+    context.local_count = context.scope_starts[context.scope_count]
+    return 0
+}
+
+
+export fn zbackend_ir_cfg_declare_local(
+    context: *ZBackendIrControlFlowLowering,
+    name: ZAstText,
+    address: i64,
+    type_id: i64,
+    is_catch_error: bool
+) !i64 {
+    if context.local_count >= context.local_capacity { return error.OutOfBounds }
+    context.local_names[context.local_count] = name
+    context.local_addresses[context.local_count] = address
+    context.local_type_ids[context.local_count] = type_id
+    if is_catch_error {
+        context.local_is_catch_errors[context.local_count] = 1
+    } else {
+        context.local_is_catch_errors[context.local_count] = 0
+    }
+    context.local_count = context.local_count + 1
+    return 0
+}
+
+
+export fn zbackend_ir_cfg_push_loop(
+    context: *ZBackendIrControlFlowLowering,
+    break_target: i64,
+    continue_target: i64
+) !i64 {
+    if context.loop_count >= context.loop_capacity { return error.OutOfBounds }
+    context.break_targets[context.loop_count] = break_target
+    context.continue_targets[context.loop_count] = continue_target
+    context.loop_count = context.loop_count + 1
+    return 0
+}
+
+
+export fn zbackend_ir_cfg_pop_loop(context: *ZBackendIrControlFlowLowering) !i64 {
+    if context.loop_count <= 0 { return error.InvalidArgument }
+    context.loop_count = context.loop_count - 1
+    return 0
+}
+
+
+export fn zbackend_ir_cfg_lower_variable(
+    context: *ZBackendIrControlFlowLowering,
+    statement: ZAstStmt
+) !i64 {
+    if statement.type_index == ZAstNoIndex { return error.NotImplemented }
+    type_id: i64 = zbackend_ir_cfg_type_id(context, statement.type_index) catch |err| { return err }
+    address: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    zbackend_ir_cfg_append_instruction(
+        context, zbackend_ir_new_instruction(address, "alloca", type_id)
+    ) catch |err| { return err }
+    if statement.expr_index != ZAstNoIndex {
+    initializer: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, statement.expr_index, type_id
+    ) catch |err| { return err }
+        store_id: i64 = context.next_value_id
+        context.next_value_id = context.next_value_id + 1
+        store: ZBackendIrInstruction = zbackend_ir_new_instruction(store_id, "store", type_id)
+        store.lhs = address
+        store.rhs = initializer
+        zbackend_ir_cfg_append_instruction(context, store) catch |err| { return err }
+    }
+    return zbackend_ir_cfg_declare_local(
+        context, statement.name, address, type_id, false
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_lower_assignment(
+    context: *ZBackendIrControlFlowLowering,
+    statement: ZAstStmt
+) !i64 {
+    if statement.expr_index == ZAstNoIndex || statement.value_expr == ZAstNoIndex { return error.NotImplemented }
+    type_id: i64 = zbackend_ir_cfg_expression_type_id(
+        context, statement.expr_index, context.return_payload_type_id
+    ) catch |err| { return err }
+    address: i64 = zbackend_ir_cfg_lower_address(
+        context, statement.expr_index, type_id
+    ) catch |err| { return err }
+    value: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, statement.value_expr, type_id
+    ) catch |err| { return err }
+    store_id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    store: ZBackendIrInstruction = zbackend_ir_new_instruction(store_id, "store", type_id)
+    store.lhs = address
+    store.rhs = value
+    return zbackend_ir_cfg_append_instruction(context, store) catch |err| { return err }
+}
+
+
+// Zorb assembly templates use GCC-style %0/%b0 operand placeholders and a
+// single '$' for target immediates. LLVM uses $0/${0:b} placeholders and '$$'
+// for a literal dollar sign, so normalize at the frontend/backend boundary.
+export fn zbackend_ir_convert_asm_template(
+    allocator: *std.mem.HeapAllocator,
+    template: ZAstText
+) !string {
+    builder: std.collections.StringBuilder = std.collections.StringBuilder.init(
+        allocator, template.len * 2 + 1
+    ) catch |err| { return error.OutOfMemory }
+    index: i64 = 0
+    while index < template.len {
+        ch: u8 = template.ptr[index]
+        if ch == 36 {
+            std.collections.StringBuilder.append(
+                &builder, allocator, "$$"
+            ) catch |err| { return error.OutOfMemory }
+            index = index + 1
+            continue
+        }
+        if ch == 37 && index + 1 < template.len && template.ptr[index + 1] == 37 {
+            std.collections.ByteList.append_byte(
+                &builder.bytes, allocator, 37
+            ) catch |err| { return error.OutOfMemory }
+            index = index + 2
+            continue
+        }
+        if ch == 37 {
+            digit_start: i64 = index + 1
+            byte_modifier: bool = false
+            if digit_start < template.len && template.ptr[digit_start] == 98 {
+                byte_modifier = true
+                digit_start = digit_start + 1
+            }
+            digit_end: i64 = digit_start
+            while digit_end < template.len && template.ptr[digit_end] >= 48 &&
+                template.ptr[digit_end] <= 57 {
+                digit_end = digit_end + 1
+            }
+            if digit_end > digit_start {
+                std.collections.ByteList.append_byte(
+                    &builder.bytes, allocator, 36
+                ) catch |err| { return error.OutOfMemory }
+                if byte_modifier {
+                    std.collections.ByteList.append_byte(
+                        &builder.bytes, allocator, 123
+                    ) catch |err| { return error.OutOfMemory }
+                }
+                digit_index: i64 = digit_start
+                while digit_index < digit_end {
+                    std.collections.ByteList.append_byte(
+                        &builder.bytes, allocator, template.ptr[digit_index]
+                    ) catch |err| { return error.OutOfMemory }
+                    digit_index = digit_index + 1
+                }
+                if byte_modifier {
+                    std.collections.StringBuilder.append(
+                        &builder, allocator, ":b}"
+                    ) catch |err| { return error.OutOfMemory }
+                }
+                index = digit_end
+                continue
+            }
+        }
+        std.collections.ByteList.append_byte(
+            &builder.bytes, allocator, ch
+        ) catch |err| { return error.OutOfMemory }
+        index = index + 1
+    }
+    return cast(string, std.collections.StringBuilder.c_string(
+        &builder, allocator
+    ) catch |err| { return error.OutOfMemory })
+}
+
+
+// LLVM treats single-letter GCC register constraints as register classes.
+// Preserve output modifiers while spelling the fixed x86 registers explicitly,
+// matching the stage-0 lowering contract.
+export fn zbackend_ir_convert_asm_constraint(
+    allocator: *std.mem.HeapAllocator,
+    constraint: string,
+    is_x86: bool
+) !string {
+    constraint_bytes: *u8 = cast(*u8, constraint)
+    prefix_length: i64 = 0
+    while prefix_length < std.str.len(constraint) &&
+        (constraint_bytes[prefix_length] == 61 || constraint_bytes[prefix_length] == 43 ||
+        constraint_bytes[prefix_length] == 38) {
+        // LLVM output constraints do not support GCC's read-write '+' modifier.
+        if constraint_bytes[prefix_length] == 43 { return error.NotImplemented }
+        prefix_length = prefix_length + 1
+    }
+    if !is_x86 { return constraint }
+    body_length: i64 = std.str.len(constraint) - prefix_length
+    if body_length != 1 { return constraint }
+    register_name: string = ""
+    body: u8 = constraint_bytes[prefix_length]
+    if body == 97 { register_name = "ax" }
+    else if body == 98 { register_name = "bx" }
+    else if body == 99 { register_name = "cx" }
+    else if body == 100 { register_name = "dx" }
+    else if body == 83 { register_name = "si" }
+    else if body == 68 { register_name = "di" }
+    if std.str.len(register_name) == 0 { return constraint }
+
+    builder: std.collections.StringBuilder = std.collections.StringBuilder.init(
+        allocator, prefix_length + std.str.len(register_name) + 3
+    ) catch |err| { return error.OutOfMemory }
+    index: i64 = 0
+    while index < prefix_length {
+        std.collections.ByteList.append_byte(
+            &builder.bytes, allocator, constraint_bytes[index]
+        ) catch |err| { return error.OutOfMemory }
+        index = index + 1
+    }
+    std.collections.StringBuilder.append(
+        &builder, allocator, "{"
+    ) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(
+        &builder, allocator, register_name
+    ) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(
+        &builder, allocator, "}"
+    ) catch |err| { return error.OutOfMemory }
+    return cast(string, std.collections.StringBuilder.c_string(
+        &builder, allocator
+    ) catch |err| { return error.OutOfMemory })
+}
+
+
+export fn zbackend_ir_cfg_lower_asm(
+    context: *ZBackendIrControlFlowLowering,
+    statement: ZAstStmt
+) !i64 {
+    output_types: *i64 = zbackend_ir_cfg_allocate_i64_array(
+        context.allocator, statement.asm_output_count
+    ) catch |err| { return err }
+    output_addresses: *i64 = zbackend_ir_cfg_allocate_i64_array(
+        context.allocator, statement.asm_output_count
+    ) catch |err| { return err }
+    operand_index: i64 = 0
+    while operand_index < statement.asm_output_count {
+        expression_index: i64 = context.ast.expr_args[statement.asm_output_start + operand_index]
+        output_types[operand_index] = zbackend_ir_cfg_expression_type_id(
+            context, expression_index, context.return_payload_type_id
+        ) catch |err| { return err }
+        output_addresses[operand_index] = zbackend_ir_cfg_lower_address(
+            context, expression_index, output_types[operand_index]
+        ) catch |err| { return err }
+        operand_index = operand_index + 1
+    }
+    arguments: *i64 = zbackend_ir_cfg_allocate_i64_array(
+        context.allocator, statement.asm_input_count
+    ) catch |err| { return err }
+    operand_index = 0
+    while operand_index < statement.asm_input_count {
+        expression_index: i64 = context.ast.expr_args[statement.asm_input_start + operand_index]
+        expression: ZAstExpr = context.ast.exprs[expression_index]
+        is_negative_integer: bool = expression.kind == ZAstExprUnary &&
+            expression.op == ZTokenMinus && expression.left != ZAstNoIndex &&
+            context.ast.exprs[expression.left].kind == ZAstExprInteger
+        is_integer_literal: bool = expression.kind == ZAstExprInteger || is_negative_integer
+        input_fallback_type_id: i64 = context.return_payload_type_id
+        if is_integer_literal {
+            input_fallback_type_id = zbackend_ir_type_layout_intern_scalar(
+                context.type_layout, "i64"
+            ) catch |err| { return err }
+        }
+        input_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+            context, expression_index, input_fallback_type_id
+        ) catch |err| { return err }
+        if is_integer_literal {
+            literal_value: i64 = 0
+            if is_negative_integer {
+                literal_value = zbackend_ir_parse_negative_integer(
+                    context.ast.exprs[expression.left].literal
+                ) catch |err| { return err }
+            } else {
+                literal_value = zbackend_ir_parse_positive_integer(
+                    expression.literal
+                ) catch |err| { return err }
+            }
+            arguments[operand_index] = zbackend_ir_cfg_emit_integer_constant(
+                context, literal_value, input_type_id
+            ) catch |err| { return err }
+        } else {
+            arguments[operand_index] = zbackend_ir_cfg_lower_expression_as(
+                context, expression_index, input_type_id
+            ) catch |err| { return err }
+        }
+        input_type: ZBackendIrType = context.type_layout.types[input_type_id - 1]
+        if input_type.kind == "scalar" && zbackend_ir_scalar_bit_width(input_type.scalar) > 0 &&
+            zbackend_ir_scalar_bit_width(input_type.scalar) < 32 {
+            promoted_name: string = "u32"
+            if zbackend_ir_scalar_name_is_signed(input_type.scalar) { promoted_name = "i32" }
+            promoted_type_id: i64 = zbackend_ir_type_layout_intern_scalar(
+                context.type_layout, promoted_name
+            ) catch |err| { return err }
+            arguments[operand_index] = zbackend_ir_cfg_emit_cast_value(
+                context, arguments[operand_index], input_type_id, promoted_type_id
+            ) catch |err| { return err }
+        }
+        operand_index = operand_index + 1
+    }
+    constraint_builder: std.collections.StringBuilder = std.collections.StringBuilder.init(
+        context.allocator, 32
+    ) catch |err| { return error.OutOfMemory }
+    constraint_index: i64 = 0
+    total_constraints: i64 = statement.asm_output_count + statement.asm_input_count +
+        statement.asm_clobber_count
+    while constraint_index < total_constraints {
+        if constraint_index > 0 {
+            std.collections.StringBuilder.append(
+                &constraint_builder, context.allocator, ","
+            ) catch |err| { return error.OutOfMemory }
+        }
+        expression_index: i64 = 0
+        if constraint_index < statement.asm_output_count {
+            expression_index = context.ast.expr_args[statement.asm_output_start + constraint_index]
+        } else if constraint_index < statement.asm_output_count + statement.asm_input_count {
+            expression_index = context.ast.expr_args[
+                statement.asm_input_start + constraint_index - statement.asm_output_count
+            ]
+        } else {
+            expression_index = context.ast.expr_args[
+                statement.asm_clobber_start + constraint_index -
+                    statement.asm_output_count - statement.asm_input_count
+            ]
+        }
+        constraint_text: ZAstText = context.ast.exprs[expression_index].asm_constraint
+        if constraint_text.len == 0 {
+            constraint_text = context.ast.exprs[expression_index].literal
+        }
+        constraint: string = zbackend_ir_copy_text(
+            context.allocator, constraint_text
+        ) catch |err| { return err }
+        if constraint_index >= statement.asm_output_count + statement.asm_input_count {
+            std.collections.StringBuilder.append(
+                &constraint_builder, context.allocator, "~{"
+            ) catch |err| { return error.OutOfMemory }
+            std.collections.StringBuilder.append(
+                &constraint_builder, context.allocator, constraint
+            ) catch |err| { return error.OutOfMemory }
+            std.collections.StringBuilder.append(
+                &constraint_builder, context.allocator, "}"
+            ) catch |err| { return error.OutOfMemory }
+        } else {
+            constraint = zbackend_ir_convert_asm_constraint(
+                context.allocator, constraint,
+                std.str.starts_with(context.type_layout.target_triple, "x86_64")
+            ) catch |err| { return err }
+            std.collections.StringBuilder.append(
+                &constraint_builder, context.allocator, constraint
+            ) catch |err| { return error.OutOfMemory }
+        }
+        constraint_index = constraint_index + 1
+    }
+    constraints: string = cast(string, std.collections.StringBuilder.c_string(
+        &constraint_builder, context.allocator
+    ) catch |err| { return error.OutOfMemory })
+    id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        id, "inline_asm", context.type_layout.void_type_id
+    )
+    instruction.asm_template = zbackend_ir_convert_asm_template(
+        context.allocator, statement.name
+    ) catch |err| { return err }
+    instruction.constraints = constraints
+    instruction.arguments = arguments
+    instruction.argument_count = statement.asm_input_count
+    instruction.output_types = output_types
+    instruction.output_addresses = output_addresses
+    instruction.output_count = statement.asm_output_count
+    return zbackend_ir_cfg_append_instruction(context, instruction) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_expand_else_if_end(
+    ast: *ZAstModule,
+    body_start: i64,
+    body_end: i64,
+    statement_end: i64
+) -> i64 {
+    if body_start >= body_end || body_end >= statement_end { return body_end }
+    nested_if: ZAstStmt = ast.stmts[body_start]
+    if nested_if.kind != ZAstStmtIf || nested_if.child_start + nested_if.child_count != body_end ||
+        ast.stmts[body_end].kind != ZAstStmtElse {
+        return body_end
+    }
+    nested_else: ZAstStmt = ast.stmts[body_end]
+    return zbackend_ir_cfg_expand_else_if_end(
+        ast,
+        nested_else.child_start,
+        nested_else.child_start + nested_else.child_count,
+        statement_end
+    )
+}
+
+
+export fn zbackend_ir_cfg_emit_equal(
+    context: *ZBackendIrControlFlowLowering,
+    lhs: i64,
+    rhs: i64
+) !i64 {
+    id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    instruction: ZBackendIrInstruction = zbackend_ir_new_instruction(id, "compare", context.bool_type_id)
+    instruction.compare_op = "equal"
+    instruction.lhs = lhs
+    instruction.rhs = rhs
+    return zbackend_ir_cfg_append_instruction(context, instruction) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_cfg_lower_return(
+    context: *ZBackendIrControlFlowLowering,
+    statement: ZAstStmt
+) !i64 {
+    if context.returns_void {
+        if statement.expr_index != ZAstNoIndex { return error.NotImplemented }
+        return zbackend_ir_cfg_terminate(
+            context, zbackend_ir_new_terminator("return_void")
+        ) catch |err| { return err }
+    }
+    if statement.expr_index == ZAstNoIndex { return error.NotImplemented }
+    if !context.returns_error_union {
+        value: i64 = zbackend_ir_cfg_lower_expression_as(
+            context, statement.expr_index, context.return_payload_type_id
+        ) catch |err| { return err }
+        return zbackend_ir_cfg_terminate(
+            context, zbackend_ir_return_terminator(value)
+        ) catch |err| { return err }
+    }
+
+    expression: ZAstExpr = context.ast.exprs[statement.expr_index]
+    if zbackend_ir_expression_is_error_union_call(context.type_layout, expression) {
+        result: i64 = zbackend_ir_cfg_lower_expression_as(
+            context, statement.expr_index, context.error_union_type_id
+        ) catch |err| { return err }
+        return zbackend_ir_cfg_terminate(
+            context, zbackend_ir_return_terminator(result)
+        ) catch |err| { return err }
+    }
+
+    values: *i64 = zbackend_ir_cfg_allocate_i64_array(context.allocator, 2) catch |err| { return err }
+    if expression.kind == ZAstExprError {
+        values[0] = zbackend_ir_cfg_emit_zero_constant(
+            context, context.return_payload_type_id
+        ) catch |err| { return err }
+        error_value: i64 = zbackend_ir_error_value(context.ast, expression.name) catch |err| { return err }
+        values[1] = zbackend_ir_cfg_emit_integer_constant(
+            context, error_value, context.error_type_id
+        ) catch |err| { return err }
+    } else if expression.kind == ZAstExprIdentifier &&
+        zbackend_ir_has_local(context.local_names, context.local_count, expression.name) &&
+        zbackend_ir_local_is_catch_error(
+            context.local_names,
+            context.local_is_catch_errors,
+            context.local_count,
+            expression.name
+        ) {
+        values[0] = zbackend_ir_cfg_emit_zero_constant(
+            context, context.return_payload_type_id
+        ) catch |err| { return err }
+        values[1] = zbackend_ir_cfg_lower_expression_as(
+            context, statement.expr_index, context.error_type_id
+        ) catch |err| { return err }
+    } else {
+        values[0] = zbackend_ir_cfg_lower_expression_as(
+            context, statement.expr_index, context.return_payload_type_id
+        ) catch |err| { return err }
+        values[1] = zbackend_ir_cfg_emit_integer_constant(
+            context, 0, context.error_type_id
+        ) catch |err| { return err }
+    }
+    result: i64 = zbackend_ir_cfg_emit_aggregate(
+        context, context.error_union_type_id, values, 2
+    ) catch |err| { return err }
+    return zbackend_ir_cfg_terminate(
+        context, zbackend_ir_return_terminator(result)
+    ) catch |err| { return err }
+}

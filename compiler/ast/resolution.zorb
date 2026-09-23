@@ -1,0 +1,681 @@
+import "../../runtime/std/errors.zorb"
+import "../../runtime/std/mem.zorb"
+import "../../runtime/std/str.zorb"
+import "../token.zorb"
+import "types.zorb"
+import "../ast.zorb"
+
+export fn zast_is_integer_type(name: ZAstText) -> bool {
+    name = zast_type_text_unwrap(name)
+    if ZAstText.eql_string(name, "i8") { return true }
+    if ZAstText.eql_string(name, "i16") { return true }
+    if ZAstText.eql_string(name, "i32") { return true }
+    if ZAstText.eql_string(name, "i64") { return true }
+    if ZAstText.eql_string(name, "u8") { return true }
+    if ZAstText.eql_string(name, "u16") { return true }
+    if ZAstText.eql_string(name, "u32") { return true }
+    if ZAstText.eql_string(name, "u64") { return true }
+    return false
+}
+
+
+export fn zast_is_intrinsic_function(name: ZAstText) -> bool {
+    return ZAstText.eql_string(name, "syscall")
+}
+
+
+export fn zast_expr_is_builtin_member(self: *ZAstModule, expr_index: i64, member_name: string) -> bool {
+    if expr_index == ZAstNoIndex {
+        return false
+    }
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind != ZAstExprField || !ZAstText.eql_string(expr.name, member_name) || expr.left == ZAstNoIndex {
+        return false
+    }
+    base: ZAstExpr = self.exprs[expr.left]
+    return base.kind == ZAstExprIdentifier && ZAstText.eql_string(base.name, "Builtin")
+}
+
+
+export fn zast_qualified_decl_index(self: *ZAstModule, expr_index: i64) -> i64 {
+    index: i64 = 0
+    while index < self.len {
+        if zast_expr_matches_qualified_name(self, expr_index, self.decls[index].name) {
+            return index
+        }
+        index = index + 1
+    }
+    return ZAstNoIndex
+}
+
+
+// Calls may target a local, parameter, or global function value. Keep this
+// lookup separate from declaration-function lookup: only the latter has a
+// callable declaration signature whose arity is available in this module.
+export fn zast_function_value_type(self: *ZAstModule, decl: ZAstDecl, name: ZAstText, through_stmt: i64) -> ZAstText {
+    p: i64 = 0
+    while p < decl.param_count {
+        param: ZAstParam = self.params[decl.param_start + p]
+        if zast_text_same(param.name, name) && zast_is_function_type(zast_decl_type_text(self, param.type_index)) {
+            return zast_decl_type_text(self, param.type_index)
+        }
+        p = p + 1
+    }
+
+    query_index: i64 = decl.stmt_start + through_stmt
+    query_catch_owner: i64 = ZAstNoIndex
+    if query_index >= decl.stmt_start && query_index < decl.stmt_start + decl.stmt_count {
+        query_catch_owner = self.stmts[query_index].catch_owner
+    }
+    s: i64 = 0
+    while s < through_stmt {
+        stmt: ZAstStmt = self.stmts[decl.stmt_start + s]
+        if stmt.kind == ZAstStmtVar &&
+            (query_catch_owner != ZAstNoIndex || stmt.catch_owner == ZAstNoIndex) &&
+            zast_text_same(stmt.name, name) &&
+            zast_is_function_type(zast_decl_type_text(self, stmt.type_index)) {
+            return zast_decl_type_text(self, stmt.type_index)
+        }
+        s = s + 1
+    }
+
+    declaration_index: i64 = ZAstModule.find_decl(self, name)
+    if declaration_index != ZAstNoIndex && (self.decls[declaration_index].kind == ZAstDeclConst || self.decls[declaration_index].kind == ZAstDeclGlobal) && zast_is_function_type(zast_decl_type_text(self, self.decls[declaration_index].type_index)) {
+        return zast_decl_type_text(self, self.decls[declaration_index].type_index)
+    }
+    return ZAstText.empty()
+}
+
+
+export fn zast_function_type_return(type_text: ZAstText) -> ZAstText {
+    index: i64 = 0
+    while index + 1 < type_text.len {
+        if type_text.ptr[index] == 45 && type_text.ptr[index + 1] == 62 {
+            result: ZAstText
+            result.ptr = type_text.ptr + index + 2
+            result.len = type_text.len - index - 2
+            return zast_text_skip_ws(result)
+        }
+        index = index + 1
+    }
+    return ZAstText.empty()
+}
+
+
+export fn zast_expr_is_error_union(self: *ZAstModule, expr_index: i64) -> bool {
+    if expr_index == ZAstNoIndex { return false }
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind != ZAstExprCall { return false }
+    declaration_index: i64 = ZAstNoIndex
+    if expr.name.len > 0 {
+        declaration_index = zast_function_name_known(self, expr.name)
+    } else if expr.left != ZAstNoIndex {
+        declaration_index = zast_qualified_decl_index(self, expr.left)
+    }
+    if declaration_index == ZAstNoIndex { return false }
+    if self.decls[declaration_index].is_imported &&
+        self.decls[declaration_index].kind != ZAstDeclFunction &&
+        self.decls[declaration_index].kind != ZAstDeclExternFunction {
+        return true
+    }
+    return self.decls[declaration_index].return_is_error_union
+}
+
+
+export fn zast_is_pointer_type(type_text: ZAstText) -> bool {
+    type_text = zast_text_skip_ws(type_text)
+    return type_text.len > 0 && type_text.ptr[0] == 42
+}
+
+
+// Resolve the directly returned generic parameter from either an explicit
+// suffix or the call argument whose declared parameter is that same generic
+// parameter. This is the allocation-free core used by generic `T -> T` and
+// `(..., U) -> U` inference.
+export fn zast_call_direct_generic_result_type(self: *ZAstModule, decl: ZAstDecl, call: ZAstExpr, through_decl: ZAstDecl, through_stmt: i64) -> ZAstText {
+    result_type: ZAstText = zast_decl_type_text(self, decl.return_type_index)
+    generic_index: i64 = zast_decl_generic_param_index(self, decl, result_type)
+    if generic_index == ZAstNoIndex { return ZAstText.empty() }
+    if call.left != ZAstNoIndex {
+        callee: ZAstExpr = self.exprs[call.left]
+        if callee.type_index != ZAstNoIndex {
+            explicit_argument: ZAstText = zast_generic_argument_at(self.types[callee.type_index].text, generic_index)
+            if explicit_argument.len > 0 { return explicit_argument }
+        }
+    }
+    parameter_index: i64 = 0
+    while parameter_index < decl.param_count && parameter_index < call.arg_count {
+        parameter_type: ZAstText = zast_decl_type_text(self, self.params[decl.param_start + parameter_index].type_index)
+        if zast_decl_generic_param_index(self, decl, parameter_type) == generic_index {
+            return zast_expr_type_text(self, through_decl, self.expr_args[call.arg_start + parameter_index], through_stmt)
+        }
+        if zast_decl_generic_param_index(self, decl, zast_type_text_unwrap(parameter_type)) == generic_index {
+            argument_type: ZAstText = zast_expr_type_text(self, through_decl, self.expr_args[call.arg_start + parameter_index], through_stmt)
+            return zast_type_text_unwrap(argument_type)
+        }
+        parameter_index = parameter_index + 1
+    }
+    return zast_decl_generic_default_type(self, decl, generic_index)
+}
+
+
+export fn zast_field_member_declaration(self: *ZAstModule, decl: ZAstDecl, field_index: i64, through_stmt: i64) -> i64 {
+    field: ZAstExpr = self.exprs[field_index]
+    if field.kind != ZAstExprField || field.left == ZAstNoIndex {
+        return ZAstNoIndex
+    }
+    target_type: ZAstText = zast_type_text_base(zast_expr_type_text(self, decl, field.left, through_stmt))
+    target_decl_index: i64 = ZAstModule.find_owning_decl(self, target_type)
+    if target_decl_index == ZAstNoIndex { return ZAstNoIndex }
+    target_decl: ZAstDecl = self.decls[target_decl_index]
+    if target_decl.kind != ZAstDeclStruct && target_decl.kind != ZAstDeclUnion { return ZAstNoIndex }
+    member_index: i64 = 0
+    while member_index < target_decl.member_count {
+        if zast_text_same(self.members[target_decl.member_start + member_index].name, field.name) {
+            return target_decl.member_start + member_index
+        }
+        member_index = member_index + 1
+    }
+    return ZAstNoIndex
+}
+
+
+export fn zast_field_wrapped_generic_element_type(self: *ZAstModule, decl: ZAstDecl, field_index: i64, through_stmt: i64) -> ZAstText {
+    field: ZAstExpr = self.exprs[field_index]
+    member_index: i64 = zast_field_member_declaration(self, decl, field_index, through_stmt)
+    if member_index == ZAstNoIndex { return ZAstText.empty() }
+    target_type: ZAstText = zast_expr_type_text(self, decl, field.left, through_stmt)
+    target_decl_index: i64 = ZAstModule.find_owning_decl(self, zast_type_text_base(target_type))
+    if target_decl_index == ZAstNoIndex { return ZAstText.empty() }
+    return zast_direct_generic_member_argument(self, target_type, self.decls[target_decl_index], zast_type_text_unwrap(zast_decl_type_text(self, self.members[member_index].type_index)))
+}
+
+
+export fn zast_expr_type_text(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, through_stmt: i64) -> ZAstText {
+    if expr_index == ZAstNoIndex {
+        return ZAstText.empty()
+    }
+
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind == ZAstExprInteger {
+        return zast_text_from_string("i64")
+    }
+    if expr.kind == ZAstExprString {
+        return zast_text_from_string("string")
+    }
+    if expr.kind == ZAstExprBool {
+        return zast_text_from_string("bool")
+    }
+    if expr.kind == ZAstExprCast {
+        return zast_decl_type_text(self, expr.type_index)
+    }
+    if expr.kind == ZAstExprStructLiteral {
+        // A literal is typed by the nominal declaration named by the prefix
+        // before `{`. This also supports qualified imported types without
+        // constructing temporary dotted strings.
+        decl_index: i64 = zast_qualified_decl_index(self, expr.left)
+        if decl_index != ZAstNoIndex {
+            return self.decls[decl_index].name
+        }
+        return ZAstText.empty()
+    }
+    if expr.kind == ZAstExprArrayLiteral {
+        return zast_decl_type_text(self, expr.type_index)
+    }
+    if expr.kind == ZAstExprError {
+        if zast_error_name_known(self, expr.name) {
+            return zast_text_from_string("i32")
+        }
+        return ZAstText.empty()
+    }
+    if expr.kind == ZAstExprCatch {
+        return zast_expr_type_text(self, decl, expr.left, through_stmt)
+    }
+    if expr.kind == ZAstExprIdentifier {
+        query_index: i64 = decl.stmt_start + through_stmt
+        query_catch_owner: i64 = ZAstNoIndex
+        if query_index >= decl.stmt_start && query_index < decl.stmt_start + decl.stmt_count {
+            query_catch_owner = self.stmts[query_index].catch_owner
+            if query_catch_owner != ZAstNoIndex && query_catch_owner < self.expr_count && self.exprs[query_catch_owner].kind == ZAstExprCatch && zast_text_same(self.exprs[query_catch_owner].name, expr.name) {
+                return zast_text_from_string("i32")
+            }
+        }
+        pattern_type: ZAstText = zast_case_pattern_binding_type(self, decl, expr.name, through_stmt)
+        if pattern_type.len > 0 {
+            return pattern_type
+        }
+        p: i64 = 0
+        while p < decl.param_count {
+            param_index: i64 = decl.param_start + p
+            if zast_text_same(self.params[param_index].name, expr.name) {
+                return zast_decl_type_text(self, self.params[param_index].type_index)
+            }
+            p = p + 1
+        }
+
+        s: i64 = through_stmt
+        while s > 0 {
+            s = s - 1
+            stmt: ZAstStmt = self.stmts[decl.stmt_start + s]
+            if stmt.kind == ZAstStmtVar &&
+                (query_catch_owner != ZAstNoIndex || stmt.catch_owner == ZAstNoIndex) &&
+                zast_text_same(stmt.name, expr.name) {
+                return zast_decl_type_text(self, stmt.type_index)
+            }
+        }
+
+        decl_index: i64 = ZAstModule.find_decl(self, expr.name)
+        if decl_index != ZAstNoIndex {
+            target: ZAstDecl = self.decls[decl_index]
+            if target.kind == ZAstDeclFunction || target.kind == ZAstDeclExternFunction {
+                return zast_decl_type_text(self, target.return_type_index)
+            }
+            return zast_decl_type_text(self, target.type_index)
+        }
+
+        return ZAstText.empty()
+    }
+    if expr.kind == ZAstExprCall {
+        generic_decl_index: i64 = ZAstNoIndex
+        if expr.name.len > 0 { generic_decl_index = ZAstModule.find_decl(self, expr.name) }
+        if generic_decl_index == ZAstNoIndex && expr.left != ZAstNoIndex { generic_decl_index = zast_qualified_decl_index(self, expr.left) }
+        if generic_decl_index != ZAstNoIndex {
+            generic_result: ZAstText = zast_call_direct_generic_result_type(self, self.decls[generic_decl_index], expr, decl, through_stmt)
+            if generic_result.len > 0 { return generic_result }
+        }
+        if zast_expr_is_builtin_member(self, expr.left, "sizeof") {
+            return zast_text_from_string("i64")
+        }
+        if expr.name.len > 0 {
+            decl_index: i64 = ZAstModule.find_decl(self, expr.name)
+            if decl_index != ZAstNoIndex {
+                return zast_decl_type_text(self, self.decls[decl_index].return_type_index)
+            }
+            if zast_is_intrinsic_function(expr.name) {
+                return zast_text_from_string("i64")
+            }
+        }
+        if expr.left != ZAstNoIndex {
+            decl_index: i64 = zast_qualified_decl_index(self, expr.left)
+            if decl_index != ZAstNoIndex {
+                return zast_decl_type_text(self, self.decls[decl_index].return_type_index)
+            }
+        }
+        if expr.name.len > 0 {
+            return zast_function_type_return(zast_function_value_type(self, decl, expr.name, through_stmt))
+        }
+        return ZAstText.empty()
+    }
+    if expr.kind == ZAstExprField {
+        if expr.left == ZAstNoIndex {
+            return ZAstText.empty()
+        }
+        left_expr: ZAstExpr = self.exprs[expr.left]
+        if left_expr.kind == ZAstExprIdentifier && ZAstText.eql_string(left_expr.name, "Builtin") {
+            return zast_text_from_string("bool")
+        }
+        // Enum members are represented as field syntax, including imported
+        // `module.Enum.Member` chains. Resolve the left-hand declaration
+        // before looking up the complete chain, because an unrelated symbol
+        // may have the same name as the enum member.
+        enum_index: i64 = ZAstNoIndex
+        if left_expr.kind == ZAstExprIdentifier {
+            enum_index = ZAstModule.find_decl(self, left_expr.name)
+        } else {
+            enum_index = zast_qualified_decl_index(self, expr.left)
+        }
+        if enum_index != ZAstNoIndex {
+            enum_index = ZAstModule.find_owning_decl(
+                self, self.decls[enum_index].name
+            )
+        }
+        if enum_index != ZAstNoIndex && self.decls[enum_index].kind == ZAstDeclEnum {
+            member_index: i64 = 0
+            while member_index < self.decls[enum_index].member_count {
+                if zast_text_same(self.members[self.decls[enum_index].member_start + member_index].name, expr.name) {
+                    return self.decls[enum_index].name
+                }
+                member_index = member_index + 1
+            }
+        }
+        qualified_index: i64 = zast_qualified_decl_index(self, expr_index)
+        if qualified_index != ZAstNoIndex {
+            qualified_decl: ZAstDecl = self.decls[qualified_index]
+            if qualified_decl.kind == ZAstDeclFunction || qualified_decl.kind == ZAstDeclExternFunction {
+                return zast_decl_type_text(self, qualified_decl.return_type_index)
+            }
+            return zast_decl_type_text(self, qualified_decl.type_index)
+        }
+        raw_target_type: ZAstText = zast_text_skip_ws(zast_expr_type_text(self, decl, expr.left, through_stmt))
+        if raw_target_type.len == 0 {
+            return ZAstText.empty()
+        }
+        if left_expr.kind == ZAstExprCall && zast_expr_is_error_union(self, expr.left) {
+            if ZAstText.eql_string(expr.name, "error") {
+                return zast_text_from_string("i32")
+            }
+            if ZAstText.eql_string(expr.name, "value") {
+                return raw_target_type
+            }
+        }
+        if raw_target_type.ptr[0] == 91 {
+            if ZAstText.eql_string(expr.name, "len") {
+                return zast_text_from_string("i64")
+            }
+            if ZAstText.eql_string(expr.name, "ptr") {
+                return zast_text_from_string("*u8")
+            }
+        }
+        if raw_target_type.ptr[0] == 33 {
+            if ZAstText.eql_string(expr.name, "error") {
+                return zast_text_from_string("i32")
+            }
+            if ZAstText.eql_string(expr.name, "value") {
+                payload_type: ZAstText
+                payload_type.ptr = raw_target_type.ptr + 1
+                payload_type.len = raw_target_type.len - 1
+                return zast_text_skip_ws(payload_type)
+            }
+        }
+        target_type: ZAstText = zast_type_text_base(raw_target_type)
+
+        decl_index: i64 = ZAstModule.find_owning_decl(self, target_type)
+        if decl_index == ZAstNoIndex {
+            return ZAstText.empty()
+        }
+
+        target_decl: ZAstDecl = self.decls[decl_index]
+        if target_decl.kind != ZAstDeclStruct && target_decl.kind != ZAstDeclUnion {
+            return ZAstText.empty()
+        }
+
+        i: i64 = 0
+        while i < target_decl.member_count {
+            member: ZAstMember = self.members[target_decl.member_start + i]
+            if zast_text_same(member.name, expr.name) {
+                member_type: ZAstText = zast_decl_type_text(self, member.type_index)
+                concrete_member_type: ZAstText = zast_direct_generic_member_argument(self, raw_target_type, target_decl, member_type)
+                if concrete_member_type.len > 0 {
+                    return concrete_member_type
+                }
+                return member_type
+            }
+            i = i + 1
+        }
+
+        return ZAstText.empty()
+    }
+    if expr.kind == ZAstExprIndex {
+        target_type: ZAstText = zast_text_skip_ws(zast_expr_type_text(self, decl, expr.left, through_stmt))
+        if zast_type_text_has_volatile_qualifier(target_type) {
+            target_type.ptr = target_type.ptr + 8
+            target_type.len = target_type.len - 8
+            target_type = zast_text_skip_ws(target_type)
+        }
+        index_type: ZAstText = zast_expr_type_text(self, decl, expr.right, through_stmt)
+        if expr.right == ZAstNoIndex || !zast_is_integer_type(index_type) {
+            return ZAstText.empty()
+        }
+        if target_type.len > 0 && target_type.ptr[0] == 91 {
+            // The field resolver retains `[N]T` as source text. For an
+            // indexed generic member, recover its direct `T` argument from
+            // the owning nominal type instead of returning an unresolved T.
+            if self.exprs[expr.left].kind == ZAstExprField {
+                element_type: ZAstText = zast_field_wrapped_generic_element_type(self, decl, expr.left, through_stmt)
+                if element_type.len > 0 { return element_type }
+            }
+            return zast_type_text_unwrap(target_type)
+        }
+        if target_type.len > 0 && target_type.ptr[0] == 42 {
+            unwrapped: ZAstText
+            unwrapped.ptr = target_type.ptr + 1
+            unwrapped.len = target_type.len - 1
+            return zast_type_text_unwrap(unwrapped)
+        }
+        return ZAstText.empty()
+    }
+    if expr.kind == ZAstExprUnary {
+        operand: ZAstText = zast_expr_type_text(self, decl, expr.left, through_stmt)
+        if expr.op == ZTokenBang {
+            return zast_text_from_string("bool")
+        }
+        if expr.op == ZTokenAmp {
+            if operand.len == 0 {
+                return operand
+            }
+            text: ZAstText
+            text.ptr = cast(*u8, "*")
+            text.len = 1
+            return text
+        }
+        if expr.op == ZTokenStar {
+            if operand.len > 0 && operand.ptr[0] == 42 {
+                text: ZAstText
+                text.ptr = operand.ptr + 1
+                text.len = operand.len - 1
+                return text
+            }
+            return ZAstText.empty()
+        }
+        return operand
+    }
+    if expr.kind == ZAstExprBinary {
+        if expr.op == ZTokenEqualEqual || expr.op == ZTokenBangEqual || expr.op == ZTokenGreater || expr.op == ZTokenLess || expr.op == ZTokenGreaterEqual || expr.op == ZTokenLessEqual || expr.op == ZTokenAndAnd || expr.op == ZTokenOrOr {
+            return zast_text_from_string("bool")
+        }
+        left_type: ZAstText = zast_expr_type_text(self, decl, expr.left, through_stmt)
+        right_type: ZAstText = zast_expr_type_text(self, decl, expr.right, through_stmt)
+        if expr.op == ZTokenMinus && zast_is_pointer_type(left_type) && zast_is_pointer_type(right_type) {
+            return zast_text_from_string("i64")
+        }
+        if (expr.op == ZTokenPlus || expr.op == ZTokenMinus) && zast_is_pointer_type(left_type) {
+            return left_type
+        }
+        if expr.op == ZTokenPlus && zast_is_pointer_type(right_type) {
+            return right_type
+        }
+        if left_type.len > 0 && zast_text_same(left_type, right_type) {
+            return left_type
+        }
+        if left_type.len > 0 {
+            return left_type
+        }
+        return right_type
+    }
+    return ZAstText.empty()
+}
+
+
+// Return the concrete argument selected for one generic call parameter. This
+// exposes the checked call's explicit, inferred, or defaulted evidence to
+// backend lowering without making lowering reimplement semantic inference.
+export fn ZAstModule.call_generic_argument(
+    self: *ZAstModule,
+    through_declaration: ZAstDecl,
+    call: ZAstExpr,
+    function_declaration: ZAstDecl,
+    generic_index: i64,
+    through_statement: i64
+) -> ZAstText {
+    if generic_index < 0 || generic_index >= function_declaration.generic_param_count {
+        return ZAstText.empty()
+    }
+    if call.left != ZAstNoIndex {
+        callee: ZAstExpr = self.exprs[call.left]
+        if callee.type_index != ZAstNoIndex {
+            explicit_argument: ZAstText = zast_generic_argument_at(
+                self.types[callee.type_index].text, generic_index
+            )
+            if explicit_argument.len > 0 { return explicit_argument }
+        }
+    }
+    generic_name: ZAstText = self.generic_params[
+        function_declaration.generic_param_start + generic_index
+    ]
+    parameter_index: i64 = 0
+    while parameter_index < function_declaration.param_count &&
+        parameter_index < call.arg_count {
+        parameter_type: ZAstText = zast_decl_type_text(
+            self,
+            self.params[function_declaration.param_start + parameter_index].type_index
+        )
+        direct_match: bool = zast_text_same(parameter_type, generic_name)
+        wrapped_match: bool = zast_text_same(
+            zast_type_text_unwrap(parameter_type), generic_name
+        )
+        if direct_match || wrapped_match {
+            argument_type: ZAstText = zast_expr_type_text(
+                self,
+                through_declaration,
+                self.expr_args[call.arg_start + parameter_index],
+                through_statement
+            )
+            if argument_type.len == 0 {
+                argument_expression: ZAstExpr = self.exprs[
+                    self.expr_args[call.arg_start + parameter_index]
+                ]
+                if argument_expression.kind == ZAstExprInteger {
+                    argument_type = zast_text_from_string("i64")
+                }
+                if argument_expression.kind == ZAstExprBool {
+                    argument_type = zast_text_from_string("bool")
+                }
+                if argument_expression.kind == ZAstExprString {
+                    argument_type = zast_text_from_string("string")
+                }
+            }
+            if wrapped_match && !direct_match {
+                argument_type = zast_type_text_unwrap(argument_type)
+            }
+            if argument_type.len > 0 { return argument_type }
+        }
+        parameter_index = parameter_index + 1
+    }
+    return zast_decl_generic_default_type(
+        self, function_declaration, generic_index
+    )
+}
+
+
+export fn ZAstDecl.init(kind: i64, exported: bool) -> ZAstDecl {
+    return ZAstDecl{
+        kind: kind,
+        span: ZAstSpan.empty(),
+        source_index: ZAstNoIndex,
+        exported: exported,
+        name: ZAstText.empty(),
+        path: ZAstText.empty(),
+        alias: ZAstText.empty(),
+        is_c_import: false,
+        is_imported: false,
+        canonical_name: ZAstText.empty(),
+        type_index: ZAstNoIndex,
+        return_type_index: ZAstNoIndex,
+        return_is_error_union: false,
+        init_expr: ZAstNoIndex,
+        attribute_expr: ZAstNoIndex,
+        initializer_has_catch: false,
+        initializer_catch_span: ZAstSpan.empty(),
+        generic_param_start: 0,
+        generic_param_count: 0,
+        generic_required_param_count: 0,
+        has_generic_constraints: false,
+        has_explicit_layout: false,
+        param_start: 0,
+        param_count: 0,
+        member_start: 0,
+        member_count: 0,
+        stmt_start: 0,
+        stmt_count: 0,
+        local_count: 0,
+        return_count: 0,
+        call_count: 0,
+        binary_count: 0
+    }
+}
+
+
+export fn ZAstExpr.init(kind: i64) -> ZAstExpr {
+    return ZAstExpr{
+        kind: kind,
+        span: ZAstSpan.empty(),
+        name: ZAstText.empty(),
+        literal: ZAstText.empty(),
+        asm_constraint: ZAstText.empty(),
+        op: ZAstNoIndex,
+        left: ZAstNoIndex,
+        right: ZAstNoIndex,
+        type_index: ZAstNoIndex,
+        arg_start: 0,
+        arg_count: 0,
+        field_start: 0
+    }
+}
+
+
+export fn ZAstStmt.init(kind: i64) -> ZAstStmt {
+    return ZAstStmt{
+        kind: kind,
+        span: ZAstSpan.empty(),
+        name: ZAstText.empty(),
+        type_index: ZAstNoIndex,
+        expr_index: ZAstNoIndex,
+        value_expr: ZAstNoIndex,
+        attribute_expr: ZAstNoIndex,
+        is_constant: false,
+        condition_has_recovery: false,
+        recovery_span: ZAstSpan.empty(),
+        catch_owner: ZAstNoIndex,
+        asm_output_start: 0,
+        asm_output_count: 0,
+        asm_input_start: 0,
+        asm_input_count: 0,
+        asm_clobber_start: 0,
+        asm_clobber_count: 0,
+        for_initializer_count: 0,
+        for_update_count: 0,
+        child_start: 0,
+        child_count: 0
+    }
+}
+
+
+export fn zast_next_capacity(current: i64, needed: i64) -> i64 {
+    capacity: i64 = current
+    if capacity < 16 {
+        capacity = 16
+    }
+
+    while capacity < needed {
+        capacity = capacity * 2
+    }
+
+    return capacity
+}
+
+
+export fn ZAstModule.reserve(self: *ZAstModule, allocator: *std.mem.HeapAllocator, needed: i64) !i64 {
+    if needed < 0 {
+        return error.InvalidSize
+    }
+
+    if needed <= self.capacity {
+        return 0
+    }
+
+    new_capacity: i64 = zast_next_capacity(self.capacity, needed)
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity * Builtin.sizeof(ZAstDecl)) catch |err| {
+        return error.OutOfMemory
+    }
+    new_decls: *ZAstDecl = cast(*ZAstDecl, raw)
+
+    i: i64 = 0
+    while i < self.len {
+        new_decls[i] = self.decls[i]
+        i = i + 1
+    }
+
+    self.decls = new_decls
+    self.capacity = new_capacity
+    return 0
+}

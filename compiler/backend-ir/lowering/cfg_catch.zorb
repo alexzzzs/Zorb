@@ -1,0 +1,596 @@
+import "../../../runtime/std/errors.zorb"
+import "../../../runtime/std/collections.zorb"
+import "../../../runtime/std/mem.zorb"
+import "../../../runtime/std/str.zorb"
+import "../../ast/types.zorb"
+import "../../ast.zorb"
+import "../../ast/resolution.zorb"
+import "../../ast/arena.zorb"
+import "../../ast/type_check.zorb"
+import "../../ast/statement_check.zorb"
+import "../../ast/validation.zorb"
+import "../../ast/warnings.zorb"
+import "../../frontend/diagnostic.zorb"
+import "../../token.zorb"
+import "../model.zorb"
+import "types.zorb"
+import "type_text.zorb"
+import "generics.zorb"
+import "expression_support.zorb"
+import "cfg_helpers.zorb"
+import "cfg_expressions.zorb"
+import "cfg_statements.zorb"
+
+export fn zbackend_ir_cfg_lower_if(
+    context: *ZBackendIrControlFlowLowering,
+    statement: ZAstStmt,
+    statement_end: i64
+) !i64 {
+    if statement.expr_index == ZAstNoIndex { return error.NotImplemented }
+    after_then: i64 = statement.child_start + statement.child_count
+    has_else: bool = after_then < statement_end && context.ast.stmts[after_then].kind == ZAstStmtElse
+    constant_condition: i64 = zbackend_ir_constant_bool_expression(
+        context.type_layout, context.ast, statement.expr_index
+    )
+    if constant_condition >= 0 {
+        if constant_condition != 0 {
+            zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+            zbackend_ir_cfg_lower_sequence(
+                context, statement.child_start, after_then
+            ) catch |err| { return err }
+            zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+            if !has_else { return after_then }
+            else_statement: ZAstStmt = context.ast.stmts[after_then]
+            return zbackend_ir_cfg_expand_else_if_end(
+                context.ast,
+                else_statement.child_start,
+                else_statement.child_start + else_statement.child_count,
+                statement_end
+            )
+        }
+        if !has_else { return after_then }
+        else_statement: ZAstStmt = context.ast.stmts[after_then]
+        else_body_end: i64 = zbackend_ir_cfg_expand_else_if_end(
+            context.ast,
+            else_statement.child_start,
+            else_statement.child_start + else_statement.child_count,
+            statement_end
+        )
+        zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+        zbackend_ir_cfg_lower_sequence(
+            context, else_statement.child_start, else_body_end
+        ) catch |err| { return err }
+        zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+        return else_body_end
+    }
+    condition: i64 = zbackend_ir_cfg_lower_expression(
+        context, statement.expr_index
+    ) catch |err| { return err }
+    then_block: i64 = zbackend_ir_cfg_create_block(context, "then") catch |err| { return err }
+    else_block: i64 = 0
+    if has_else {
+        else_block = zbackend_ir_cfg_create_block(context, "else") catch |err| { return err }
+    } else {
+        else_block = zbackend_ir_cfg_create_block(context, "continuation") catch |err| { return err }
+    }
+    terminator: ZBackendIrTerminator = zbackend_ir_new_terminator("conditional_branch")
+    terminator.condition = condition
+    terminator.true_target = then_block
+    terminator.false_target = else_block
+    zbackend_ir_cfg_terminate(context, terminator) catch |err| { return err }
+
+    zbackend_ir_cfg_activate_block(context, then_block) catch |err| { return err }
+    zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+    zbackend_ir_cfg_lower_sequence(
+        context, statement.child_start, statement.child_start + statement.child_count
+    ) catch |err| { return err }
+    zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+    then_end: i64 = context.current_block
+
+    if !has_else {
+        zbackend_ir_cfg_branch_from(context, then_end, else_block) catch |err| { return err }
+        zbackend_ir_cfg_activate_block(context, else_block) catch |err| { return err }
+        return after_then
+    }
+
+    else_statement: ZAstStmt = context.ast.stmts[after_then]
+    else_body_end: i64 = zbackend_ir_cfg_expand_else_if_end(
+        context.ast,
+        else_statement.child_start,
+        else_statement.child_start + else_statement.child_count,
+        statement_end
+    )
+    zbackend_ir_cfg_activate_block(context, else_block) catch |err| { return err }
+    zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+    zbackend_ir_cfg_lower_sequence(
+        context, else_statement.child_start, else_body_end
+    ) catch |err| { return err }
+    zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+    else_end: i64 = context.current_block
+    after_else: i64 = else_body_end
+    if then_end < 0 && else_end < 0 {
+        context.current_block = -1
+        return after_else
+    }
+    continuation: i64 = zbackend_ir_cfg_create_block(context, "continuation") catch |err| { return err }
+    zbackend_ir_cfg_branch_from(context, then_end, continuation) catch |err| { return err }
+    zbackend_ir_cfg_branch_from(context, else_end, continuation) catch |err| { return err }
+    zbackend_ir_cfg_activate_block(context, continuation) catch |err| { return err }
+    return after_else
+}
+
+
+export fn zbackend_ir_cfg_lower_while(
+    context: *ZBackendIrControlFlowLowering,
+    statement: ZAstStmt
+) !i64 {
+    if statement.expr_index == ZAstNoIndex { return error.NotImplemented }
+    condition_block: i64 = zbackend_ir_cfg_create_block(context, "condition") catch |err| { return err }
+    body_block: i64 = zbackend_ir_cfg_create_block(context, "body") catch |err| { return err }
+    exit_block: i64 = zbackend_ir_cfg_create_block(context, "exit") catch |err| { return err }
+    zbackend_ir_cfg_branch(context, condition_block) catch |err| { return err }
+
+    zbackend_ir_cfg_activate_block(
+        context, condition_block
+    ) catch |err| { return err }
+    condition: i64 = zbackend_ir_cfg_lower_expression(context, statement.expr_index) catch |err| { return err }
+    terminator: ZBackendIrTerminator = zbackend_ir_new_terminator("conditional_branch")
+    terminator.condition = condition
+    terminator.true_target = body_block
+    terminator.false_target = exit_block
+    zbackend_ir_cfg_terminate(context, terminator) catch |err| { return err }
+
+    zbackend_ir_cfg_push_loop(
+        context, exit_block, condition_block
+    ) catch |err| { return err }
+    zbackend_ir_cfg_activate_block(
+        context, body_block
+    ) catch |err| { return err }
+    zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+    zbackend_ir_cfg_lower_sequence(
+        context, statement.child_start, statement.child_start + statement.child_count
+    ) catch |err| { return err }
+    zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+    if context.current_block >= 0 {
+        zbackend_ir_cfg_branch(
+            context, condition_block
+        ) catch |err| { return err }
+    }
+    zbackend_ir_cfg_pop_loop(context) catch |err| { return err }
+    zbackend_ir_cfg_activate_block(
+        context, exit_block
+    ) catch |err| { return err }
+    return statement.child_start + statement.child_count
+}
+
+
+export fn zbackend_ir_cfg_lower_for(
+    context: *ZBackendIrControlFlowLowering,
+    statement: ZAstStmt
+) !i64 {
+    child_end: i64 = statement.child_start + statement.child_count
+    initializer_end: i64 = statement.child_start + statement.for_initializer_count
+    update_end: i64 = initializer_end + statement.for_update_count
+    if initializer_end > child_end || update_end > child_end { return error.InvalidArgument }
+
+    zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+    zbackend_ir_cfg_lower_sequence(
+        context, statement.child_start, initializer_end
+    ) catch |err| { return err }
+    if context.current_block < 0 {
+        zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+        return child_end
+    }
+
+    condition_block: i64 = zbackend_ir_cfg_create_block(context, "for.condition") catch |err| { return err }
+    body_block: i64 = zbackend_ir_cfg_create_block(context, "for.body") catch |err| { return err }
+    update_block: i64 = zbackend_ir_cfg_create_block(context, "for.update") catch |err| { return err }
+    exit_block: i64 = zbackend_ir_cfg_create_block(context, "for.exit") catch |err| { return err }
+    zbackend_ir_cfg_branch(context, condition_block) catch |err| { return err }
+
+    zbackend_ir_cfg_activate_block(context, condition_block) catch |err| { return err }
+    condition: i64 = 0
+    if statement.expr_index == ZAstNoIndex {
+        condition = zbackend_ir_cfg_emit_integer_constant(
+            context, 1, context.bool_type_id
+        ) catch |err| { return err }
+    } else {
+        condition = zbackend_ir_cfg_lower_expression(context, statement.expr_index) catch |err| { return err }
+    }
+    terminator: ZBackendIrTerminator = zbackend_ir_new_terminator("conditional_branch")
+    terminator.condition = condition
+    terminator.true_target = body_block
+    terminator.false_target = exit_block
+    zbackend_ir_cfg_terminate(context, terminator) catch |err| { return err }
+
+    zbackend_ir_cfg_push_loop(context, exit_block, update_block) catch |err| { return err }
+    zbackend_ir_cfg_activate_block(context, body_block) catch |err| { return err }
+    zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+    zbackend_ir_cfg_lower_sequence(context, update_end, child_end) catch |err| { return err }
+    zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+    if context.current_block >= 0 {
+        zbackend_ir_cfg_branch(context, update_block) catch |err| { return err }
+    }
+
+    zbackend_ir_cfg_activate_block(context, update_block) catch |err| { return err }
+    zbackend_ir_cfg_lower_sequence(context, initializer_end, update_end) catch |err| { return err }
+    if context.current_block >= 0 {
+        zbackend_ir_cfg_branch(context, condition_block) catch |err| { return err }
+    }
+    zbackend_ir_cfg_pop_loop(context) catch |err| { return err }
+
+    zbackend_ir_cfg_activate_block(context, exit_block) catch |err| { return err }
+    zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+    return child_end
+}
+
+
+export fn zbackend_ir_cfg_lower_ordered_cases(
+    context: *ZBackendIrControlFlowLowering,
+    statement: ZAstStmt,
+    statement_index: i64
+) !i64 {
+    if statement.expr_index == ZAstNoIndex { return error.NotImplemented }
+    child_end: i64 = statement.child_start + statement.child_count
+    fallthrough_blocks: *i64 = zbackend_ir_cfg_allocate_i64_array(
+        context.allocator, statement.child_count + 1
+    ) catch |err| { return err }
+    fallthrough_count: i64 = 0
+    subject_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+        context, statement.expr_index, context.return_payload_type_id
+    ) catch |err| { return err }
+    subject: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, statement.expr_index, subject_type_id
+    ) catch |err| { return err }
+    branch_index: i64 = statement.child_start
+    saw_else: bool = false
+
+    while branch_index < child_end {
+        branch: ZAstStmt = context.ast.stmts[branch_index]
+        next_branch: i64 = branch.child_start + branch.child_count
+        if next_branch <= branch_index || next_branch > child_end { return error.InvalidArgument }
+
+        if branch.kind == ZAstStmtCase {
+            if branch.expr_index == ZAstNoIndex { return error.InvalidArgument }
+            case_value: i64 = zbackend_ir_cfg_lower_expression_as(
+                context, branch.expr_index, subject_type_id
+            ) catch |err| { return err }
+            condition: i64 = zbackend_ir_cfg_emit_equal(context, subject, case_value) catch |err| { return err }
+            body_block: i64 = zbackend_ir_cfg_create_block(context, "case.body") catch |err| { return err }
+            next_test_block: i64 = zbackend_ir_cfg_create_block(context, "case.next") catch |err| { return err }
+            terminator: ZBackendIrTerminator = zbackend_ir_new_terminator("conditional_branch")
+            terminator.condition = condition
+            terminator.true_target = body_block
+            terminator.false_target = next_test_block
+            zbackend_ir_cfg_terminate(context, terminator) catch |err| { return err }
+
+            zbackend_ir_cfg_activate_block(context, body_block) catch |err| { return err }
+            zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+            zbackend_ir_cfg_lower_sequence(
+                context, branch.child_start, next_branch
+            ) catch |err| { return err }
+            zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+            if context.current_block >= 0 {
+                fallthrough_blocks[fallthrough_count] = context.current_block
+                fallthrough_count = fallthrough_count + 1
+                context.current_block = -1
+            }
+            zbackend_ir_cfg_activate_block(context, next_test_block) catch |err| { return err }
+        } else if branch.kind == ZAstStmtElse {
+            saw_else = true
+            zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+            zbackend_ir_cfg_lower_sequence(
+                context, branch.child_start, next_branch
+            ) catch |err| { return err }
+            zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+            if context.current_block >= 0 {
+                fallthrough_blocks[fallthrough_count] = context.current_block
+                fallthrough_count = fallthrough_count + 1
+                context.current_block = -1
+            }
+            if next_branch != child_end { return error.InvalidArgument }
+        } else {
+            return error.InvalidArgument
+        }
+        branch_index = next_branch
+    }
+
+    if !saw_else {
+        if context.current_block < 0 { return error.InvalidArgument }
+        exhaustive: bool = ZAstModule.match_is_exhaustive(
+            context.ast,
+            context.declaration,
+            statement,
+            statement_index - context.declaration.stmt_start
+        )
+        if exhaustive {
+            zbackend_ir_cfg_terminate(
+                context, zbackend_ir_new_terminator("unreachable")
+            ) catch |err| { return err }
+        } else {
+            fallthrough_blocks[fallthrough_count] = context.current_block
+            fallthrough_count = fallthrough_count + 1
+            context.current_block = -1
+        }
+    }
+    if fallthrough_count == 0 { return child_end }
+
+    continuation: i64 = zbackend_ir_cfg_create_block(context, "case.continuation") catch |err| { return err }
+    fallthrough_index: i64 = 0
+    while fallthrough_index < fallthrough_count {
+        zbackend_ir_cfg_branch_from(
+            context, fallthrough_blocks[fallthrough_index], continuation
+        ) catch |err| { return err }
+        fallthrough_index = fallthrough_index + 1
+    }
+    zbackend_ir_cfg_activate_block(context, continuation) catch |err| { return err }
+    return child_end
+}
+
+
+export fn zbackend_ir_cfg_lower_union_match(
+    context: *ZBackendIrControlFlowLowering,
+    statement: ZAstStmt
+) !i64 {
+    if statement.expr_index == ZAstNoIndex { return error.NotImplemented }
+    child_end: i64 = statement.child_start + statement.child_count
+    subject_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+        context, statement.expr_index, context.return_payload_type_id
+    ) catch |err| { return err }
+    if subject_type_id <= 0 || subject_type_id > context.type_layout.type_count {
+        return error.InvalidArgument
+    }
+    union_type: ZBackendIrType = context.type_layout.types[subject_type_id - 1]
+    if union_type.kind != "union" { return error.InvalidArgument }
+    subject: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, statement.expr_index, subject_type_id
+    ) catch |err| { return err }
+    tag_type_id: i64 = zbackend_ir_type_layout_intern_scalar(
+        context.type_layout, "i32"
+    ) catch |err| { return err }
+    tag: i64 = zbackend_ir_cfg_emit_extract_value(
+        context, subject, tag_type_id, 0
+    ) catch |err| { return err }
+    fallthrough_blocks: *i64 = zbackend_ir_cfg_allocate_i64_array(
+        context.allocator, statement.child_count + 1
+    ) catch |err| { return err }
+    fallthrough_count: i64 = 0
+    branch_index: i64 = statement.child_start
+    saw_else: bool = false
+
+    while branch_index < child_end {
+        branch: ZAstStmt = context.ast.stmts[branch_index]
+        next_branch: i64 = branch.child_start + branch.child_count
+        if next_branch <= branch_index || next_branch > child_end { return error.InvalidArgument }
+
+        if branch.kind == ZAstStmtCase {
+            if branch.expr_index == ZAstNoIndex { return error.InvalidArgument }
+            pattern: ZAstExpr = context.ast.exprs[branch.expr_index]
+            binding: ZAstExpr = pattern
+            has_binding: bool = false
+            variant_index: i64 = ZAstNoIndex
+            if pattern.kind == ZAstExprCall && pattern.left != ZAstNoIndex &&
+                pattern.arg_count == 1 {
+                callee: ZAstExpr = context.ast.exprs[pattern.left]
+                if callee.kind != ZAstExprField || callee.left == ZAstNoIndex {
+                    return error.InvalidArgument
+                }
+                binding_index: i64 = context.ast.expr_args[pattern.arg_start]
+                binding = context.ast.exprs[binding_index]
+                if binding.kind != ZAstExprIdentifier { return error.InvalidArgument }
+                has_binding = true
+                variant_index = zbackend_ir_type_field_index(
+                    context.type_layout, subject_type_id, callee.name
+                ) catch |err| { return err }
+            } else if zbackend_ir_field_is_static_union_tag(
+                context.ast, pattern
+            ) {
+                variant_index = zbackend_ir_union_tag_field_value(
+                    context.ast, pattern
+                ) catch |err| { return err }
+            } else {
+                return error.NotImplemented
+            }
+            variant_type_id: i64 = union_type.fields[variant_index].type_id
+            expected_tag: i64 = zbackend_ir_cfg_emit_integer_constant(
+                context, variant_index, tag_type_id
+            ) catch |err| { return err }
+            condition: i64 = zbackend_ir_cfg_emit_equal(
+                context, tag, expected_tag
+            ) catch |err| { return err }
+            body_block: i64 = zbackend_ir_cfg_create_block(
+                context, "union.case.body"
+            ) catch |err| { return err }
+            next_test_block: i64 = zbackend_ir_cfg_create_block(
+                context, "union.case.next"
+            ) catch |err| { return err }
+            dispatch: ZBackendIrTerminator = zbackend_ir_new_terminator("conditional_branch")
+            dispatch.condition = condition
+            dispatch.true_target = body_block
+            dispatch.false_target = next_test_block
+            zbackend_ir_cfg_terminate(context, dispatch) catch |err| { return err }
+
+            zbackend_ir_cfg_activate_block(context, body_block) catch |err| { return err }
+            zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+            if has_binding {
+                variant_value: i64 = zbackend_ir_cfg_emit_extract_value(
+                    context, subject, variant_type_id, variant_index + 1
+                ) catch |err| { return err }
+                address: i64 = context.next_value_id
+                context.next_value_id = context.next_value_id + 1
+                zbackend_ir_cfg_append_instruction(
+                    context, zbackend_ir_new_instruction(address, "alloca", variant_type_id)
+                ) catch |err| { return err }
+                store_id: i64 = context.next_value_id
+                context.next_value_id = context.next_value_id + 1
+                store: ZBackendIrInstruction = zbackend_ir_new_instruction(
+                    store_id, "store", variant_type_id
+                )
+                store.lhs = address
+                store.rhs = variant_value
+                zbackend_ir_cfg_append_instruction(context, store) catch |err| { return err }
+                zbackend_ir_cfg_declare_local(
+                    context, binding.name, address, variant_type_id, false
+                ) catch |err| { return err }
+            }
+            zbackend_ir_cfg_lower_sequence(
+                context, branch.child_start, next_branch
+            ) catch |err| { return err }
+            zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+            if context.current_block >= 0 {
+                fallthrough_blocks[fallthrough_count] = context.current_block
+                fallthrough_count = fallthrough_count + 1
+                context.current_block = -1
+            }
+            zbackend_ir_cfg_activate_block(context, next_test_block) catch |err| { return err }
+        } else if branch.kind == ZAstStmtElse {
+            saw_else = true
+            zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+            zbackend_ir_cfg_lower_sequence(
+                context, branch.child_start, next_branch
+            ) catch |err| { return err }
+            zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+            if context.current_block >= 0 {
+                fallthrough_blocks[fallthrough_count] = context.current_block
+                fallthrough_count = fallthrough_count + 1
+                context.current_block = -1
+            }
+            if next_branch != child_end { return error.InvalidArgument }
+        } else {
+            return error.InvalidArgument
+        }
+        branch_index = next_branch
+    }
+
+    if !saw_else {
+        if context.current_block < 0 { return error.InvalidArgument }
+        zbackend_ir_cfg_terminate(
+            context, zbackend_ir_new_terminator("unreachable")
+        ) catch |err| { return err }
+    }
+    if fallthrough_count == 0 { return child_end }
+
+    continuation: i64 = zbackend_ir_cfg_create_block(
+        context, "union.case.continuation"
+    ) catch |err| { return err }
+    fallthrough_index: i64 = 0
+    while fallthrough_index < fallthrough_count {
+        zbackend_ir_cfg_branch_from(
+            context, fallthrough_blocks[fallthrough_index], continuation
+        ) catch |err| { return err }
+        fallthrough_index = fallthrough_index + 1
+    }
+    zbackend_ir_cfg_activate_block(context, continuation) catch |err| { return err }
+    return child_end
+}
+
+
+export fn zbackend_ir_cfg_lower_sequence(
+    context: *ZBackendIrControlFlowLowering,
+    statement_start: i64,
+    statement_end: i64
+) !i64 {
+    statement_index: i64 = statement_start
+    while statement_index < statement_end && context.current_block >= 0 {
+        statement: ZAstStmt = context.ast.stmts[statement_index]
+        context.current_statement_index = statement_index
+        // Recovery statements share the declaration's flattened statement
+        // arena. Only the catch currently being lowered owns its recovery;
+        // in particular, an outer recovery must skip an inner catch's body.
+        if statement.catch_owner != ZAstNoIndex &&
+            statement.catch_owner != context.active_catch_owner {
+            statement_index = statement_index + 1
+            continue
+        }
+        if statement.kind == ZAstStmtVar {
+            zbackend_ir_cfg_lower_variable(context, statement) catch |err| { return err }
+            statement_index = statement_index + 1
+            continue
+        }
+        if statement.kind == ZAstStmtAssign {
+            zbackend_ir_cfg_lower_assignment(context, statement) catch |err| { return err }
+            statement_index = statement_index + 1
+            continue
+        }
+        if statement.kind == ZAstStmtAsm {
+            zbackend_ir_cfg_lower_asm(context, statement) catch |err| { return err }
+            statement_index = statement_index + 1
+            continue
+        }
+        if statement.kind == ZAstStmtExpr {
+            if context.ast.exprs[statement.expr_index].kind == ZAstExprCatch {
+                context.lower_catch_expression_fn(
+                    context, statement.expr_index, true, ZBACKEND_IR_NO_TYPE_ID
+                ) catch |err| { return err }
+            } else {
+                zbackend_ir_cfg_lower_expression(
+                    context, statement.expr_index
+                ) catch |err| { return err }
+            }
+            statement_index = statement_index + 1
+            continue
+        }
+        if statement.kind == ZAstStmtReturn {
+            zbackend_ir_cfg_lower_return(context, statement) catch |err| { return err }
+            statement_index = statement_index + 1
+            continue
+        }
+        if statement.kind == ZAstStmtBreak || statement.kind == ZAstStmtContinue {
+            if context.loop_count <= 0 { return error.InvalidArgument }
+            target: i64 = context.break_targets[context.loop_count - 1]
+            if statement.kind == ZAstStmtContinue {
+                target = context.continue_targets[context.loop_count - 1]
+            }
+            zbackend_ir_cfg_branch(context, target) catch |err| { return err }
+            statement_index = statement_index + 1
+            continue
+        }
+        if statement.kind == ZAstStmtBlock {
+            zbackend_ir_cfg_push_scope(context) catch |err| { return err }
+            zbackend_ir_cfg_lower_sequence(
+                context, statement.child_start, statement.child_start + statement.child_count
+            ) catch |err| { return err }
+            zbackend_ir_cfg_pop_scope(context) catch |err| { return err }
+            statement_index = statement.child_start + statement.child_count
+            continue
+        }
+        if statement.kind == ZAstStmtIf {
+            statement_index = zbackend_ir_cfg_lower_if(
+                context, statement, statement_end
+            ) catch |err| { return err }
+            continue
+        }
+        if statement.kind == ZAstStmtWhile {
+            statement_index = zbackend_ir_cfg_lower_while(context, statement) catch |err| { return err }
+            continue
+        }
+        if statement.kind == ZAstStmtFor {
+            statement_index = zbackend_ir_cfg_lower_for(context, statement) catch |err| { return err }
+            continue
+        }
+        if statement.kind == ZAstStmtMatch {
+            match_type_id: i64 = zbackend_ir_cfg_expression_type_id(
+                context, statement.expr_index, context.return_payload_type_id
+            ) catch |err| { return err }
+            if match_type_id > 0 && match_type_id <= context.type_layout.type_count &&
+                context.type_layout.types[match_type_id - 1].kind == "union" {
+                statement_index = zbackend_ir_cfg_lower_union_match(
+                    context, statement
+                ) catch |err| { return err }
+            } else {
+                statement_index = zbackend_ir_cfg_lower_ordered_cases(
+                    context, statement, statement_index
+                ) catch |err| { return err }
+            }
+            continue
+        }
+        if statement.kind == ZAstStmtSwitch {
+            statement_index = zbackend_ir_cfg_lower_ordered_cases(
+                context, statement, statement_index
+            ) catch |err| { return err }
+            continue
+        }
+        return error.NotImplemented
+    }
+    return statement_index
+}

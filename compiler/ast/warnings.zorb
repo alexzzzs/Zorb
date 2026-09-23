@@ -1,0 +1,602 @@
+import "../../runtime/std/errors.zorb"
+import "../../runtime/std/mem.zorb"
+import "../../runtime/std/str.zorb"
+import "../token.zorb"
+import "types.zorb"
+import "../ast.zorb"
+import "resolution.zorb"
+import "arena.zorb"
+import "type_check.zorb"
+import "statement_check.zorb"
+import "validation.zorb"
+
+export fn zast_check_stmt_node(self: *ZAstModule, decl: ZAstDecl, stmt_index: i64) !i64 {
+    stmt: ZAstStmt = self.stmts[stmt_index]
+    if stmt.catch_owner != ZAstNoIndex {
+        return 0
+    }
+    through_stmt: i64 = stmt_index - decl.stmt_start
+
+    if stmt.kind == ZAstStmtAsm {
+        operand_index: i64 = 0
+        while operand_index < stmt.asm_output_count {
+            zast_check_asm_operand(self, decl, self.expr_args[stmt.asm_output_start + operand_index], through_stmt, true) catch |err| { return err }
+            operand_index = operand_index + 1
+        }
+        operand_index = 0
+        while operand_index < stmt.asm_input_count {
+            zast_check_asm_operand(self, decl, self.expr_args[stmt.asm_input_start + operand_index], through_stmt, false) catch |err| { return err }
+            operand_index = operand_index + 1
+        }
+        return 0
+    }
+
+    if (stmt.kind == ZAstStmtBreak || stmt.kind == ZAstStmtContinue) && !zast_stmt_has_enclosing_loop(self, decl, stmt_index) {
+        self.semantic_error_span = stmt.span
+        return error.InvalidArgument
+    }
+
+    if stmt.kind == ZAstStmtMatch &&
+        !zast_union_match_cases_valid(self, decl, stmt, through_stmt) {
+        return error.InvalidArgument
+    }
+
+    if zast_stmt_has_children(stmt.kind) {
+        inner_index: i64 = stmt.child_start
+        inner_end: i64 = stmt.child_start + stmt.child_count
+        while inner_index < inner_end {
+            inner_stmt: ZAstStmt = self.stmts[inner_index]
+            zast_check_stmt_node(self, decl, inner_index) catch |err| {
+                return err
+            }
+            if zast_stmt_has_children(inner_stmt.kind) {
+                inner_index = inner_stmt.child_start + inner_stmt.child_count
+            } else {
+                inner_index = inner_index + 1
+            }
+        }
+        if stmt.kind == ZAstStmtMatch && !zast_match_is_exhaustive(self, decl, stmt, through_stmt) {
+            self.semantic_error_span = stmt.span
+            self.semantic_error_category = ZAstSemanticErrorMatchNotExhaustive
+            return error.InvalidArgument
+        }
+        if stmt.kind == ZAstStmtSwitch && !zast_switch_is_valid(self, decl, stmt, through_stmt) {
+            return error.InvalidArgument
+        }
+        if zast_stmt_requires_bool_condition(stmt.kind) {
+            condition_through: i64 = through_stmt
+            if stmt.kind == ZAstStmtFor {
+                // Advance past the complete flattened initializer range so
+                // its root binding is visible. Local lookup excludes recovery
+                // nodes when the query itself is outside a catch.
+                condition_through = stmt.child_start - decl.stmt_start +
+                    stmt.for_initializer_count
+            }
+            zast_check_bool_condition(self, decl, stmt, condition_through) catch |err| {
+                return err
+            }
+        }
+        return 0
+    }
+
+    if stmt.kind == ZAstStmtVar {
+        if stmt.attribute_expr != ZAstNoIndex && !zast_expr_is_constant(self, stmt.attribute_expr) {
+            self.semantic_error_span = self.exprs[stmt.attribute_expr].span
+            return error.InvalidArgument
+        }
+        if !zast_type_known(self, decl, stmt.type_index) {
+            self.semantic_error_span = stmt.span
+            return error.NotFound
+        }
+        if !zast_type_array_sizes_are_constant(self, decl, stmt.type_index, through_stmt) {
+            self.semantic_error_span = stmt.span
+            return error.InvalidArgument
+        }
+        if !zast_type_generic_arguments_valid(self, decl, stmt.type_index) {
+            self.semantic_error_span = stmt.span
+            return error.InvalidArgument
+        }
+        if stmt.is_constant && stmt.expr_index == ZAstNoIndex {
+            self.semantic_error_span = stmt.span
+            return error.InvalidArgument
+        }
+        if stmt.expr_index != ZAstNoIndex {
+            zast_check_catch_expression(self, decl, stmt.expr_index, stmt.type_index, through_stmt, false) catch |err| {
+                return err
+            }
+            if !zast_expr_names_known(self, decl, stmt.expr_index, through_stmt) {
+                self.semantic_error_span = stmt.span
+                return error.NotFound
+            }
+            if stmt.condition_has_recovery {
+                initializer: ZAstExpr = self.exprs[stmt.expr_index]
+                if initializer.kind == ZAstExprCall && initializer.name.len > 0 {
+                    callee_index: i64 = zast_function_name_known(self, initializer.name)
+                    if callee_index != ZAstNoIndex && !self.decls[callee_index].return_is_error_union {
+                        self.semantic_error_span = stmt.recovery_span
+                        if self.semantic_error_span.line == 0 { self.semantic_error_span = stmt.span }
+                        return error.InvalidArgument
+                    }
+                }
+            }
+            zast_validate_boolean_operators(self, decl, stmt.expr_index, through_stmt) catch |err| {
+                return err
+            }
+            zast_validate_call_argument_types(self, decl, stmt.expr_index, through_stmt) catch |err| {
+                return err
+            }
+            zast_validate_error_union_casts(self, decl, stmt.expr_index, through_stmt) catch |err| {
+                return err
+            }
+            if self.exprs[stmt.expr_index].kind == ZAstExprInteger && !zast_positive_integer_literal_fits_type(self.exprs[stmt.expr_index].literal, zast_decl_type_text(self, stmt.type_index)) {
+                self.semantic_error_span = stmt.span
+                zast_mark_not_assignable(self)
+                return error.InvalidArgument
+            }
+            if !zast_expr_type_matches(self, decl, stmt.expr_index, stmt.type_index, through_stmt) {
+                if self.semantic_error_span.line == 0 {
+                    self.semantic_error_span = stmt.span
+                    zast_mark_not_assignable(self)
+                }
+                return error.InvalidArgument
+            }
+        }
+    }
+
+    if stmt.kind == ZAstStmtReturn {
+        zast_check_catch_expression(self, decl, stmt.expr_index, decl.return_type_index, through_stmt, false) catch |err| {
+            return err
+        }
+        if !zast_expr_names_known(self, decl, stmt.expr_index, through_stmt) {
+            self.semantic_error_span = stmt.span
+            return error.NotFound
+        }
+        zast_validate_boolean_operators(self, decl, stmt.expr_index, through_stmt) catch |err| {
+            return err
+        }
+        zast_validate_call_argument_types(self, decl, stmt.expr_index, through_stmt) catch |err| {
+            return err
+        }
+        zast_validate_error_union_casts(self, decl, stmt.expr_index, through_stmt) catch |err| {
+            return err
+        }
+        if !zast_function_accepts_return(self, decl, stmt.expr_index, through_stmt) {
+            if self.semantic_error_span.line == 0 {
+                self.semantic_error_span = stmt.span
+            }
+            zast_mark_not_assignable(self)
+            return error.InvalidArgument
+        }
+    }
+
+    if stmt.kind == ZAstStmtExpr {
+        zast_check_catch_expression(self, decl, stmt.expr_index, ZAstNoIndex, through_stmt, true) catch |err| {
+            return err
+        }
+        if stmt.expr_index != ZAstNoIndex && !zast_expr_names_known(self, decl, stmt.expr_index, through_stmt) {
+            self.semantic_error_span = stmt.span
+            return error.NotFound
+        }
+        zast_validate_boolean_operators(self, decl, stmt.expr_index, through_stmt) catch |err| {
+            return err
+        }
+        zast_validate_call_argument_types(self, decl, stmt.expr_index, through_stmt) catch |err| {
+            return err
+        }
+        zast_validate_error_union_casts(self, decl, stmt.expr_index, through_stmt) catch |err| {
+            return err
+        }
+    }
+
+    if stmt.kind == ZAstStmtAssign {
+        if stmt.value_expr != ZAstNoIndex && self.exprs[stmt.value_expr].kind == ZAstExprCatch {
+            // Assignment target typing is checked below; a statement-position
+            // recovery may intentionally fall through without a value.
+            zast_check_catch_expression(self, decl, stmt.value_expr, ZAstNoIndex, through_stmt, true) catch |err| { return err }
+        }
+        if !zast_expr_names_known(self, decl, stmt.expr_index, through_stmt) {
+            self.semantic_error_span = stmt.span
+            return error.NotFound
+        }
+        if !zast_expr_names_known(self, decl, stmt.value_expr, through_stmt) {
+            self.semantic_error_span = stmt.span
+            return error.NotFound
+        }
+        zast_validate_boolean_operators(self, decl, stmt.value_expr, through_stmt) catch |err| {
+            return err
+        }
+        zast_validate_call_argument_types(self, decl, stmt.value_expr, through_stmt) catch |err| {
+            return err
+        }
+        zast_validate_error_union_casts(self, decl, stmt.value_expr, through_stmt) catch |err| {
+            return err
+        }
+        if !zast_expr_is_assignable(self, stmt.expr_index) {
+            self.semantic_error_span = stmt.span
+            return error.InvalidArgument
+        }
+        if zast_expr_is_constant_target(self, decl, stmt.expr_index, through_stmt) {
+            self.semantic_error_span = self.exprs[stmt.expr_index].span
+            return error.InvalidArgument
+        }
+        if !zast_expr_types_compatible(self, decl, stmt.expr_index, stmt.value_expr, through_stmt) {
+            self.semantic_error_span = stmt.span
+            zast_mark_not_assignable(self)
+            return error.InvalidArgument
+        }
+    }
+
+    return 0
+}
+
+
+export fn ZAstModule.has_duplicate_declarations(self: *ZAstModule) -> bool {
+    i: i64 = 0
+    while i < self.len {
+        if self.decls[i].is_imported {
+            i = i + 1
+            continue
+        }
+        j: i64 = i + 1
+        while j < self.len {
+            // Imported lookup records are not declarations in this file.
+            // Only source declarations compete for duplicate diagnostics.
+            if !self.decls[j].is_imported && self.decls[i].name.len > 0 && zast_text_same(self.decls[i].name, self.decls[j].name) {
+                self.semantic_error_span = self.decls[j].span
+                return true
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return false
+}
+
+
+export fn zast_has_builtin_declaration_conflict(self: *ZAstModule) -> bool {
+    declaration_index: i64 = 0
+    while declaration_index < self.len {
+        declaration: ZAstDecl = self.decls[declaration_index]
+        if !declaration.is_imported && zast_is_intrinsic_function(declaration.name) {
+            self.semantic_error_span = declaration.span
+            return true
+        }
+        declaration_index = declaration_index + 1
+    }
+    return false
+}
+
+
+export fn zast_warning_is_comparison(op: i64) -> bool {
+    return op == ZTokenEqualEqual || op == ZTokenBangEqual ||
+        op == ZTokenGreater || op == ZTokenLess ||
+        op == ZTokenGreaterEqual || op == ZTokenLessEqual
+}
+
+
+export fn zast_integer_type_is_signed(type_text: ZAstText) -> bool {
+    type_text = zast_text_skip_ws(type_text)
+    return type_text.len > 0 && type_text.ptr[0] == 105
+}
+
+
+export fn zast_warning_literal_fits_type(self: *ZAstModule, expr_index: i64, target_type: ZAstText) -> bool {
+    if expr_index == ZAstNoIndex { return false }
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind != ZAstExprInteger { return false }
+    return zast_positive_integer_literal_fits_type(expr.literal, target_type)
+}
+
+
+export fn zast_collect_expression_warnings(
+    self: *ZAstModule,
+    allocator: *std.mem.HeapAllocator,
+    decl: ZAstDecl,
+    expr_index: i64,
+    through_stmt: i64
+) !i64 {
+    if expr_index == ZAstNoIndex { return 0 }
+    expr: ZAstExpr = self.exprs[expr_index]
+
+    if expr.kind == ZAstExprUnary || expr.kind == ZAstExprCast ||
+        expr.kind == ZAstExprField || expr.kind == ZAstExprCatch {
+        zast_collect_expression_warnings(self, allocator, decl, expr.left, through_stmt) catch |err| { return err }
+    }
+    if expr.kind == ZAstExprBinary || expr.kind == ZAstExprIndex {
+        zast_collect_expression_warnings(self, allocator, decl, expr.left, through_stmt) catch |err| { return err }
+        zast_collect_expression_warnings(self, allocator, decl, expr.right, through_stmt) catch |err| { return err }
+    }
+    if expr.kind == ZAstExprCall {
+        zast_collect_expression_warnings(self, allocator, decl, expr.left, through_stmt) catch |err| { return err }
+    }
+    if expr.kind == ZAstExprCall || expr.kind == ZAstExprStructLiteral ||
+        expr.kind == ZAstExprArrayLiteral {
+        argument_index: i64 = 0
+        while argument_index < expr.arg_count {
+            zast_collect_expression_warnings(
+                self,
+                allocator,
+                decl,
+                self.expr_args[expr.arg_start + argument_index],
+                through_stmt
+            ) catch |err| { return err }
+            argument_index = argument_index + 1
+        }
+    }
+
+    if expr.kind != ZAstExprBinary || !zast_warning_is_comparison(expr.op) {
+        return 0
+    }
+    left_type: ZAstText = zast_comparison_operand_type(self, decl, expr.left, through_stmt)
+    right_type: ZAstText = zast_comparison_operand_type(self, decl, expr.right, through_stmt)
+    if !zast_is_scalar_integer_type(left_type) || !zast_is_scalar_integer_type(right_type) ||
+        zast_integer_type_is_signed(left_type) == zast_integer_type_is_signed(right_type) {
+        return 0
+    }
+    if zast_warning_literal_fits_type(self, expr.left, right_type) ||
+        zast_warning_literal_fits_type(self, expr.right, left_type) {
+        return 0
+    }
+    zast_append_warning(self, allocator, ZAstWarning{
+        category: ZAstWarningMixedSignednessComparison,
+        span: expr.span,
+        op: expr.op,
+        left_type: left_type,
+        right_type: right_type
+    }) catch |err| { return err }
+    return 0
+}
+
+
+export fn zast_collect_statement_warnings(
+    self: *ZAstModule,
+    allocator: *std.mem.HeapAllocator,
+    decl: ZAstDecl,
+    stmt_index: i64
+) !i64 {
+    stmt: ZAstStmt = self.stmts[stmt_index]
+    through_stmt: i64 = stmt_index - decl.stmt_start
+    zast_collect_expression_warnings(self, allocator, decl, stmt.expr_index, through_stmt) catch |err| { return err }
+    zast_collect_expression_warnings(self, allocator, decl, stmt.value_expr, through_stmt) catch |err| { return err }
+    zast_collect_expression_warnings(self, allocator, decl, stmt.attribute_expr, through_stmt) catch |err| { return err }
+
+    if stmt.kind == ZAstStmtAssign && stmt.expr_index != ZAstNoIndex && stmt.value_expr != ZAstNoIndex {
+        target_type: ZAstText = zast_text_skip_ws(zast_expr_type_text(self, decl, stmt.expr_index, through_stmt))
+        value: ZAstExpr = self.exprs[stmt.value_expr]
+        if ZAstText.eql_string(target_type, "*u8") && value.kind == ZAstExprUnary && value.op == ZTokenAmp {
+            operand_type: ZAstText = zast_text_skip_ws(zast_expr_type_text(self, decl, value.left, through_stmt))
+            if ZAstText.eql_string(operand_type, "u8") {
+                zast_append_warning(self, allocator, ZAstWarning{
+                    category: ZAstWarningPointerAlignment,
+                    span: value.span,
+                    op: ZAstNoIndex,
+                    left_type: ZAstText.empty(),
+                    right_type: ZAstText.empty()
+                }) catch |err| { return err }
+            }
+        }
+    }
+
+    if stmt.kind != ZAstStmtReturn && stmt.kind != ZAstStmtBreak && stmt.kind != ZAstStmtContinue {
+        return 0
+    }
+    next_index: i64 = stmt_index + 1
+    if next_index >= decl.stmt_start + decl.stmt_count {
+        return 0
+    }
+    next_stmt: ZAstStmt = self.stmts[next_index]
+    if next_stmt.catch_owner != stmt.catch_owner ||
+        zast_stmt_scope_container(self, decl, next_index) != zast_stmt_scope_container(self, decl, stmt_index) {
+        return 0
+    }
+    zast_append_warning(self, allocator, ZAstWarning{
+        category: ZAstWarningUnreachableStatement,
+        span: next_stmt.span,
+        op: ZAstNoIndex,
+        left_type: ZAstText.empty(),
+        right_type: ZAstText.empty()
+    }) catch |err| { return err }
+    return 0
+}
+
+
+export fn ZAstModule.collect_warnings(self: *ZAstModule, allocator: *std.mem.HeapAllocator) !i64 {
+    self.warning_count = 0
+    declaration_index: i64 = 0
+    while declaration_index < self.len {
+        decl: ZAstDecl = self.decls[declaration_index]
+        if decl.kind == ZAstDeclFunction && !decl.is_imported {
+            statement_index: i64 = decl.stmt_start
+            statement_end: i64 = decl.stmt_start + decl.stmt_count
+            while statement_index < statement_end {
+                zast_collect_statement_warnings(
+                    self, allocator, decl, statement_index
+                ) catch |err| { return err }
+                statement_index = statement_index + 1
+            }
+        }
+        declaration_index = declaration_index + 1
+    }
+    return 0
+}
+
+
+export fn ZAstModule.check_semantics(self: *ZAstModule) !i64 {
+    self.semantic_error_span = ZAstSpan.empty()
+    self.semantic_error_category = ZAstSemanticErrorNone
+    if ZAstModule.has_duplicate_declarations(self) {
+        return error.AlreadyExists
+    }
+    if zast_has_builtin_declaration_conflict(self) {
+        return error.InvalidArgument
+    }
+    if !zast_error_declarations_valid(self) {
+        return error.InvalidArgument
+    }
+
+    i: i64 = 0
+    while i < self.len {
+        if zast_decl_has_duplicate_generic_params(self, self.decls[i]) {
+            self.semantic_error_span = self.decls[i].span
+            return error.AlreadyExists
+        }
+        i = i + 1
+    }
+
+    i = 0
+    while i < self.len {
+        if self.decls[i].is_imported {
+            i = i + 1
+            continue
+        }
+
+        if !zast_type_known(self, self.decls[i], self.decls[i].type_index) {
+            self.semantic_error_span = self.decls[i].span
+            return error.NotFound
+        }
+        if !zast_decl_generic_defaults_valid(self, self.decls[i]) {
+            self.semantic_error_span = self.decls[i].span
+            return error.NotFound
+        }
+        if !zast_type_generic_arguments_valid(self, self.decls[i], self.decls[i].type_index) {
+            self.semantic_error_span = self.decls[i].span
+            return error.InvalidArgument
+        }
+        if !zast_type_array_sizes_are_constant(self, self.decls[i], self.decls[i].type_index, 0) {
+            self.semantic_error_span = self.decls[i].span
+            return error.InvalidArgument
+        }
+        if !zast_enum_has_integer_underlying_type(self, self.decls[i]) {
+            self.semantic_error_span = self.decls[i].span
+            return error.InvalidArgument
+        }
+        if !zast_type_known(self, self.decls[i], self.decls[i].return_type_index) {
+            self.semantic_error_span = self.decls[i].span
+            return error.NotFound
+        }
+        if !zast_type_generic_arguments_valid(self, self.decls[i], self.decls[i].return_type_index) {
+            self.semantic_error_span = self.decls[i].span
+            return error.InvalidArgument
+        }
+        if zast_decl_has_duplicate_params(self, self.decls[i]) {
+            return error.AlreadyExists
+        }
+        if zast_decl_has_duplicate_members(self, self.decls[i]) {
+            return error.AlreadyExists
+        }
+        if !zast_explicit_layout_members_valid(self, self.decls[i]) {
+            return error.InvalidArgument
+        }
+        if zast_decl_has_duplicate_enum_values(self, self.decls[i]) {
+            return error.AlreadyExists
+        }
+        if zast_union_has_reserved_tag_variant(self, self.decls[i]) {
+            return error.InvalidArgument
+        }
+        if !zast_global_array_initializer_is_literal(self, self.decls[i]) {
+            self.semantic_error_span = self.decls[i].span
+            return error.InvalidArgument
+        }
+        if !zast_global_integer_initializer_is_valid(self, self.decls[i]) {
+            return error.InvalidArgument
+        }
+        if !zast_global_initializer_has_no_catch(self, self.decls[i]) {
+            return error.InvalidArgument
+        }
+        if self.decls[i].attribute_expr != ZAstNoIndex && !zast_expr_is_constant(self, self.decls[i].attribute_expr) {
+            self.semantic_error_span = self.exprs[self.decls[i].attribute_expr].span
+            return error.InvalidArgument
+        }
+
+        if self.decls[i].init_expr != ZAstNoIndex && self.decls[i].kind != ZAstDeclError {
+            if !zast_expr_names_known(self, self.decls[i], self.decls[i].init_expr, 0) {
+                return error.NotFound
+            }
+            if !zast_expr_type_matches(self, self.decls[i], self.decls[i].init_expr, self.decls[i].type_index, 0) {
+                zast_mark_not_assignable(self)
+                return error.InvalidArgument
+            }
+        }
+
+        p: i64 = 0
+        while p < self.decls[i].param_count {
+            if !zast_type_known(self, self.decls[i], self.params[self.decls[i].param_start + p].type_index) {
+                self.semantic_error_span = self.params[self.decls[i].param_start + p].span
+                return error.NotFound
+            }
+            if !zast_type_generic_arguments_valid(self, self.decls[i], self.params[self.decls[i].param_start + p].type_index) {
+                self.semantic_error_span = self.params[self.decls[i].param_start + p].span
+                return error.InvalidArgument
+            }
+            p = p + 1
+        }
+
+        m: i64 = 0
+        while m < self.decls[i].member_count {
+            member: ZAstMember = self.members[self.decls[i].member_start + m]
+            if member.type_index != ZAstNoIndex && !zast_type_known(self, self.decls[i], member.type_index) {
+                self.semantic_error_span = member.span
+                return error.NotFound
+            }
+            if !zast_type_generic_arguments_valid(self, self.decls[i], member.type_index) {
+                self.semantic_error_span = member.span
+                return error.InvalidArgument
+            }
+            if !zast_type_array_sizes_are_constant(self, self.decls[i], member.type_index, 0) {
+                self.semantic_error_span = member.span
+                return error.InvalidArgument
+            }
+            if member.value_expr != ZAstNoIndex {
+                if !zast_expr_names_known(self, self.decls[i], member.value_expr, 0) {
+                    return error.NotFound
+                }
+                if member.type_index != ZAstNoIndex && !zast_expr_type_matches(self, self.decls[i], member.value_expr, member.type_index, 0) {
+                    zast_mark_not_assignable(self)
+                    return error.InvalidArgument
+                }
+            }
+            if member.attribute_expr != ZAstNoIndex && !zast_expr_is_constant(self, member.attribute_expr) {
+                self.semantic_error_span = self.decls[i].span
+                return error.InvalidArgument
+            }
+            m = m + 1
+        }
+
+        if self.decls[i].kind == ZAstDeclFunction {
+            if self.decls[i].stmt_start < 0 || self.decls[i].stmt_count < 0 ||
+                self.decls[i].stmt_start > self.stmt_count_total ||
+                self.decls[i].stmt_count > self.stmt_count_total - self.decls[i].stmt_start {
+                self.semantic_error_span = self.decls[i].span
+                return error.OutOfBounds
+            }
+            if zast_decl_has_duplicate_locals(self, self.decls[i]) {
+                return error.AlreadyExists
+            }
+            child_index: i64 = self.decls[i].stmt_start
+            child_end: i64 = self.decls[i].stmt_start + self.decls[i].stmt_count
+            while child_index < child_end {
+                stmt: ZAstStmt = self.stmts[child_index]
+                if stmt.catch_owner != ZAstNoIndex {
+                    child_index = child_index + 1
+                    continue
+                }
+                zast_check_stmt_node(self, self.decls[i], child_index) catch |err| {
+                    return err
+                }
+                if zast_stmt_has_children(stmt.kind) {
+                    child_index = stmt.child_start + stmt.child_count
+                } else {
+                    child_index = child_index + 1
+                }
+            }
+            if self.decls[i].return_type_index != ZAstNoIndex && !zast_stmt_sequence_always_returns(self, self.decls[i], self.decls[i].stmt_start, self.decls[i].stmt_start + self.decls[i].stmt_count) {
+                self.semantic_error_span = self.decls[i].span
+                return error.InvalidArgument
+            }
+        }
+
+        i = i + 1
+    }
+
+    return 0
+}

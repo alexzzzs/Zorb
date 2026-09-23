@@ -1,0 +1,610 @@
+import "../../runtime/std/errors.zorb"
+import "../../runtime/std/mem.zorb"
+import "../../runtime/std/str.zorb"
+import "../token.zorb"
+import "types.zorb"
+import "../ast.zorb"
+import "resolution.zorb"
+import "type_check.zorb"
+import "statement_check.zorb"
+
+// The inferred result of `!`, `&&`, and `||` is always bool, so result-type
+// checking alone cannot prove their operands are boolean. Validate operands
+// separately and defer only operands whose generic/imported type is unknown.
+export fn zast_validate_boolean_operators(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, through_stmt: i64) !i64 {
+    if expr_index == ZAstNoIndex {
+        return 0
+    }
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind == ZAstExprUnary {
+        zast_validate_boolean_operators(self, decl, expr.left, through_stmt) catch |err| { return err }
+        if expr.op == ZTokenBang {
+            operand_type: ZAstText = zast_expr_type_text(self, decl, expr.left, through_stmt)
+            if operand_type.len > 0 && !ZAstText.eql_string(operand_type, "bool") {
+                self.semantic_error_span = expr.span
+                return error.InvalidArgument
+            }
+        }
+        return 0
+    }
+    if expr.kind == ZAstExprBinary {
+        zast_validate_boolean_operators(self, decl, expr.left, through_stmt) catch |err| { return err }
+        zast_validate_boolean_operators(self, decl, expr.right, through_stmt) catch |err| { return err }
+        if expr.op == ZTokenPlus || expr.op == ZTokenMinus || expr.op == ZTokenStar || expr.op == ZTokenSlash {
+            left_type: ZAstText = zast_comparison_operand_type(self, decl, expr.left, through_stmt)
+            right_type: ZAstText = zast_comparison_operand_type(self, decl, expr.right, through_stmt)
+            left_is_pointer: bool = zast_is_pointer_type(left_type)
+            right_is_pointer: bool = zast_is_pointer_type(right_type)
+            if left_type.len > 0 && right_type.len > 0 && (left_is_pointer || right_is_pointer) {
+                if expr.op == ZTokenPlus {
+                    if !((left_is_pointer && zast_is_scalar_integer_type(right_type)) || (zast_is_scalar_integer_type(left_type) && right_is_pointer)) {
+                        self.semantic_error_span = self.exprs[expr.left].span
+                        return error.InvalidArgument
+                    }
+                } else if expr.op == ZTokenMinus {
+                    if !left_is_pointer {
+                        self.semantic_error_span = self.exprs[expr.right].span
+                        return error.InvalidArgument
+                    }
+                    if right_is_pointer {
+                        if !zast_pointer_difference_types_match(left_type, right_type) {
+                            self.semantic_error_span = expr.span
+                            self.semantic_error_category = ZAstSemanticErrorPointerDifference
+                            return error.InvalidArgument
+                        }
+                    } else if !zast_is_scalar_integer_type(right_type) {
+                        self.semantic_error_span = self.exprs[expr.left].span
+                        return error.InvalidArgument
+                    }
+                } else {
+                    self.semantic_error_span = self.exprs[expr.left].span
+                    return error.InvalidArgument
+                }
+            }
+        }
+        if expr.op == ZTokenAndAnd || expr.op == ZTokenOrOr {
+            left_type: ZAstText = zast_expr_type_text(self, decl, expr.left, through_stmt)
+            right_type: ZAstText = zast_expr_type_text(self, decl, expr.right, through_stmt)
+            if left_type.len > 0 && !ZAstText.eql_string(left_type, "bool") {
+                self.semantic_error_span = self.exprs[expr.left].span
+                return error.InvalidArgument
+            }
+            if right_type.len > 0 && !ZAstText.eql_string(right_type, "bool") {
+                self.semantic_error_span = self.exprs[expr.right].span
+                return error.InvalidArgument
+            }
+        }
+        if expr.op == ZTokenEqualEqual || expr.op == ZTokenBangEqual || expr.op == ZTokenGreater || expr.op == ZTokenLess || expr.op == ZTokenGreaterEqual || expr.op == ZTokenLessEqual {
+            // Preserve pointer/array wrappers here: comparison compatibility
+            // is nominal for those types, unlike element-type assignment.
+            left_type: ZAstText = zast_comparison_operand_type(self, decl, expr.left, through_stmt)
+            right_type: ZAstText = zast_comparison_operand_type(self, decl, expr.right, through_stmt)
+            if left_type.len > 0 && right_type.len > 0 {
+                ordered_comparison: bool = expr.op == ZTokenGreater || expr.op == ZTokenLess || expr.op == ZTokenGreaterEqual || expr.op == ZTokenLessEqual
+                comparable: bool = zast_is_scalar_integer_type(left_type) && zast_is_scalar_integer_type(right_type)
+                if !ordered_comparison && zast_text_same(left_type, right_type) {
+                    comparable = true
+                }
+                if zast_type_has_generic_arguments(left_type) || zast_type_has_generic_arguments(right_type) {
+                    // One side of a generic member comparison can retain the
+                    // unspecialized declaration name until nominal
+                    // substitution is complete.
+                    comparable = true
+                }
+                if !comparable {
+                    self.semantic_error_span = expr.span
+                    return error.InvalidArgument
+                }
+            }
+        }
+        return 0
+    }
+    if expr.kind == ZAstExprCall {
+        zast_validate_boolean_operators(self, decl, expr.left, through_stmt) catch |err| { return err }
+        argument_index: i64 = 0
+        while argument_index < expr.arg_count {
+            zast_validate_boolean_operators(self, decl, self.expr_args[expr.arg_start + argument_index], through_stmt) catch |err| { return err }
+            argument_index = argument_index + 1
+        }
+        return 0
+    }
+    if expr.kind == ZAstExprCast || expr.kind == ZAstExprField {
+        zast_validate_boolean_operators(self, decl, expr.left, through_stmt) catch |err| { return err }
+        return 0
+    }
+    if expr.kind == ZAstExprIndex {
+        zast_validate_boolean_operators(self, decl, expr.left, through_stmt) catch |err| { return err }
+        zast_validate_boolean_operators(self, decl, expr.right, through_stmt) catch |err| { return err }
+        return 0
+    }
+    if expr.kind == ZAstExprStructLiteral || expr.kind == ZAstExprArrayLiteral {
+        argument_index: i64 = 0
+        while argument_index < expr.arg_count {
+            zast_validate_boolean_operators(self, decl, self.expr_args[expr.arg_start + argument_index], through_stmt) catch |err| { return err }
+            argument_index = argument_index + 1
+        }
+    }
+    return 0
+}
+
+
+// Calls accept arrays where a pointer is expected, but pointer values
+// themselves must preserve both their indirection level and pointee type.
+// Address-of expressions are matched against their operand because their
+// compact inferred representation does not retain the complete pointer text.
+export fn zast_pointer_argument_matches(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, expected_type: ZAstText, through_stmt: i64) -> bool {
+    expected_type = zast_text_skip_ws(expected_type)
+    expected_is_void_pointer: bool = false
+    if expected_type.len > 1 && expected_type.ptr[0] == 42 {
+        expected_pointee: ZAstText
+        expected_pointee.ptr = expected_type.ptr + 1
+        expected_pointee.len = expected_type.len - 1
+        expected_is_void_pointer = ZAstText.eql_string(
+            zast_text_skip_ws(expected_pointee), "void"
+        )
+    }
+    argument: ZAstExpr = self.exprs[expr_index]
+    if argument.kind == ZAstExprUnary && argument.op == ZTokenAmp {
+        if expected_type.len <= 1 {
+            return false
+        }
+        expected_pointee: ZAstText
+        expected_pointee.ptr = expected_type.ptr + 1
+        expected_pointee.len = expected_type.len - 1
+        actual_pointee: ZAstText = zast_text_skip_ws(zast_expr_type_text(self, decl, argument.left, through_stmt))
+        if expected_is_void_pointer && actual_pointee.len > 0 {
+            return true
+        }
+        if actual_pointee.len > 0 && actual_pointee.ptr[0] == 91 {
+            return true
+        }
+        return actual_pointee.len > 0 && zast_text_same(expected_pointee, actual_pointee)
+    }
+
+    actual_type: ZAstText = zast_text_skip_ws(zast_expr_type_text(self, decl, expr_index, through_stmt))
+    // Preserve the established array-to-pointer decay behavior until array
+    // coercions are represented explicitly in the hosted type resolver.
+    if actual_type.len > 0 && actual_type.ptr[0] == 91 {
+        return zast_array_decays_to_pointer(expected_type, actual_type)
+    }
+    if expected_is_void_pointer && actual_type.len > 0 && actual_type.ptr[0] == 42 {
+        return true
+    }
+    return actual_type.len > 0 && zast_text_same(expected_type, actual_type)
+}
+
+
+export fn zast_validate_call_argument_types(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, through_stmt: i64) !i64 {
+    if expr_index == ZAstNoIndex { return 0 }
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind == ZAstExprCall {
+        function_index: i64 = ZAstNoIndex
+        if expr.name.len > 0 {
+            function_index = zast_function_name_known(self, expr.name)
+        } else if expr.left != ZAstNoIndex {
+            function_index = zast_qualified_decl_index(self, expr.left)
+        }
+        if function_index != ZAstNoIndex &&
+            self.decls[function_index].kind != ZAstDeclFunction &&
+            self.decls[function_index].kind != ZAstDeclExternFunction {
+            function_index = ZAstNoIndex
+        }
+        if function_index != ZAstNoIndex {
+                function_decl: ZAstDecl = self.decls[function_index]
+                if function_decl.param_count != expr.arg_count {
+                    self.semantic_error_span = self.exprs[expr.left].span
+                    return error.InvalidArgument
+                }
+                if !zast_call_generic_arguments_valid(self, expr) {
+                    self.semantic_error_span = self.exprs[expr.left].span
+                    return error.InvalidArgument
+                }
+                if function_decl.generic_param_count > 0 && expr.op != ZAstCallExplicitTypeArguments {
+                    generic_index: i64 = 0
+                    while generic_index < function_decl.generic_param_count {
+                        generic_name: ZAstText = self.generic_params[function_decl.generic_param_start + generic_index]
+                        has_unresolved_function_evidence: bool = false
+                        has_direct_value_evidence: bool = false
+                        inference_index: i64 = 0
+                        while inference_index < expr.arg_count && inference_index < function_decl.param_count {
+                            expected_type: ZAstText = zast_decl_type_text(
+                                self, self.params[function_decl.param_start + inference_index].type_index
+                            )
+                            argument_expr: ZAstExpr = self.exprs[self.expr_args[expr.arg_start + inference_index]]
+                            if zast_is_function_type(expected_type) &&
+                                zast_function_type_references_generic(expected_type, generic_name) &&
+                                argument_expr.kind == ZAstExprIdentifier {
+                                argument_function_index: i64 = zast_function_name_known(self, argument_expr.name)
+                                if argument_function_index != ZAstNoIndex && self.decls[argument_function_index].generic_param_count > 0 {
+                                    has_unresolved_function_evidence = true
+                                }
+                            } else if (zast_text_same(expected_type, generic_name) ||
+                                zast_text_same(zast_type_text_unwrap(expected_type), generic_name)) &&
+                                zast_expr_type_text(
+                                    self, decl, self.expr_args[expr.arg_start + inference_index], through_stmt
+                                ).len > 0 {
+                                has_direct_value_evidence = true
+                            }
+                            inference_index = inference_index + 1
+                        }
+                        if has_unresolved_function_evidence &&
+                            !has_direct_value_evidence &&
+                            zast_decl_generic_default_type(
+                                self, function_decl, generic_index
+                            ).len == 0 {
+                            self.semantic_error_span = self.exprs[expr.left].span
+                            return error.InvalidArgument
+                        }
+                        generic_index = generic_index + 1
+                    }
+                }
+                if function_decl.generic_param_count == 0 {
+                    argument_index: i64 = 0
+                    while argument_index < expr.arg_count {
+                        expected_type_index: i64 = self.params[function_decl.param_start + argument_index].type_index
+                        expected_type: ZAstText = zast_decl_type_text(self, expected_type_index)
+                        if zast_is_function_type(expected_type) && !zast_expr_type_matches(self, decl, self.expr_args[expr.arg_start + argument_index], expected_type_index, through_stmt) {
+                            self.semantic_error_span = self.exprs[expr.left].span
+                            zast_mark_not_assignable(self)
+                            return error.InvalidArgument
+                        }
+                        if expected_type.len > 0 && expected_type.ptr[0] == 42 && !zast_pointer_argument_matches(self, decl, self.expr_args[expr.arg_start + argument_index], expected_type, through_stmt) {
+                            self.semantic_error_span = self.exprs[expr.left].span
+                            zast_mark_not_assignable(self)
+                            return error.InvalidArgument
+                        }
+                        argument: ZAstExpr = self.exprs[self.expr_args[expr.arg_start + argument_index]]
+                        // Keep numeric coercion in its dedicated relation
+                        // helper below, but string literals have no implicit
+                        // conversion to scalar parameters.
+                        if argument.kind == ZAstExprString && !zast_expr_type_matches(self, decl, self.expr_args[expr.arg_start + argument_index], expected_type_index, through_stmt) {
+                            self.semantic_error_span = self.exprs[expr.left].span
+                            zast_mark_not_assignable(self)
+                            return error.InvalidArgument
+                        }
+                        if argument.kind == ZAstExprIdentifier && zast_is_scalar_integer_type(expected_type) {
+                            actual_type: ZAstText = zast_comparison_operand_type(self, decl, self.expr_args[expr.arg_start + argument_index], through_stmt)
+                            if zast_is_scalar_integer_type(actual_type) && !zast_integer_call_argument_matches(expected_type, actual_type) {
+                                self.semantic_error_span = self.exprs[expr.left].span
+                                zast_mark_not_assignable(self)
+                                return error.InvalidArgument
+                            }
+                        }
+                        argument_index = argument_index + 1
+                    }
+                }
+        }
+        argument_index: i64 = 0
+        while argument_index < expr.arg_count {
+            zast_validate_call_argument_types(self, decl, self.expr_args[expr.arg_start + argument_index], through_stmt) catch |err| { return err }
+            argument_index = argument_index + 1
+        }
+        return 0
+    }
+    if expr.kind == ZAstExprUnary || expr.kind == ZAstExprCast || expr.kind == ZAstExprField {
+        zast_validate_call_argument_types(self, decl, expr.left, through_stmt) catch |err| { return err }
+        return 0
+    }
+    if expr.kind == ZAstExprBinary || expr.kind == ZAstExprIndex {
+        zast_validate_call_argument_types(self, decl, expr.left, through_stmt) catch |err| { return err }
+        zast_validate_call_argument_types(self, decl, expr.right, through_stmt) catch |err| { return err }
+        return 0
+    }
+    if expr.kind == ZAstExprStructLiteral || expr.kind == ZAstExprArrayLiteral {
+        argument_index: i64 = 0
+        while argument_index < expr.arg_count {
+            zast_validate_call_argument_types(self, decl, self.expr_args[expr.arg_start + argument_index], through_stmt) catch |err| { return err }
+            argument_index = argument_index + 1
+        }
+    }
+    return 0
+}
+
+
+export fn zast_check_bool_condition(self: *ZAstModule, decl: ZAstDecl, stmt: ZAstStmt, through_stmt: i64) !i64 {
+    if stmt.expr_index == ZAstNoIndex || stmt.condition_has_recovery {
+        return 0
+    }
+    // Validate any operands whose types are already recoverable before name
+    // resolution defers a generic or imported projection.
+    zast_validate_boolean_operators(self, decl, stmt.expr_index, through_stmt) catch |err| {
+        return err
+    }
+    zast_validate_call_argument_types(self, decl, stmt.expr_index, through_stmt) catch |err| {
+        return err
+    }
+    if !zast_expr_names_known(self, decl, stmt.expr_index, through_stmt) {
+        // Generic members and imported projections can remain unresolved at
+        // this stage; their condition type is validated by the substitution
+        // pass rather than reported as a false unknown-name error.
+        return 0
+    }
+    condition_type: ZAstText = zast_expr_type_text(self, decl, stmt.expr_index, through_stmt)
+    // Keep generic/projection conditions deferred until their concrete type
+    // substitution is available. A known non-boolean still fails eagerly.
+    if condition_type.len == 0 {
+        return 0
+    }
+    if !ZAstText.eql_string(condition_type, "bool") {
+        self.semantic_error_span = self.exprs[stmt.expr_index].span
+        self.semantic_error_category = ZAstSemanticErrorConditionNotBool
+        return error.InvalidArgument
+    }
+    return 0
+}
+
+
+// Error unions require explicit recovery before conversion to an ordinary
+// value.  Pointer casts remain the supported representation-level escape
+// hatch; all other casts must operate on the recovered value instead.
+export fn zast_validate_error_union_casts(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, through_stmt: i64) !i64 {
+    if expr_index == ZAstNoIndex { return 0 }
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind == ZAstExprCast {
+        target_type: ZAstText = zast_text_skip_ws(zast_decl_type_text(self, expr.type_index))
+        if zast_expr_is_error_union(self, expr.left) && (target_type.len == 0 || target_type.ptr[0] != 42) {
+            self.semantic_error_span = expr.span
+            return error.InvalidArgument
+        }
+        zast_validate_error_union_casts(self, decl, expr.left, through_stmt) catch |err| { return err }
+        return 0
+    }
+    if expr.kind == ZAstExprUnary || expr.kind == ZAstExprField {
+        zast_validate_error_union_casts(self, decl, expr.left, through_stmt) catch |err| { return err }
+        return 0
+    }
+    if expr.kind == ZAstExprBinary || expr.kind == ZAstExprIndex {
+        zast_validate_error_union_casts(self, decl, expr.left, through_stmt) catch |err| { return err }
+        zast_validate_error_union_casts(self, decl, expr.right, through_stmt) catch |err| { return err }
+        return 0
+    }
+    if expr.kind == ZAstExprCall || expr.kind == ZAstExprStructLiteral || expr.kind == ZAstExprArrayLiteral {
+        argument_index: i64 = 0
+        while argument_index < expr.arg_count {
+            zast_validate_error_union_casts(self, decl, self.expr_args[expr.arg_start + argument_index], through_stmt) catch |err| { return err }
+            argument_index = argument_index + 1
+        }
+    }
+    return 0
+}
+
+
+export fn zast_positive_integer_literal_fits_type(literal: ZAstText, target_type: ZAstText) -> bool {
+    target_type = zast_text_skip_ws(target_type)
+    bits: i64 = zast_integer_type_bits(target_type)
+    if bits == 0 || bits >= 64 || literal.len == 0 {
+        return true
+    }
+    maximum: i64 = 0
+    if target_type.ptr[0] == 117 {
+        if bits == 8 { maximum = 255 }
+        if bits == 16 { maximum = 65535 }
+        if bits == 32 { maximum = 4294967295 }
+    } else {
+        if bits == 8 { maximum = 127 }
+        if bits == 16 { maximum = 32767 }
+        if bits == 32 { maximum = 2147483647 }
+    }
+    value: i64 = 0
+    index: i64 = 0
+    while index < literal.len {
+        digit: u8 = literal.ptr[index]
+        if digit < 48 || digit > 57 { return true }
+        value = value * 10 + cast(i64, digit - 48)
+        if value > maximum { return false }
+        index = index + 1
+    }
+    return true
+}
+
+
+export fn zast_union_match_cases_valid(self: *ZAstModule, decl: ZAstDecl, stmt: ZAstStmt, through_stmt: i64) -> bool {
+    match_type: ZAstText = zast_expr_type_text(self, decl, stmt.expr_index, through_stmt)
+    union_index: i64 = ZAstModule.find_owning_decl(
+        self, zast_type_text_base(match_type)
+    )
+    if union_index == ZAstNoIndex || self.decls[union_index].kind != ZAstDeclUnion {
+        return true
+    }
+    child_index: i64 = stmt.child_start
+    child_end: i64 = stmt.child_start + stmt.child_count
+    while child_index < child_end {
+        child: ZAstStmt = self.stmts[child_index]
+        if child.kind == ZAstStmtCase && child.expr_index != ZAstNoIndex {
+            variant_index: i64 = zast_union_case_variant_index(self, child.expr_index)
+            if variant_index != ZAstNoIndex &&
+                !zast_union_case_owner_matches(self, variant_index, match_type) {
+                self.semantic_error_span = self.exprs[variant_index].span
+                return false
+            }
+        }
+        if zast_stmt_has_children(child.kind) {
+            child_index = child.child_start + child.child_count
+        } else {
+            child_index = child_index + 1
+        }
+    }
+    return true
+}
+
+
+// Backend control-flow lowering uses the semantic exhaustiveness result to
+// distinguish a real continuation edge from the impossible final test edge.
+export fn ZAstModule.match_is_exhaustive(
+    self: *ZAstModule,
+    declaration: ZAstDecl,
+    statement: ZAstStmt,
+    through_statement: i64
+) -> bool {
+    return zast_match_is_exhaustive(
+        self, declaration, statement, through_statement
+    )
+}
+
+
+export fn zast_expr_is_union_tag(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, through_stmt: i64) -> bool {
+    if expr_index == ZAstNoIndex {
+        return false
+    }
+    expr: ZAstExpr = self.exprs[expr_index]
+    if expr.kind != ZAstExprField || !ZAstText.eql_string(expr.name, "tag") || expr.left == ZAstNoIndex {
+        return false
+    }
+    target_type: ZAstText = zast_type_text_base(zast_expr_type_text(self, decl, expr.left, through_stmt))
+    target_index: i64 = ZAstModule.find_decl(self, target_type)
+    return target_index != ZAstNoIndex && self.decls[target_index].kind == ZAstDeclUnion
+}
+
+
+export fn zast_switch_case_is_comparable(operand_type: ZAstText, case_type: ZAstText, is_enum: bool) -> bool {
+    if operand_type.len == 0 || case_type.len == 0 {
+        return false
+    }
+    if is_enum {
+        // Generic enum member expressions retain their nominal declaration
+        // name while the switch operand may retain its `<...>` suffix.
+        return zast_text_same(zast_type_text_base(operand_type), zast_type_text_base(case_type))
+    }
+    if ZAstText.eql_string(operand_type, "bool") {
+        return zast_text_same(operand_type, case_type)
+    }
+    return zast_is_scalar_integer_type(operand_type) && zast_is_scalar_integer_type(case_type)
+}
+
+
+export fn zast_switch_case_values_equal(self: *ZAstModule, left_index: i64, right_index: i64) -> bool {
+    left: ZAstExpr = self.exprs[left_index]
+    right: ZAstExpr = self.exprs[right_index]
+    if left.kind != right.kind { return false }
+    if left.kind == ZAstExprInteger || left.kind == ZAstExprBool || left.kind == ZAstExprError {
+        return zast_text_same(left.literal, right.literal) && zast_text_same(left.name, right.name)
+    }
+    if left.kind == ZAstExprIdentifier {
+        return zast_text_same(left.name, right.name)
+    }
+    if left.kind == ZAstExprField {
+        return zast_text_same(left.name, right.name) && left.left != ZAstNoIndex && right.left != ZAstNoIndex && zast_switch_case_values_equal(self, left.left, right.left)
+    }
+    return false
+}
+
+
+export fn zast_switch_is_valid(self: *ZAstModule, decl: ZAstDecl, stmt: ZAstStmt, through_stmt: i64) -> bool {
+    // Tagged-union discriminants are represented as a synthesized `.tag`
+    // projection. Their concrete enum text is introduced later by lowering,
+    // so leave variant compatibility to that dedicated union pass.
+    if zast_expr_is_union_tag(self, decl, stmt.expr_index, through_stmt) {
+        return true
+    }
+    operand_type: ZAstText = zast_text_skip_ws(zast_expr_type_text(self, decl, stmt.expr_index, through_stmt))
+    enum_index: i64 = ZAstModule.find_decl(self, zast_type_text_base(operand_type))
+    is_enum: bool = enum_index != ZAstNoIndex && self.decls[enum_index].kind == ZAstDeclEnum
+    if !zast_is_scalar_integer_type(operand_type) && !ZAstText.eql_string(operand_type, "bool") && !is_enum {
+        self.semantic_error_span = self.exprs[stmt.expr_index].span
+        return false
+    }
+
+    child_index: i64 = stmt.child_start
+    child_end: i64 = stmt.child_start + stmt.child_count
+    while child_index < child_end {
+        child: ZAstStmt = self.stmts[child_index]
+        if child.kind == ZAstStmtCase {
+            if !zast_expr_names_known(self, decl, child.expr_index, child_index - decl.stmt_start) {
+                self.semantic_error_span = self.exprs[child.expr_index].span
+                return false
+            }
+            case_type: ZAstText = zast_text_skip_ws(zast_expr_type_text(self, decl, child.expr_index, child_index - decl.stmt_start))
+            if !zast_switch_case_is_comparable(operand_type, case_type, is_enum) {
+                self.semantic_error_span = self.exprs[child.expr_index].span
+                return false
+            }
+            earlier_index: i64 = stmt.child_start
+            while earlier_index < child_index {
+                earlier: ZAstStmt = self.stmts[earlier_index]
+                if earlier.kind == ZAstStmtCase && zast_switch_case_values_equal(self, earlier.expr_index, child.expr_index) {
+                    self.semantic_error_span = self.exprs[child.expr_index].span
+                    return false
+                }
+                if zast_stmt_has_children(earlier.kind) {
+                    earlier_index = earlier.child_start + earlier.child_count
+                } else {
+                    earlier_index = earlier_index + 1
+                }
+            }
+        }
+        if zast_stmt_has_children(child.kind) {
+            child_index = child.child_start + child.child_count
+        } else {
+            child_index = child_index + 1
+        }
+    }
+
+    if is_enum && !zast_match_is_exhaustive(self, decl, stmt, through_stmt) {
+        self.semantic_error_span = stmt.span
+        return false
+    }
+    return true
+}
+
+
+// Check a catch after its enclosing expression has been resolved. The root
+// walker skips owned recovery statements so their locals remain scoped.
+export fn zast_check_catch_expression(self: *ZAstModule, decl: ZAstDecl, catch_index: i64, expected_type_index: i64, through_stmt: i64, allow_fallthrough: bool) !i64 {
+    catch_expr: ZAstExpr = self.exprs[catch_index]
+    if catch_expr.kind != ZAstExprCatch { return 0 }
+    source_is_error_union: bool = zast_expr_is_error_union(self, catch_expr.left)
+    if !source_is_error_union && self.exprs[catch_expr.left].kind == ZAstExprCall {
+        source_call: ZAstExpr = self.exprs[catch_expr.left]
+        source_decl: i64 = zast_function_name_known(self, source_call.name)
+        if source_decl == ZAstNoIndex { source_decl = zast_qualified_decl_index(self, source_call.left) }
+        // Method and imported projections are not all materialized in the
+        // compact module yet. A known local non-error function remains a
+        // hard rejection; an unresolved projection is validated by normal
+        // name lookup and remains recoverable at this boundary.
+        if source_decl == ZAstNoIndex { source_is_error_union = true }
+    }
+    if !source_is_error_union {
+        self.semantic_error_span = catch_expr.span
+        return error.InvalidArgument
+    }
+    body_index: i64 = catch_expr.arg_start
+    body_end: i64 = catch_expr.arg_start + catch_expr.arg_count
+    while body_index < body_end {
+        stmt: ZAstStmt = self.stmts[body_index]
+        if stmt.catch_owner != catch_index {
+            body_index = body_index + 1
+            continue
+        }
+        // The surrounding statement checker owns ordinary type validation.
+        // Recovery bodies are an isolated scope; validate their names and
+        // error-return transfer here without treating compiler-internal
+        // projection fields as standalone function locals.
+        if stmt.expr_index != ZAstNoIndex && !zast_expr_names_known(self, decl, stmt.expr_index, body_index - decl.stmt_start) {
+            self.semantic_error_span = stmt.span
+            return error.NotFound
+        }
+        if stmt.value_expr != ZAstNoIndex && !zast_expr_names_known(self, decl, stmt.value_expr, body_index - decl.stmt_start) {
+            self.semantic_error_span = stmt.span
+            return error.NotFound
+        }
+        if zast_stmt_has_children(stmt.kind) {
+            body_index = stmt.child_start + stmt.child_count
+        } else {
+            body_index = body_index + 1
+        }
+    }
+    if allow_fallthrough || catch_expr.arg_count == 0 { return 0 }
+    last_statement_index: i64 = catch_expr.arg_start + catch_expr.arg_count - 1
+    last: ZAstStmt = self.stmts[last_statement_index]
+    if last.kind == ZAstStmtReturn || last.kind == ZAstStmtBreak || last.kind == ZAstStmtContinue { return 0 }
+    if last.kind != ZAstStmtExpr || last.expr_index == ZAstNoIndex {
+        self.semantic_error_span = catch_expr.span
+        return error.InvalidArgument
+    }
+    if !zast_expr_type_matches(self, decl, last.expr_index, expected_type_index, last_statement_index - decl.stmt_start) {
+        self.semantic_error_span = self.exprs[last.expr_index].span
+        zast_mark_not_assignable(self)
+        return error.InvalidArgument
+    }
+    return 0
+}

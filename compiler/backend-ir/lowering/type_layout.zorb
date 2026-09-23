@@ -1,0 +1,707 @@
+import "../../../runtime/std/errors.zorb"
+import "../../../runtime/std/collections.zorb"
+import "../../../runtime/std/mem.zorb"
+import "../../../runtime/std/str.zorb"
+import "../../ast/types.zorb"
+import "../../ast.zorb"
+import "../../ast/resolution.zorb"
+import "../../ast/arena.zorb"
+import "../../ast/type_check.zorb"
+import "../../ast/statement_check.zorb"
+import "../../ast/validation.zorb"
+import "../../ast/warnings.zorb"
+import "../../frontend/diagnostic.zorb"
+import "../../token.zorb"
+import "../model.zorb"
+import "types.zorb"
+import "core.zorb"
+import "type_text.zorb"
+import "generics.zorb"
+
+export fn zbackend_ir_specialize_nominal_text(
+    type_layout: *ZBackendIrTypeLayout,
+    text: ZAstText
+) !ZAstText {
+    suffix: ZAstText = zbackend_ir_nominal_suffix(text)
+    if suffix.len == 0 || type_layout.active_generic_declaration == ZAstNoIndex {
+        return text
+    }
+    declaration: ZAstDecl = type_layout.ast.decls[
+        type_layout.active_generic_declaration
+    ]
+    changed: bool = false
+    total_length: i64 = zbackend_ir_nominal_base(text).len + 2
+    argument_count: i64 = 0
+    while true {
+        argument: ZAstText = zbackend_ir_generic_argument_at(suffix, argument_count)
+        if argument.len == 0 { break }
+        generic_index: i64 = zbackend_ir_generic_parameter_index(
+            type_layout.ast, declaration, argument
+        )
+        if generic_index != ZAstNoIndex {
+            replacement: ZAstText = zbackend_ir_generic_argument_at(
+                type_layout.active_generic_suffix, generic_index
+            )
+            if replacement.len == 0 { return error.InvalidArgument }
+            argument = replacement
+            changed = true
+        }
+        total_length = total_length + argument.len
+        if argument_count > 0 { total_length = total_length + 1 }
+        argument_count = argument_count + 1
+    }
+    if !changed || argument_count == 0 { return text }
+    raw: *u8 = std.mem.HeapAllocator.alloc(
+        type_layout.allocator, total_length + 1
+    ) catch |err| { return error.OutOfMemory }
+    base: ZAstText = zbackend_ir_nominal_base(text)
+    offset: i64 = 0
+    index: i64 = 0
+    while index < base.len {
+        raw[offset] = base.ptr[index]
+        offset = offset + 1
+        index = index + 1
+    }
+    raw[offset] = 60
+    offset = offset + 1
+    index = 0
+    while index < argument_count {
+        if index > 0 {
+            raw[offset] = 44
+            offset = offset + 1
+        }
+        argument: ZAstText = zbackend_ir_generic_argument_at(suffix, index)
+        generic_index: i64 = zbackend_ir_generic_parameter_index(
+            type_layout.ast, declaration, argument
+        )
+        if generic_index != ZAstNoIndex {
+            argument = zbackend_ir_generic_argument_at(
+                type_layout.active_generic_suffix, generic_index
+            )
+        }
+        argument_index: i64 = 0
+        while argument_index < argument.len {
+            raw[offset] = argument.ptr[argument_index]
+            offset = offset + 1
+            argument_index = argument_index + 1
+        }
+        index = index + 1
+    }
+    raw[offset] = 62
+    raw[offset + 1] = 0
+    return ZAstText{ ptr: raw, len: offset + 1 }
+}
+
+
+export fn zbackend_ir_error_union_type_name(
+    type_layout: *ZBackendIrTypeLayout,
+    payload_type_id: i64
+) !string {
+    if payload_type_id <= 0 || payload_type_id > type_layout.type_count {
+        return error.InvalidArgument
+    }
+    payload_type: ZBackendIrType = type_layout.types[payload_type_id - 1]
+    scalar_name: string = payload_type.scalar
+    if scalar_name == "bool" { return "zorb.result.bool" }
+    if scalar_name == "i8" { return "zorb.result.i8" }
+    if scalar_name == "u8" { return "zorb.result.u8" }
+    if scalar_name == "i16" { return "zorb.result.i16" }
+    if scalar_name == "u16" { return "zorb.result.u16" }
+    if scalar_name == "i32" { return "zorb.result.i32" }
+    if scalar_name == "u32" { return "zorb.result.u32" }
+    if scalar_name == "i64" { return "zorb.result.i64" }
+    if scalar_name == "u64" { return "zorb.result.u64" }
+    builder: std.collections.StringBuilder = std.collections.StringBuilder.init(
+        type_layout.allocator, 24
+    ) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(
+        &builder, type_layout.allocator, "zorb.result.type."
+    ) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append_i64(
+        &builder, type_layout.allocator, payload_type_id
+    ) catch |err| { return error.OutOfMemory }
+    return cast(string, std.collections.StringBuilder.c_string(
+        &builder, type_layout.allocator
+    ) catch |err| { return error.OutOfMemory })
+}
+
+
+export fn zbackend_ir_type_layout_find_error_union(
+    type_layout: *ZBackendIrTypeLayout,
+    payload_type_id: i64
+) -> i64 {
+    index: i64 = 0
+    while index < type_layout.type_count {
+        item: ZBackendIrType = type_layout.types[index]
+        if item.kind == "error_union" && item.element_type == payload_type_id { return item.id }
+        index = index + 1
+    }
+    return ZBACKEND_IR_NO_TYPE_ID
+}
+
+
+export fn zbackend_ir_type_layout_intern_error_union(
+    type_layout: *ZBackendIrTypeLayout,
+    payload_type_id: i64
+) !i64 {
+    existing: i64 = zbackend_ir_type_layout_find_error_union(type_layout, payload_type_id)
+    if existing != ZBACKEND_IR_NO_TYPE_ID { return existing }
+    zbackend_ir_type_layout_reserve(
+        type_layout, type_layout.type_count + 1
+    ) catch |err| { return err }
+    id: i64 = type_layout.type_count + 1
+    name: string = zbackend_ir_error_union_type_name(
+        type_layout, payload_type_id
+    ) catch |err| { return err }
+    type_layout.types[type_layout.type_count] = ZBackendIrType{
+        id: id,
+        kind: "error_union",
+        name: name,
+        scalar: "",
+        element_type: payload_type_id,
+        length: 0,
+        fields: cast(*ZBackendIrTypeField, 0),
+        field_count: 0,
+        is_packed: false
+    }
+    type_layout.type_count = type_layout.type_count + 1
+    return id
+}
+
+
+export fn zbackend_ir_type_layout_intern_nominal(
+    type_layout: *ZBackendIrTypeLayout,
+    text: ZAstText
+) !i64 {
+    text = zbackend_ir_specialize_nominal_text(
+        type_layout, text
+    ) catch |err| { return err }
+    base_text: ZAstText = zbackend_ir_nominal_base(text)
+    suffix: ZAstText = zbackend_ir_nominal_suffix(text)
+    base_text = zbackend_ir_canonical_declaration_name(
+        type_layout.ast, base_text
+    )
+    declaration_index: i64 = zbackend_ir_owning_declaration_index(
+        type_layout.ast, base_text
+    )
+    if declaration_index == ZAstNoIndex { return error.NotImplemented }
+    declaration: ZAstDecl = type_layout.ast.decls[declaration_index]
+    kind: string = ""
+    if declaration.kind == ZAstDeclStruct { kind = "struct" }
+    if declaration.kind == ZAstDeclEnum { kind = "enum" }
+    if declaration.kind == ZAstDeclUnion { kind = "union" }
+    if declaration.kind == ZAstDeclExternType {
+        return zbackend_ir_type_layout_intern_scalar(
+            type_layout, "i64"
+        ) catch |err| { return err }
+    }
+    if kind == "" { return error.NotImplemented }
+    if declaration.generic_param_count > 0 && suffix.len == 0 {
+        if declaration.generic_required_param_count > 0 { return error.InvalidArgument }
+        suffix = zbackend_ir_default_generic_suffix(
+            type_layout, declaration
+        ) catch |err| { return err }
+    }
+    if declaration.generic_param_count > 0 && suffix.len > 0 {
+        suffix = zbackend_ir_complete_generic_suffix(
+            type_layout, declaration, suffix
+        ) catch |err| { return err }
+    }
+    if declaration.generic_param_count == 0 && suffix.len > 0 { return error.InvalidArgument }
+    canonical_text: ZAstText = base_text
+    if suffix.len > 0 {
+        canonical_text = zbackend_ir_join_text(
+            type_layout.allocator, base_text, suffix
+        ) catch |err| { return err }
+    }
+    existing: i64 = zbackend_ir_type_layout_find_named(
+        type_layout, canonical_text
+    )
+    if existing != ZBACKEND_IR_NO_TYPE_ID { return existing }
+    zbackend_ir_type_layout_reserve(
+        type_layout, type_layout.type_count + 1
+    ) catch |err| { return err }
+    id: i64 = type_layout.type_count + 1
+    owned_name: string = zbackend_ir_copy_text(
+        type_layout.allocator, canonical_text
+    ) catch |err| { return err }
+    type_layout.types[type_layout.type_count] = ZBackendIrType{
+        id: id,
+        kind: kind,
+        name: owned_name,
+        scalar: "",
+        element_type: ZBACKEND_IR_NO_TYPE_ID,
+        length: 0,
+        fields: cast(*ZBackendIrTypeField, 0),
+        field_count: 0,
+        is_packed: false
+    }
+    type_layout.type_count = type_layout.type_count + 1
+    pushed_generic_context: bool = false
+    if declaration.generic_param_count > 0 {
+        zbackend_ir_type_layout_push_generic_context(
+            type_layout, declaration_index, suffix
+        ) catch |err| { return err }
+        pushed_generic_context = true
+    }
+    if declaration.kind == ZAstDeclEnum {
+        if declaration.type_index == ZAstNoIndex { return error.InvalidArgument }
+        underlying_type: i64 = zbackend_ir_type_layout_intern_text(
+            type_layout, type_layout.ast.types[declaration.type_index].text
+        ) catch |err| { return err }
+        type_layout.types[id - 1].element_type = underlying_type
+        if pushed_generic_context {
+            zbackend_ir_type_layout_pop_generic_context(type_layout) catch |err| { return err }
+        }
+        return id
+    }
+    fields: *ZBackendIrTypeField = cast(*ZBackendIrTypeField, 0)
+    if declaration.member_count > 0 {
+        raw: *u8 = std.mem.HeapAllocator.alloc(
+            type_layout.allocator,
+            declaration.member_count * Builtin.sizeof(ZBackendIrTypeField)
+        ) catch |err| { return error.OutOfMemory }
+        fields = cast(*ZBackendIrTypeField, raw)
+    }
+    type_layout.types[id - 1].fields = fields
+    type_layout.types[id - 1].field_count = declaration.member_count
+    member_index: i64 = 0
+    while member_index < declaration.member_count {
+        member: ZAstMember = type_layout.ast.members[declaration.member_start + member_index]
+        if member.type_index == ZAstNoIndex { return error.InvalidArgument }
+        fields[member_index] = ZBackendIrTypeField{
+            name: zbackend_ir_copy_text(
+                type_layout.allocator, member.name
+            ) catch |err| { return err },
+            type_id: zbackend_ir_type_layout_intern_text(
+                type_layout, type_layout.ast.types[member.type_index].text
+            ) catch |err| { return err }
+        }
+        member_index = member_index + 1
+    }
+    if pushed_generic_context {
+        zbackend_ir_type_layout_pop_generic_context(type_layout) catch |err| { return err }
+    }
+    return id
+}
+
+
+export fn zbackend_ir_type_layout_intern_function(
+    type_layout: *ZBackendIrTypeLayout,
+    text: ZAstText
+) !i64 {
+    parameter_count: i64 = zbackend_ir_function_type_param_count(text)
+    if parameter_count < 0 { return error.InvalidArgument }
+    return_text: ZAstText = zbackend_ir_function_type_return(text)
+    if return_text.len == 0 { return error.InvalidArgument }
+    return_type_id: i64 = zbackend_ir_type_layout_intern_text(
+        type_layout, return_text
+    ) catch |err| { return err }
+    parameter_type_ids: *i64 = cast(*i64, 0)
+    if parameter_count > 0 {
+        raw: *u8 = std.mem.HeapAllocator.alloc(
+            type_layout.allocator, parameter_count * Builtin.sizeof(i64)
+        ) catch |err| { return error.OutOfMemory }
+        parameter_type_ids = cast(*i64, raw)
+        parameter_index: i64 = 0
+        while parameter_index < parameter_count {
+            parameter_type_ids[parameter_index] = zbackend_ir_type_layout_intern_text(
+                type_layout, zbackend_ir_function_type_param(text, parameter_index)
+            ) catch |err| { return err }
+            parameter_index = parameter_index + 1
+        }
+    }
+    existing_index: i64 = 0
+    while existing_index < type_layout.type_count {
+        existing: ZBackendIrType = type_layout.types[existing_index]
+        if existing.kind == "function" && existing.element_type == return_type_id &&
+            existing.field_count == parameter_count {
+            matches: bool = true
+            parameter_index: i64 = 0
+            while parameter_index < parameter_count {
+                if existing.fields[parameter_index].type_id != parameter_type_ids[parameter_index] {
+                    matches = false
+                }
+                parameter_index = parameter_index + 1
+            }
+            if matches { return existing.id }
+        }
+        existing_index = existing_index + 1
+    }
+    zbackend_ir_type_layout_reserve(
+        type_layout, type_layout.type_count + 1
+    ) catch |err| { return err }
+    id: i64 = type_layout.type_count + 1
+    fields: *ZBackendIrTypeField = cast(*ZBackendIrTypeField, 0)
+    if parameter_count > 0 {
+        fields_raw: *u8 = std.mem.HeapAllocator.alloc(
+            type_layout.allocator, parameter_count * Builtin.sizeof(ZBackendIrTypeField)
+        ) catch |err| { return error.OutOfMemory }
+        fields = cast(*ZBackendIrTypeField, fields_raw)
+        parameter_index: i64 = 0
+        while parameter_index < parameter_count {
+            fields[parameter_index] = ZBackendIrTypeField{
+                name: "",
+                type_id: parameter_type_ids[parameter_index]
+            }
+            parameter_index = parameter_index + 1
+        }
+    }
+    builder: std.collections.StringBuilder = std.collections.StringBuilder.init(
+        type_layout.allocator, 20
+    ) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append(
+        &builder, type_layout.allocator, "zorb.fn."
+    ) catch |err| { return error.OutOfMemory }
+    std.collections.StringBuilder.append_i64(
+        &builder, type_layout.allocator, id
+    ) catch |err| { return error.OutOfMemory }
+    name: string = cast(string, std.collections.StringBuilder.c_string(
+        &builder, type_layout.allocator
+    ) catch |err| { return error.OutOfMemory })
+    type_layout.types[type_layout.type_count] = ZBackendIrType{
+        id: id,
+        kind: "function",
+        name: name,
+        scalar: "",
+        element_type: return_type_id,
+        length: 0,
+        fields: fields,
+        field_count: parameter_count,
+        is_packed: false
+    }
+    type_layout.type_count = type_layout.type_count + 1
+    return id
+}
+
+
+export fn zbackend_ir_type_layout_intern_text(
+    type_layout: *ZBackendIrTypeLayout,
+    text: ZAstText
+) !i64 {
+    text = zbackend_ir_trim_type_text(text)
+    volatile_payload: ZAstText = zbackend_ir_volatile_payload(text)
+    if volatile_payload.len > 0 {
+        return zbackend_ir_type_layout_intern_text(
+            type_layout, volatile_payload
+        ) catch |err| { return err }
+    }
+    if type_layout.active_generic_declaration != ZAstNoIndex {
+        declaration: ZAstDecl = type_layout.ast.decls[type_layout.active_generic_declaration]
+        generic_index: i64 = zbackend_ir_generic_parameter_index(
+            type_layout.ast, declaration, text
+        )
+        if generic_index != ZAstNoIndex {
+            argument: ZAstText = zbackend_ir_generic_argument_at(
+                type_layout.active_generic_suffix, generic_index
+            )
+            if argument.len == 0 { return error.InvalidArgument }
+            current_declaration: i64 = type_layout.active_generic_declaration
+            current_suffix: ZAstText = type_layout.active_generic_suffix
+            use_parent_context: bool = ZAstText.eql(argument, text) &&
+                type_layout.generic_context_count > 0
+            if ZAstText.eql(argument, text) && !use_parent_context {
+                return error.InvalidArgument
+            }
+            if use_parent_context {
+                parent_index: i64 = type_layout.generic_context_count - 1
+                type_layout.active_generic_declaration =
+                    type_layout.generic_context_declarations[parent_index]
+                type_layout.active_generic_suffix =
+                    type_layout.generic_context_suffixes[parent_index]
+            }
+            result: i64 = zbackend_ir_type_layout_intern_text(
+                type_layout, argument
+            ) catch |err| { return err }
+            if use_parent_context {
+                type_layout.active_generic_declaration = current_declaration
+                type_layout.active_generic_suffix = current_suffix
+            }
+            return result
+        }
+    }
+    if ZAstText.eql_string(text, "void") {
+        if type_layout.void_type_id == ZBACKEND_IR_NO_TYPE_ID {
+            type_layout.void_type_id = zbackend_ir_type_layout_intern_scalar(
+                type_layout, "void"
+            ) catch |err| { return err }
+        }
+        return type_layout.void_type_id
+    }
+    if zbackend_ir_is_supported_scalar_text(text) {
+        scalar_name: string = zbackend_ir_supported_scalar_name(text) catch |err| { return err }
+        return zbackend_ir_type_layout_intern_scalar(
+            type_layout, scalar_name
+        ) catch |err| { return err }
+    }
+    if ZAstText.eql_string(text, "string") {
+        u8_type: i64 = zbackend_ir_type_layout_intern_scalar(
+            type_layout, "u8"
+        ) catch |err| { return err }
+        return zbackend_ir_type_layout_intern_derived(
+            type_layout, "string", u8_type, 0
+        ) catch |err| { return err }
+    }
+    if text.len > 1 && text.ptr[0] == 33 {
+        if type_layout.error_type_id == ZBACKEND_IR_NO_TYPE_ID {
+            type_layout.error_type_id = zbackend_ir_type_layout_intern_scalar(
+                type_layout, "i32"
+            ) catch |err| { return err }
+        }
+        payload_type_id: i64 = zbackend_ir_type_layout_intern_text(
+            type_layout, ZAstText{ ptr: text.ptr + 1, len: text.len - 1 }
+        ) catch |err| { return err }
+        return zbackend_ir_type_layout_intern_error_union(
+            type_layout, payload_type_id
+        ) catch |err| { return err }
+    }
+    if zbackend_ir_is_function_type_text(text) {
+        return zbackend_ir_type_layout_intern_function(
+            type_layout, text
+        ) catch |err| { return err }
+    }
+    if zbackend_ir_is_slice_type_text(text) {
+        element_type: i64 = zbackend_ir_type_layout_intern_text(
+            type_layout, ZAstText{ ptr: text.ptr + 2, len: text.len - 2 }
+        ) catch |err| { return err }
+        return zbackend_ir_type_layout_intern_derived(
+            type_layout, "slice", element_type, 0
+        ) catch |err| { return err }
+    }
+    if text.len > 1 && text.ptr[0] == 42 {
+        pointee_type: i64 = zbackend_ir_type_layout_intern_text(
+            type_layout, ZAstText{ ptr: text.ptr + 1, len: text.len - 1 }
+        ) catch |err| { return err }
+        return zbackend_ir_type_layout_intern_derived(
+            type_layout, "pointer", pointee_type, 0
+        ) catch |err| { return err }
+    }
+    element: ZAstText = ZAstText.empty()
+    length: i64 = 0
+    if zbackend_ir_array_type_parts(type_layout, text, &element, &length) {
+        element_type: i64 = zbackend_ir_type_layout_intern_text(
+            type_layout, element
+        ) catch |err| { return err }
+        return zbackend_ir_type_layout_intern_derived(
+            type_layout, "array", element_type, length
+        ) catch |err| { return err }
+    }
+    return zbackend_ir_type_layout_intern_nominal(
+        type_layout, text
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_type_layout_type_id(
+    type_layout: *ZBackendIrTypeLayout,
+    ast: *ZAstModule,
+    type_index: i64
+) !i64 {
+    if type_index == ZAstNoIndex { return type_layout.void_type_id }
+    previous_declaration_start: i64 = type_layout.constant_scope_declaration_start
+    previous_statement: i64 = type_layout.constant_scope_statement
+    type_layout.constant_scope_declaration_start =
+        ast.types[type_index].scope_declaration_start
+    type_layout.constant_scope_statement = ast.types[type_index].scope_statement
+    result: i64 = zbackend_ir_type_layout_intern_text(
+        type_layout, ast.types[type_index].text
+    ) catch |err| {
+        type_layout.constant_scope_declaration_start = previous_declaration_start
+        type_layout.constant_scope_statement = previous_statement
+        return err
+    }
+    type_layout.constant_scope_declaration_start = previous_declaration_start
+    type_layout.constant_scope_statement = previous_statement
+    return result
+}
+
+
+export fn zbackend_ir_type_layout_is_signed(
+    type_layout: *ZBackendIrTypeLayout,
+    type_id: i64
+) -> bool {
+    if type_id <= 0 || type_id > type_layout.type_count { return false }
+    return zbackend_ir_scalar_name_is_signed(type_layout.types[type_id - 1].scalar)
+}
+
+
+export fn zbackend_ir_type_layout_element_type(
+    type_layout: *ZBackendIrTypeLayout,
+    type_id: i64
+) !i64 {
+    if type_id <= 0 || type_id > type_layout.type_count { return error.InvalidArgument }
+    item: ZBackendIrType = type_layout.types[type_id - 1]
+    if item.kind != "pointer" && item.kind != "array" && item.kind != "slice" &&
+        item.kind != "string" { return error.InvalidArgument }
+    return item.element_type
+}
+
+
+export fn zbackend_ir_type_layout_pointer_to(
+    type_layout: *ZBackendIrTypeLayout,
+    element_type: i64
+) !i64 {
+    return zbackend_ir_type_layout_intern_derived(
+        type_layout, "pointer", element_type, 0
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_module_type_layout(
+    allocator: *std.mem.HeapAllocator,
+    ast: *ZAstModule,
+    target_triple: string
+) !ZBackendIrTypeLayout {
+    type_layout: ZBackendIrTypeLayout = ZBackendIrTypeLayout{
+        allocator: allocator,
+        ast: ast,
+        target_triple: target_triple,
+        constant_scope_declaration_start: ZAstNoIndex,
+        constant_scope_statement: ZAstNoIndex,
+        types: cast(*ZBackendIrType, 0),
+        type_count: 0,
+        type_capacity: 0,
+        bool_type_id: ZBACKEND_IR_NO_TYPE_ID,
+        error_type_id: ZBACKEND_IR_NO_TYPE_ID,
+        void_type_id: ZBACKEND_IR_NO_TYPE_ID,
+        active_generic_declaration: ZAstNoIndex,
+        active_generic_suffix: ZAstText.empty(),
+        generic_context_declarations: cast(*i64, 0),
+        generic_context_suffixes: cast(*ZAstText, 0),
+        generic_context_count: 0,
+        generic_context_capacity: ast.len + ast.expr_count + 1,
+        generic_instance_declarations: cast(*i64, 0),
+        generic_instance_suffixes: cast(*ZAstText, 0),
+        generic_instance_count: 0,
+        concrete_function_count: zbackend_ir_function_count(ast)
+    }
+    generic_context_declarations_raw: *u8 = std.mem.HeapAllocator.alloc(
+        allocator, type_layout.generic_context_capacity * Builtin.sizeof(i64)
+    ) catch |err| { return error.OutOfMemory }
+    generic_context_suffixes_raw: *u8 = std.mem.HeapAllocator.alloc(
+        allocator, type_layout.generic_context_capacity * Builtin.sizeof(ZAstText)
+    ) catch |err| { return error.OutOfMemory }
+    type_layout.generic_context_declarations = cast(*i64, generic_context_declarations_raw)
+    type_layout.generic_context_suffixes = cast(*ZAstText, generic_context_suffixes_raw)
+    has_void: bool = false
+    has_error_union: bool = false
+    has_slice: bool = false
+    scan_type_index: i64 = 0
+    while scan_type_index < ast.type_count {
+        if zbackend_ir_is_slice_type_text(ast.types[scan_type_index].text) {
+            has_slice = true
+        }
+        scan_type_index = scan_type_index + 1
+    }
+    index: i64 = 0
+    while index < ast.len {
+        declaration: ZAstDecl = ast.decls[index]
+        if (declaration.kind == ZAstDeclFunction || declaration.kind == ZAstDeclExternFunction) &&
+            !declaration.is_imported &&
+            declaration.generic_param_count == 0 {
+            if declaration.return_type_index == ZAstNoIndex {
+                has_void = true
+            } else {
+                zbackend_ir_type_layout_intern_text(
+                    &type_layout, ast.types[declaration.return_type_index].text
+                ) catch |err| { return err }
+            }
+            if declaration.return_is_error_union { has_error_union = true }
+            parameter_index: i64 = 0
+            while parameter_index < declaration.param_count {
+                parameter: ZAstParam = ast.params[declaration.param_start + parameter_index]
+                if parameter.type_index == ZAstNoIndex { return error.NotImplemented }
+                zbackend_ir_type_layout_intern_text(
+                    &type_layout, ast.types[parameter.type_index].text
+                ) catch |err| { return err }
+                parameter_index = parameter_index + 1
+            }
+        }
+        index = index + 1
+    }
+    if type_layout.type_count == 0 {
+        zbackend_ir_type_layout_intern_scalar(
+            &type_layout, "void"
+        ) catch |err| { return err }
+    }
+    type_layout.bool_type_id = zbackend_ir_type_layout_intern_scalar(
+        &type_layout, "bool"
+    ) catch |err| { return err }
+    if has_error_union || has_slice || ast.error_count > 0 {
+        type_layout.error_type_id = zbackend_ir_type_layout_intern_scalar(
+            &type_layout, "i32"
+        ) catch |err| { return err }
+    }
+    if has_void || has_slice {
+        type_layout.void_type_id = zbackend_ir_type_layout_intern_scalar(
+            &type_layout, "void"
+        ) catch |err| { return err }
+    }
+    zbackend_ir_register_generic_instances(&type_layout) catch |err| { return err }
+    if type_layout.error_type_id == ZBACKEND_IR_NO_TYPE_ID {
+        generic_error_index: i64 = 0
+        while generic_error_index < type_layout.generic_instance_count {
+            if ast.decls[type_layout.generic_instance_declarations[generic_error_index]].return_is_error_union {
+                type_layout.error_type_id = zbackend_ir_type_layout_intern_scalar(
+                    &type_layout, "i32"
+                ) catch |err| { return err }
+                generic_error_index = type_layout.generic_instance_count
+            } else {
+                generic_error_index = generic_error_index + 1
+            }
+        }
+    }
+    index = 0
+    while index < ast.len {
+        declaration: ZAstDecl = ast.decls[index]
+        if (declaration.kind == ZAstDeclFunction || declaration.kind == ZAstDeclExternFunction) &&
+            !declaration.is_imported &&
+            declaration.return_is_error_union &&
+            declaration.generic_param_count == 0 {
+            payload_type_id: i64 = zbackend_ir_type_layout_type_id(
+                &type_layout, ast, declaration.return_type_index
+            ) catch |err| { return err }
+            zbackend_ir_type_layout_intern_error_union(
+                &type_layout, payload_type_id
+            ) catch |err| { return err }
+        }
+        index = index + 1
+    }
+    generic_instance_index: i64 = 0
+    while generic_instance_index < type_layout.generic_instance_count {
+        declaration_index: i64 = type_layout.generic_instance_declarations[generic_instance_index]
+        declaration: ZAstDecl = ast.decls[declaration_index]
+        if declaration.return_is_error_union {
+            type_layout.active_generic_declaration = declaration_index
+            type_layout.active_generic_suffix = type_layout.generic_instance_suffixes[generic_instance_index]
+            payload_type_id: i64 = zbackend_ir_type_layout_type_id(
+                &type_layout, ast, declaration.return_type_index
+            ) catch |err| { return err }
+            zbackend_ir_type_layout_intern_error_union(
+                &type_layout, payload_type_id
+            ) catch |err| { return err }
+        }
+        generic_instance_index = generic_instance_index + 1
+    }
+    type_layout.active_generic_declaration = ZAstNoIndex
+    type_layout.active_generic_suffix = ZAstText.empty()
+    // Locals and future casts can introduce native types that do not appear
+    // in a function signature. Intern every supported reference retained by the
+    // checked AST after the stable signature/error-union prefix.
+    type_index: i64 = 0
+    while type_index < ast.type_count {
+        type_text: ZAstText = ast.types[type_index].text
+        type_layout.constant_scope_declaration_start =
+            ast.types[type_index].scope_declaration_start
+        type_layout.constant_scope_statement = ast.types[type_index].scope_statement
+        if zbackend_ir_is_supported_type_text(&type_layout, type_text) {
+            zbackend_ir_type_layout_intern_text(
+                &type_layout, type_text
+            ) catch |err| { return err }
+        }
+        type_index = type_index + 1
+    }
+    type_layout.constant_scope_declaration_start = ZAstNoIndex
+    type_layout.constant_scope_statement = ZAstNoIndex
+    return type_layout
+}

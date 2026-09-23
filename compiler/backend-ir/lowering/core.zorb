@@ -1,0 +1,682 @@
+import "../../../runtime/std/errors.zorb"
+import "../../../runtime/std/collections.zorb"
+import "../../../runtime/std/mem.zorb"
+import "../../../runtime/std/str.zorb"
+import "../../ast/types.zorb"
+import "../../ast.zorb"
+import "../../ast/resolution.zorb"
+import "../../ast/arena.zorb"
+import "../../ast/type_check.zorb"
+import "../../ast/statement_check.zorb"
+import "../../ast/validation.zorb"
+import "../../ast/warnings.zorb"
+import "../../frontend/diagnostic.zorb"
+import "../../token.zorb"
+import "../model.zorb"
+import "types.zorb"
+
+export fn zbackend_ir_set_diagnostic(
+    diagnostic: *ZDiagnostic,
+    declaration: ZAstDecl,
+    span: ZAstSpan,
+    code: string,
+    message: string
+) {
+    if ZDiagnostic.is_present(diagnostic[0]) { return }
+    diagnostic[0] = ZDiagnostic{
+        severity: ZDiagnosticSeverityError,
+        phase: "lower",
+        code: code,
+        message: message,
+        span: ZSourceSpan{
+            source: ZSourceId{ value: declaration.source_index },
+            line: span.line,
+            column: span.column,
+            length: span.length
+        }
+    }
+}
+
+
+export fn zbackend_ir_internal_message(err: i64) -> string {
+    if err == error.InvalidArgument {
+        return "internal compiler invariant failed: Backend IR lowering received an invalid argument"
+    }
+    if err == error.OutOfBounds {
+        return "internal compiler invariant failed: Backend IR lowering accessed an out-of-bounds compiler arena"
+    }
+    if err == error.Overflow {
+        return "internal compiler invariant failed: Backend IR lowering overflowed an internal value"
+    }
+    return "internal compiler error during Backend IR lowering"
+}
+
+
+export fn zbackend_ir_set_failure_diagnostic(
+    diagnostic: *ZDiagnostic,
+    declaration: ZAstDecl,
+    span: ZAstSpan,
+    err: i64,
+    unsupported_message: string
+) {
+    if err == error.OutOfMemory { return }
+    if err == error.NotImplemented {
+        zbackend_ir_set_diagnostic(
+            diagnostic, declaration, span, "lower.unsupported", unsupported_message
+        )
+        return
+    }
+    zbackend_ir_set_diagnostic(
+        diagnostic,
+        declaration,
+        span,
+        "lower.internal",
+        zbackend_ir_internal_message(err)
+    )
+}
+
+
+export fn zbackend_ir_set_module_failure_diagnostic(
+    diagnostic: *ZDiagnostic,
+    ast: *ZAstModule,
+    err: i64
+) {
+    declaration_index: i64 = 0
+    while declaration_index < ast.len {
+        declaration: ZAstDecl = ast.decls[declaration_index]
+        if !declaration.is_imported {
+            zbackend_ir_set_failure_diagnostic(
+                diagnostic,
+                declaration,
+                declaration.span,
+                err,
+                "backend IR lowering does not support a type or declaration in this module"
+            )
+            return
+        }
+        declaration_index = declaration_index + 1
+    }
+}
+
+
+export fn zbackend_ir_copy_text(allocator: *std.mem.HeapAllocator, text: ZAstText) !string {
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, text.len + 1) catch |err| {
+        return error.OutOfMemory
+    }
+    index: i64 = 0
+    while text.len > index {
+        raw[index] = text.ptr[index]
+        index = index + 1
+    }
+    raw[text.len] = 0
+    return cast(string, raw)
+}
+
+
+export fn zbackend_ir_join_text(
+    allocator: *std.mem.HeapAllocator,
+    prefix: ZAstText,
+    suffix: ZAstText
+) !ZAstText {
+    raw: *u8 = std.mem.HeapAllocator.alloc(
+        allocator, prefix.len + suffix.len + 1
+    ) catch |err| { return error.OutOfMemory }
+    index: i64 = 0
+    while prefix.len > index {
+        raw[index] = prefix.ptr[index]
+        index = index + 1
+    }
+    suffix_index: i64 = 0
+    while suffix.len > suffix_index {
+        raw[index] = suffix.ptr[suffix_index]
+        index = index + 1
+        suffix_index = suffix_index + 1
+    }
+    raw[index] = 0
+    return ZAstText{ ptr: raw, len: index }
+}
+
+
+export fn zbackend_ir_parse_positive_integer(text: ZAstText) !i64 {
+    if text.len == 0 { return error.InvalidArgument }
+    value: i64 = 0
+    index: i64 = 0
+    while text.len > index {
+        byte: i64 = cast(i64, text.ptr[index])
+        if byte < 48 || byte > 57 { return error.InvalidArgument }
+        digit: i64 = byte - 48
+        if (value > (ZBACKEND_IR_MAX_I64 - digit) / 10) { return error.Overflow }
+        value = value * 10 + digit
+        index = index + 1
+    }
+    return value
+}
+
+
+export fn zbackend_ir_parse_negative_integer(magnitude: ZAstText) !i64 {
+    if ZAstText.eql_string(magnitude, "9223372036854775808") {
+        return 0 - ZBACKEND_IR_MAX_I64 - 1
+    }
+    value: i64 = zbackend_ir_parse_positive_integer(
+        magnitude
+    ) catch |err| { return err }
+    return 0 - value
+}
+
+
+export fn zbackend_ir_canonical_declaration_name(ast: *ZAstModule, name: ZAstText) -> ZAstText {
+    declaration_index: i64 = ZAstModule.find_decl(ast, name)
+    if declaration_index == ZAstNoIndex { return name }
+    declaration: ZAstDecl = ast.decls[declaration_index]
+    if declaration.is_imported && declaration.canonical_name.len > 0 {
+        return declaration.canonical_name
+    }
+    return name
+}
+
+
+export fn zbackend_ir_owning_declaration_index(ast: *ZAstModule, name: ZAstText) -> i64 {
+    name = zbackend_ir_canonical_declaration_name(ast, name)
+    index: i64 = 0
+    while index < ast.len {
+        if !ast.decls[index].is_imported && ZAstText.eql(ast.decls[index].name, name) {
+            return index
+        }
+        index = index + 1
+    }
+    return ZAstNoIndex
+}
+
+
+export fn zbackend_ir_type_layout_push_generic_context(
+    type_layout: *ZBackendIrTypeLayout,
+    declaration_index: i64,
+    suffix: ZAstText
+) !i64 {
+    if type_layout.generic_context_count >= type_layout.generic_context_capacity {
+        return error.OutOfBounds
+    }
+    type_layout.generic_context_declarations[type_layout.generic_context_count] =
+        type_layout.active_generic_declaration
+    type_layout.generic_context_suffixes[type_layout.generic_context_count] =
+        type_layout.active_generic_suffix
+    type_layout.generic_context_count = type_layout.generic_context_count + 1
+    type_layout.active_generic_declaration = declaration_index
+    type_layout.active_generic_suffix = suffix
+    return 0
+}
+
+
+export fn zbackend_ir_type_layout_pop_generic_context(
+    type_layout: *ZBackendIrTypeLayout
+) !i64 {
+    if type_layout.generic_context_count <= 0 { return error.InvalidArgument }
+    type_layout.generic_context_count = type_layout.generic_context_count - 1
+    type_layout.active_generic_declaration = type_layout.generic_context_declarations[
+        type_layout.generic_context_count
+    ]
+    type_layout.active_generic_suffix = type_layout.generic_context_suffixes[
+        type_layout.generic_context_count
+    ]
+    return 0
+}
+
+
+export fn zbackend_ir_function_count(module: *ZAstModule) -> i64 {
+    count: i64 = 0
+    index: i64 = 0
+    while index < module.len {
+        declaration: ZAstDecl = module.decls[index]
+        if (declaration.kind == ZAstDeclFunction || declaration.kind == ZAstDeclExternFunction) &&
+            !declaration.is_imported &&
+            declaration.generic_param_count == 0 {
+            count = count + 1
+        }
+        index = index + 1
+    }
+    return count
+}
+
+
+export fn zbackend_ir_global_count(module: *ZAstModule) -> i64 {
+    count: i64 = 0
+    index: i64 = 0
+    while index < module.len {
+        declaration: ZAstDecl = module.decls[index]
+        if (declaration.kind == ZAstDeclGlobal || declaration.kind == ZAstDeclConst) &&
+            !declaration.is_imported {
+            count = count + 1
+        }
+        index = index + 1
+    }
+    return count
+}
+
+
+export fn zbackend_ir_global_declaration(ast: *ZAstModule, name: ZAstText) !ZAstDecl {
+    name = zbackend_ir_canonical_declaration_name(ast, name)
+    index: i64 = 0
+    while index < ast.len {
+        declaration: ZAstDecl = ast.decls[index]
+        if (declaration.kind == ZAstDeclGlobal || declaration.kind == ZAstDeclConst) &&
+            !declaration.is_imported && ZAstText.eql(declaration.name, name) {
+            return declaration
+        }
+        index = index + 1
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_is_global_name(ast: *ZAstModule, name: ZAstText) -> bool {
+    index: i64 = 0
+    while index < ast.len {
+        declaration: ZAstDecl = ast.decls[index]
+        if (declaration.kind == ZAstDeclGlobal || declaration.kind == ZAstDeclConst) &&
+            ZAstText.eql(declaration.name, name) {
+            return true
+        }
+        index = index + 1
+    }
+    return false
+}
+
+
+export fn zbackend_ir_global_id(ast: *ZAstModule, name: ZAstText) !i64 {
+    name = zbackend_ir_canonical_declaration_name(ast, name)
+    global_id: i64 = 1
+    index: i64 = 0
+    while index < ast.len {
+        declaration: ZAstDecl = ast.decls[index]
+        if (declaration.kind == ZAstDeclGlobal || declaration.kind == ZAstDeclConst) &&
+            !declaration.is_imported {
+            if ZAstText.eql(declaration.name, name) { return global_id }
+            global_id = global_id + 1
+        }
+        index = index + 1
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_qualified_expression_length(ast: *ZAstModule, expression_index: i64) !i64 {
+    if expression_index < 0 || expression_index >= ast.expr_count { return error.InvalidArgument }
+    expression: ZAstExpr = ast.exprs[expression_index]
+    if expression.kind == ZAstExprIdentifier { return expression.name.len }
+    if expression.kind != ZAstExprField || expression.left == ZAstNoIndex {
+        return error.NotImplemented
+    }
+    prefix_length: i64 = zbackend_ir_qualified_expression_length(
+        ast, expression.left
+    ) catch |err| { return err }
+    return prefix_length + 1 + expression.name.len
+}
+
+
+export fn zbackend_ir_write_qualified_expression(
+    ast: *ZAstModule,
+    expression_index: i64,
+    destination: *u8,
+    offset: *i64
+) !i64 {
+    expression: ZAstExpr = ast.exprs[expression_index]
+    if expression.kind == ZAstExprField {
+        zbackend_ir_write_qualified_expression(
+            ast, expression.left, destination, offset
+        ) catch |err| { return err }
+        destination[offset[0]] = 46
+        offset[0] = offset[0] + 1
+    } else if expression.kind != ZAstExprIdentifier {
+        return error.NotImplemented
+    }
+    index: i64 = 0
+    while index < expression.name.len {
+        destination[offset[0]] = expression.name.ptr[index]
+        offset[0] = offset[0] + 1
+        index = index + 1
+    }
+    return 0
+}
+
+
+export fn zbackend_ir_resolved_global_name(
+    type_layout: *ZBackendIrTypeLayout,
+    expression_index: i64
+) !ZAstText {
+    if expression_index < 0 || expression_index >= type_layout.ast.expr_count {
+        return error.InvalidArgument
+    }
+    expression: ZAstExpr = type_layout.ast.exprs[expression_index]
+    if expression.kind == ZAstExprIdentifier &&
+        zbackend_ir_is_global_name(type_layout.ast, expression.name) {
+        return zbackend_ir_canonical_declaration_name(
+            type_layout.ast, expression.name
+        )
+    }
+    if expression.kind != ZAstExprField { return ZAstText.empty() }
+    length: i64 = zbackend_ir_qualified_expression_length(
+        type_layout.ast, expression_index
+    ) catch |err| { return ZAstText.empty() }
+    raw: *u8 = std.mem.HeapAllocator.alloc(
+        type_layout.allocator, length + 1
+    ) catch |err| { return error.OutOfMemory }
+    offset: i64 = 0
+    zbackend_ir_write_qualified_expression(
+        type_layout.ast, expression_index, raw, &offset
+    ) catch |err| { return ZAstText.empty() }
+    raw[length] = 0
+    candidate: ZAstText = ZAstText{ ptr: raw, len: length }
+    if !zbackend_ir_is_global_name(type_layout.ast, candidate) {
+        return ZAstText.empty()
+    }
+    return zbackend_ir_canonical_declaration_name(
+        type_layout.ast, candidate
+    )
+}
+
+
+export fn zbackend_ir_first_function(module: *ZAstModule) !ZAstDecl {
+    index: i64 = 0
+    while index < module.len {
+        declaration: ZAstDecl = module.decls[index]
+        if declaration.kind == ZAstDeclFunction && !declaration.is_imported &&
+            declaration.generic_param_count == 0 { return declaration }
+        index = index + 1
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_parameter_id(ast: *ZAstModule, declaration: ZAstDecl, name: ZAstText) !i64 {
+    index: i64 = 0
+    while declaration.param_count > index {
+        parameter: ZAstParam = ast.params[declaration.param_start + index]
+        if ZAstText.eql(parameter.name, name) { return index + 1 }
+        index = index + 1
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_function_id(ast: *ZAstModule, name: ZAstText) !i64 {
+    name = zbackend_ir_canonical_declaration_name(ast, name)
+    function_id: i64 = 1
+    index: i64 = 0
+    while index < ast.len {
+        declaration: ZAstDecl = ast.decls[index]
+        if (declaration.kind == ZAstDeclFunction || declaration.kind == ZAstDeclExternFunction) &&
+            !declaration.is_imported &&
+            declaration.generic_param_count == 0 {
+            if ZAstText.eql(declaration.name, name) { return function_id }
+            function_id = function_id + 1
+        }
+        index = index + 1
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_find_generic_instance_id(
+    type_layout: *ZBackendIrTypeLayout,
+    declaration_name: ZAstText,
+    suffix: ZAstText
+) -> i64 {
+    declaration_name = zbackend_ir_canonical_declaration_name(
+        type_layout.ast, declaration_name
+    )
+    declaration_index: i64 = zbackend_ir_owning_declaration_index(
+        type_layout.ast, declaration_name
+    )
+    if declaration_index == ZAstNoIndex { return 0 }
+    instance_index: i64 = 0
+    while instance_index < type_layout.generic_instance_count {
+        if type_layout.generic_instance_declarations[instance_index] == declaration_index &&
+            ZAstText.eql(type_layout.generic_instance_suffixes[instance_index], suffix) {
+            return type_layout.concrete_function_count + instance_index + 1
+        }
+        instance_index = instance_index + 1
+    }
+    return 0
+}
+
+
+export fn zbackend_ir_generic_instance_id(
+    type_layout: *ZBackendIrTypeLayout,
+    declaration_name: ZAstText,
+    suffix: ZAstText
+) !i64 {
+    instance_id: i64 = zbackend_ir_find_generic_instance_id(
+        type_layout, declaration_name, suffix
+    )
+    if instance_id == 0 { return error.NotImplemented }
+    return instance_id
+}
+
+
+export fn zbackend_ir_function_declaration(ast: *ZAstModule, name: ZAstText) !ZAstDecl {
+    name = zbackend_ir_canonical_declaration_name(ast, name)
+    index: i64 = 0
+    while index < ast.len {
+        declaration: ZAstDecl = ast.decls[index]
+        if (declaration.kind == ZAstDeclFunction || declaration.kind == ZAstDeclExternFunction) &&
+            !declaration.is_imported && ZAstText.eql(declaration.name, name) {
+            return declaration
+        }
+        index = index + 1
+    }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_call_function_id(
+    type_layout: *ZBackendIrTypeLayout,
+    expression: ZAstExpr,
+    generic_suffix: ZAstText
+) !i64 {
+    if generic_suffix.len > 0 {
+        return zbackend_ir_generic_instance_id(
+            type_layout, expression.name, generic_suffix
+        ) catch |err| { return err }
+    }
+    if expression.left != ZAstNoIndex {
+        callee: ZAstExpr = type_layout.ast.exprs[expression.left]
+        if callee.type_index != ZAstNoIndex {
+            declaration: ZAstDecl = zbackend_ir_function_declaration(
+                type_layout.ast, expression.name
+            ) catch |err| { return err }
+            if declaration.generic_param_count > 0 {
+                return zbackend_ir_generic_instance_id(
+                    type_layout,
+                    expression.name,
+                    type_layout.ast.types[callee.type_index].text
+                ) catch |err| { return err }
+            }
+        }
+    }
+    return zbackend_ir_function_id(
+        type_layout.ast, expression.name
+    ) catch |err| { return err }
+}
+
+
+export fn zbackend_ir_is_function_name(ast: *ZAstModule, name: ZAstText) -> bool {
+    index: i64 = 0
+    while index < ast.len {
+        declaration: ZAstDecl = ast.decls[index]
+        if (declaration.kind == ZAstDeclFunction || declaration.kind == ZAstDeclExternFunction) &&
+            ZAstText.eql(declaration.name, name) {
+            return true
+        }
+        index = index + 1
+    }
+    return false
+}
+
+
+export fn zbackend_ir_name_matches_qualified_suffix(name: ZAstText, suffix: ZAstText) -> bool {
+    if ZAstText.eql(name, suffix) { return true }
+    if name.len <= suffix.len { return false }
+    start: i64 = name.len - suffix.len
+    if start <= 0 || name.ptr[start - 1] != 46 { return false }
+    return ZAstText.eql(
+        ZAstText{ ptr: name.ptr + start, len: suffix.len }, suffix
+    )
+}
+
+
+export fn zbackend_ir_is_error_name(ast: *ZAstModule, name: ZAstText) -> bool {
+    index: i64 = 0
+    while index < ast.len {
+        declaration: ZAstDecl = ast.decls[index]
+        if declaration.kind == ZAstDeclError &&
+            zbackend_ir_name_matches_qualified_suffix(name, declaration.name) {
+            return true
+        }
+        index = index + 1
+    }
+    return false
+}
+
+
+export fn zbackend_ir_resolved_call_name(
+    type_layout: *ZBackendIrTypeLayout,
+    expression: ZAstExpr
+) !ZAstText {
+    if zbackend_ir_is_function_name(type_layout.ast, expression.name) {
+        return zbackend_ir_canonical_declaration_name(
+            type_layout.ast, expression.name
+        )
+    }
+    if expression.left == ZAstNoIndex { return expression.name }
+    length: i64 = zbackend_ir_qualified_expression_length(
+        type_layout.ast, expression.left
+    ) catch |err| { return expression.name }
+    raw: *u8 = std.mem.HeapAllocator.alloc(
+        type_layout.allocator, length + 1
+    ) catch |err| { return error.OutOfMemory }
+    offset: i64 = 0
+    zbackend_ir_write_qualified_expression(
+        type_layout.ast, expression.left, raw, &offset
+    ) catch |err| { return expression.name }
+    raw[length] = 0
+    candidate: ZAstText = ZAstText{ ptr: raw, len: length }
+    if zbackend_ir_is_function_name(type_layout.ast, candidate) {
+        return zbackend_ir_canonical_declaration_name(
+            type_layout.ast, candidate
+        )
+    }
+    return expression.name
+}
+
+
+export fn zbackend_ir_resolved_function_value_name(
+    type_layout: *ZBackendIrTypeLayout,
+    expression_index: i64
+) !ZAstText {
+    if expression_index < 0 || expression_index >= type_layout.ast.expr_count {
+        return error.InvalidArgument
+    }
+    expression: ZAstExpr = type_layout.ast.exprs[expression_index]
+    if expression.kind == ZAstExprIdentifier &&
+        zbackend_ir_is_function_name(type_layout.ast, expression.name) {
+        return zbackend_ir_canonical_declaration_name(
+            type_layout.ast, expression.name
+        )
+    }
+    if expression.kind != ZAstExprField { return ZAstText.empty() }
+    length: i64 = zbackend_ir_qualified_expression_length(
+        type_layout.ast, expression_index
+    ) catch |err| { return ZAstText.empty() }
+    raw: *u8 = std.mem.HeapAllocator.alloc(
+        type_layout.allocator, length + 1
+    ) catch |err| { return error.OutOfMemory }
+    offset: i64 = 0
+    zbackend_ir_write_qualified_expression(
+        type_layout.ast, expression_index, raw, &offset
+    ) catch |err| { return ZAstText.empty() }
+    raw[length] = 0
+    candidate: ZAstText = ZAstText{ ptr: raw, len: length }
+    if !zbackend_ir_is_function_name(type_layout.ast, candidate) {
+        return ZAstText.empty()
+    }
+    return zbackend_ir_canonical_declaration_name(
+        type_layout.ast, candidate
+    )
+}
+
+
+export fn zbackend_ir_expression_is_function_value(
+    type_layout: *ZBackendIrTypeLayout,
+    expression_index: i64
+) -> bool {
+    resolved: ZAstText = zbackend_ir_resolved_function_value_name(
+        type_layout, expression_index
+    ) catch |err| { return false }
+    return resolved.len > 0
+}
+
+
+export fn zbackend_ir_is_builtin_field(ast: *ZAstModule, expression: ZAstExpr) -> bool {
+    if expression.kind != ZAstExprField || expression.left == ZAstNoIndex { return false }
+    base: ZAstExpr = ast.exprs[expression.left]
+    return base.kind == ZAstExprIdentifier && ZAstText.eql_string(base.name, "Builtin")
+}
+
+
+export fn zbackend_ir_is_builtin_sizeof(ast: *ZAstModule, expression: ZAstExpr) -> bool {
+    if expression.kind != ZAstExprCall || expression.left == ZAstNoIndex { return false }
+    callee: ZAstExpr = ast.exprs[expression.left]
+    return zbackend_ir_is_builtin_field(ast, callee) && ZAstText.eql_string(callee.name, "sizeof")
+}
+
+
+export fn zbackend_ir_string_contains(value: string, part: string) -> bool {
+    value_len: i64 = std.str.len(value)
+    part_len: i64 = std.str.len(part)
+    if part_len == 0 { return true }
+    value_ptr: *u8 = cast(*u8, value)
+    part_ptr: *u8 = cast(*u8, part)
+    start: i64 = 0
+    while start + part_len <= value_len {
+        index: i64 = 0
+        while index < part_len && value_ptr[start + index] == part_ptr[index] {
+            index = index + 1
+        }
+        if index == part_len { return true }
+        start = start + 1
+    }
+    return false
+}
+
+
+export fn zbackend_ir_builtin_platform_value(type_layout: *ZBackendIrTypeLayout, name: ZAstText) !i64 {
+    triple: string = type_layout.target_triple
+    if ZAstText.eql_string(name, "IsX86_64") {
+        if std.str.starts_with(triple, "x86_64") { return 1 }
+        return 0
+    }
+    if ZAstText.eql_string(name, "IsAArch64") {
+        if std.str.starts_with(triple, "aarch64") { return 1 }
+        return 0
+    }
+    if ZAstText.eql_string(name, "IsLinux") {
+        if zbackend_ir_string_contains(triple, "linux") { return 1 }
+        return 0
+    }
+    if ZAstText.eql_string(name, "IsWindows") {
+        if zbackend_ir_string_contains(triple, "windows") { return 1 }
+        return 0
+    }
+    if ZAstText.eql_string(name, "IsMacOS") {
+        if zbackend_ir_string_contains(triple, "darwin") ||
+            zbackend_ir_string_contains(triple, "macos") { return 1 }
+        return 0
+    }
+    if ZAstText.eql_string(name, "IsBareMetal") {
+        if zbackend_ir_string_contains(triple, "none") { return 1 }
+        if zbackend_ir_string_contains(triple, "bare") { return 1 }
+        if zbackend_ir_string_contains(triple, "freestanding") { return 1 }
+        return 0
+    }
+    return error.NotImplemented
+}

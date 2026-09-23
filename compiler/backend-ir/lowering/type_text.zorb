@@ -1,0 +1,660 @@
+import "../../../runtime/std/errors.zorb"
+import "../../../runtime/std/collections.zorb"
+import "../../../runtime/std/mem.zorb"
+import "../../../runtime/std/str.zorb"
+import "../../ast/types.zorb"
+import "../../ast.zorb"
+import "../../ast/resolution.zorb"
+import "../../ast/arena.zorb"
+import "../../ast/type_check.zorb"
+import "../../ast/statement_check.zorb"
+import "../../ast/validation.zorb"
+import "../../ast/warnings.zorb"
+import "../../frontend/diagnostic.zorb"
+import "../../token.zorb"
+import "../model.zorb"
+import "types.zorb"
+import "core.zorb"
+
+export fn zbackend_ir_constant_bool_expression(
+    type_layout: *ZBackendIrTypeLayout,
+    ast: *ZAstModule,
+    expression_index: i64
+) -> i64 {
+    if expression_index < 0 || expression_index >= ast.expr_count { return -1 }
+    expression: ZAstExpr = ast.exprs[expression_index]
+    if expression.kind == ZAstExprBool {
+        if expression.literal.len == 4 { return 1 }
+        return 0
+    }
+    if expression.kind == ZAstExprField && zbackend_ir_is_builtin_field(ast, expression) {
+        return zbackend_ir_builtin_platform_value(
+            type_layout, expression.name
+        ) catch |err| { return -1 }
+    }
+    if expression.kind == ZAstExprUnary && expression.op == ZTokenBang {
+        operand: i64 = zbackend_ir_constant_bool_expression(
+            type_layout, ast, expression.left
+        )
+        if operand < 0 { return -1 }
+        if operand == 0 { return 1 }
+        return 0
+    }
+    if expression.kind == ZAstExprBinary && expression.op == ZTokenAndAnd {
+        lhs: i64 = zbackend_ir_constant_bool_expression(type_layout, ast, expression.left)
+        if lhs == 0 { return 0 }
+        if lhs < 0 { return -1 }
+        return zbackend_ir_constant_bool_expression(type_layout, ast, expression.right)
+    }
+    if expression.kind == ZAstExprBinary && expression.op == ZTokenOrOr {
+        lhs: i64 = zbackend_ir_constant_bool_expression(type_layout, ast, expression.left)
+        if lhs == 1 { return 1 }
+        if lhs < 0 { return -1 }
+        return zbackend_ir_constant_bool_expression(type_layout, ast, expression.right)
+    }
+    return -1
+}
+
+
+export fn zbackend_ir_expression_is_error_union_call(
+    type_layout: *ZBackendIrTypeLayout,
+    expression: ZAstExpr
+) -> bool {
+    if expression.kind != ZAstExprCall || expression.name.len == 0 { return false }
+    resolved_name: ZAstText = zbackend_ir_resolved_call_name(
+        type_layout, expression
+    ) catch |err| { return false }
+    declaration: ZAstDecl = zbackend_ir_function_declaration(
+        type_layout.ast, resolved_name
+    ) catch |err| {
+        return false
+    }
+    return declaration.return_is_error_union
+}
+
+
+export fn zbackend_ir_supported_scalar_name(text: ZAstText) !string {
+    if ZAstText.eql_string(text, "bool") { return "bool" }
+    if ZAstText.eql_string(text, "i8") { return "i8" }
+    if ZAstText.eql_string(text, "u8") { return "u8" }
+    if ZAstText.eql_string(text, "i16") { return "i16" }
+    if ZAstText.eql_string(text, "u16") { return "u16" }
+    if ZAstText.eql_string(text, "i32") { return "i32" }
+    if ZAstText.eql_string(text, "u32") { return "u32" }
+    if ZAstText.eql_string(text, "i64") { return "i64" }
+    if ZAstText.eql_string(text, "u64") { return "u64" }
+    return error.NotImplemented
+}
+
+
+export fn zbackend_ir_is_supported_scalar_text(text: ZAstText) -> bool {
+    return ZAstText.eql_string(text, "bool") || ZAstText.eql_string(text, "i8") ||
+        ZAstText.eql_string(text, "u8") || ZAstText.eql_string(text, "i16") ||
+        ZAstText.eql_string(text, "u16") || ZAstText.eql_string(text, "i32") ||
+        ZAstText.eql_string(text, "u32") || ZAstText.eql_string(text, "i64") ||
+        ZAstText.eql_string(text, "u64")
+}
+
+
+export fn zbackend_ir_trim_type_text(text: ZAstText) -> ZAstText {
+    start: i64 = 0
+    while start < text.len && (text.ptr[start] == 32 || text.ptr[start] == 9 ||
+        text.ptr[start] == 10 || text.ptr[start] == 13) {
+        start = start + 1
+    }
+    end: i64 = text.len
+    while end > start && (text.ptr[end - 1] == 32 || text.ptr[end - 1] == 9 ||
+        text.ptr[end - 1] == 10 || text.ptr[end - 1] == 13) {
+        end = end - 1
+    }
+    return ZAstText{ ptr: text.ptr + start, len: end - start }
+}
+
+
+export fn zbackend_ir_is_slice_type_text(text: ZAstText) -> bool {
+    text = zbackend_ir_trim_type_text(text)
+    return text.len > 2 && text.ptr[0] == 91 && text.ptr[1] == 93
+}
+
+
+export fn zbackend_ir_is_function_type_text(text: ZAstText) -> bool {
+    text = zbackend_ir_trim_type_text(text)
+    return text.len >= 3 && text.ptr[0] == 102 && text.ptr[1] == 110 && text.ptr[2] == 40
+}
+
+
+export fn zbackend_ir_function_type_param_count(text: ZAstText) -> i64 {
+    text = zbackend_ir_trim_type_text(text)
+    index: i64 = 3
+    if index < text.len && text.ptr[index] == 41 { return 0 }
+    count: i64 = 1
+    paren_depth: i64 = 1
+    bracket_depth: i64 = 0
+    angle_depth: i64 = 0
+    while index < text.len {
+        if text.ptr[index] == 40 { paren_depth = paren_depth + 1 }
+        if text.ptr[index] == 41 {
+            paren_depth = paren_depth - 1
+            if paren_depth == 0 { return count }
+        }
+        if text.ptr[index] == 91 { bracket_depth = bracket_depth + 1 }
+        if text.ptr[index] == 93 && bracket_depth > 0 { bracket_depth = bracket_depth - 1 }
+        if text.ptr[index] == 60 { angle_depth = angle_depth + 1 }
+        if text.ptr[index] == 62 && angle_depth > 0 { angle_depth = angle_depth - 1 }
+        if text.ptr[index] == 44 && paren_depth == 1 && bracket_depth == 0 && angle_depth == 0 {
+            count = count + 1
+        }
+        index = index + 1
+    }
+    return -1
+}
+
+
+export fn zbackend_ir_function_type_param(text: ZAstText, wanted: i64) -> ZAstText {
+    text = zbackend_ir_trim_type_text(text)
+    start: i64 = 3
+    index: i64 = start
+    current: i64 = 0
+    paren_depth: i64 = 1
+    bracket_depth: i64 = 0
+    angle_depth: i64 = 0
+    while index < text.len {
+        if text.ptr[index] == 40 { paren_depth = paren_depth + 1 }
+        if text.ptr[index] == 41 {
+            paren_depth = paren_depth - 1
+            if paren_depth == 0 {
+                if current == wanted {
+                    return zbackend_ir_trim_type_text(ZAstText{
+                        ptr: text.ptr + start, len: index - start
+                    })
+                }
+                return ZAstText.empty()
+            }
+        }
+        if text.ptr[index] == 91 { bracket_depth = bracket_depth + 1 }
+        if text.ptr[index] == 93 && bracket_depth > 0 { bracket_depth = bracket_depth - 1 }
+        if text.ptr[index] == 60 { angle_depth = angle_depth + 1 }
+        if text.ptr[index] == 62 && angle_depth > 0 { angle_depth = angle_depth - 1 }
+        if text.ptr[index] == 44 && paren_depth == 1 && bracket_depth == 0 && angle_depth == 0 {
+            if current == wanted {
+                return zbackend_ir_trim_type_text(ZAstText{
+                    ptr: text.ptr + start, len: index - start
+                })
+            }
+            current = current + 1
+            start = index + 1
+        }
+        index = index + 1
+    }
+    return ZAstText.empty()
+}
+
+
+export fn zbackend_ir_function_type_return(text: ZAstText) -> ZAstText {
+    text = zbackend_ir_trim_type_text(text)
+    index: i64 = 2
+    paren_depth: i64 = 0
+    while index + 1 < text.len {
+        if text.ptr[index] == 40 { paren_depth = paren_depth + 1 }
+        if text.ptr[index] == 41 && paren_depth > 0 { paren_depth = paren_depth - 1 }
+        if paren_depth == 0 && text.ptr[index] == 45 && text.ptr[index + 1] == 62 {
+            return zbackend_ir_trim_type_text(ZAstText{
+                ptr: text.ptr + index + 2,
+                len: text.len - index - 2
+            })
+        }
+        index = index + 1
+    }
+    return ZAstText.empty()
+}
+
+
+export fn zbackend_ir_volatile_payload(text: ZAstText) -> ZAstText {
+    text = zbackend_ir_trim_type_text(text)
+    if text.len <= 8 || text.ptr[0] != 118 || text.ptr[1] != 111 ||
+        text.ptr[2] != 108 || text.ptr[3] != 97 || text.ptr[4] != 116 ||
+        text.ptr[5] != 105 || text.ptr[6] != 108 || text.ptr[7] != 101 {
+        return ZAstText.empty()
+    }
+    boundary: u8 = text.ptr[8]
+    if boundary != 32 && boundary != 9 && boundary != 10 && boundary != 13 &&
+        boundary != 42 && boundary != 91 {
+        return ZAstText.empty()
+    }
+    return zbackend_ir_trim_type_text(ZAstText{
+        ptr: text.ptr + 8, len: text.len - 8
+    })
+}
+
+
+export fn zbackend_ir_nominal_base(text: ZAstText) -> ZAstText {
+    text = zbackend_ir_trim_type_text(text)
+    index: i64 = 0
+    while index < text.len {
+        if text.ptr[index] == 60 {
+            return zbackend_ir_trim_type_text(ZAstText{
+                ptr: text.ptr, len: index
+            })
+        }
+        index = index + 1
+    }
+    return text
+}
+
+
+export fn zbackend_ir_nominal_suffix(text: ZAstText) -> ZAstText {
+    text = zbackend_ir_trim_type_text(text)
+    index: i64 = 0
+    while index < text.len {
+        if text.ptr[index] == 60 {
+            return ZAstText{ ptr: text.ptr + index, len: text.len - index }
+        }
+        index = index + 1
+    }
+    return ZAstText.empty()
+}
+
+
+export fn zbackend_ir_generic_argument_at(suffix: ZAstText, wanted: i64) -> ZAstText {
+    suffix = zbackend_ir_trim_type_text(suffix)
+    if suffix.len < 3 || suffix.ptr[0] != 60 || wanted < 0 { return ZAstText.empty() }
+    depth: i64 = 0
+    argument: i64 = 0
+    start: i64 = 1
+    index: i64 = 1
+    while index < suffix.len {
+        ch: u8 = suffix.ptr[index]
+        if ch == 60 || ch == 40 || ch == 91 { depth = depth + 1 }
+        if ch == 62 || ch == 41 || ch == 93 {
+            if ch == 62 && depth == 0 {
+                if argument == wanted {
+                    return zbackend_ir_trim_type_text(ZAstText{
+                        ptr: suffix.ptr + start, len: index - start
+                    })
+                }
+                return ZAstText.empty()
+            }
+            if depth > 0 { depth = depth - 1 }
+        }
+        if ch == 44 && depth == 0 {
+            if argument == wanted {
+                return zbackend_ir_trim_type_text(ZAstText{
+                    ptr: suffix.ptr + start, len: index - start
+                })
+            }
+            argument = argument + 1
+            start = index + 1
+        }
+        index = index + 1
+    }
+    return ZAstText.empty()
+}
+
+
+export fn zbackend_ir_generic_parameter_index(
+    ast: *ZAstModule,
+    declaration: ZAstDecl,
+    text: ZAstText
+) -> i64 {
+    index: i64 = 0
+    while index < declaration.generic_param_count {
+        if ZAstText.eql(
+            ast.generic_params[declaration.generic_param_start + index],
+            zbackend_ir_trim_type_text(text)
+        ) { return index }
+        index = index + 1
+    }
+    return ZAstNoIndex
+}
+
+
+// Resolve a generic parameter forwarded by the active monomorphization. A
+// replacement may itself name a parameter in the parent generic context.
+export fn zbackend_ir_resolve_active_generic_argument(
+    type_layout: *ZBackendIrTypeLayout,
+    argument: ZAstText
+) -> ZAstText {
+    declaration_index: i64 = type_layout.active_generic_declaration
+    suffix: ZAstText = type_layout.active_generic_suffix
+    parent_count: i64 = type_layout.generic_context_count
+    while declaration_index != ZAstNoIndex {
+        declaration: ZAstDecl = type_layout.ast.decls[declaration_index]
+        generic_index: i64 = zbackend_ir_generic_parameter_index(
+            type_layout.ast, declaration, argument
+        )
+        if generic_index == ZAstNoIndex { return argument }
+        replacement: ZAstText = zbackend_ir_generic_argument_at(
+            suffix, generic_index
+        )
+        if replacement.len == 0 { return ZAstText.empty() }
+        argument = replacement
+        if parent_count <= 0 { return argument }
+        parent_count = parent_count - 1
+        declaration_index = type_layout.generic_context_declarations[parent_count]
+        suffix = type_layout.generic_context_suffixes[parent_count]
+    }
+    return argument
+}
+
+
+export fn zbackend_ir_resolve_call_generic_suffix(
+    type_layout: *ZBackendIrTypeLayout,
+    through_declaration: ZAstDecl,
+    call: ZAstExpr,
+    function_declaration: ZAstDecl,
+    through_statement: i64
+) !ZAstText {
+    if function_declaration.generic_param_count <= 0 { return ZAstText.empty() }
+    total_length: i64 = 2
+    generic_index: i64 = 0
+    while generic_index < function_declaration.generic_param_count {
+        argument: ZAstText = ZAstModule.call_generic_argument(
+            type_layout.ast,
+            through_declaration,
+            call,
+            function_declaration,
+            generic_index,
+            through_statement
+        )
+        argument = zbackend_ir_resolve_active_generic_argument(
+            type_layout, argument
+        )
+        if argument.len == 0 { return error.InvalidArgument }
+        total_length = total_length + argument.len
+        if generic_index > 0 { total_length = total_length + 1 }
+        generic_index = generic_index + 1
+    }
+    raw: *u8 = std.mem.HeapAllocator.alloc(
+        type_layout.allocator, total_length + 1
+    ) catch |err| { return error.OutOfMemory }
+    offset: i64 = 0
+    raw[offset] = 60
+    offset = offset + 1
+    generic_index = 0
+    while generic_index < function_declaration.generic_param_count {
+        if generic_index > 0 {
+            raw[offset] = 44
+            offset = offset + 1
+        }
+        argument: ZAstText = ZAstModule.call_generic_argument(
+            type_layout.ast,
+            through_declaration,
+            call,
+            function_declaration,
+            generic_index,
+            through_statement
+        )
+        argument = zbackend_ir_resolve_active_generic_argument(
+            type_layout, argument
+        )
+        if argument.len == 0 { return error.InvalidArgument }
+        argument_index: i64 = 0
+        while argument_index < argument.len {
+            raw[offset] = argument.ptr[argument_index]
+            offset = offset + 1
+            argument_index = argument_index + 1
+        }
+        generic_index = generic_index + 1
+    }
+    raw[offset] = 62
+    raw[offset + 1] = 0
+    return ZAstText{ ptr: raw, len: offset + 1 }
+}
+
+
+export fn zbackend_ir_default_generic_suffix(
+    type_layout: *ZBackendIrTypeLayout,
+    declaration: ZAstDecl
+) !ZAstText {
+    total_length: i64 = 2
+    generic_index: i64 = 0
+    while generic_index < declaration.generic_param_count {
+        argument: ZAstText = ZAstModule.generic_default_argument(
+            type_layout.ast, declaration, generic_index
+        )
+        if argument.len == 0 { return error.InvalidArgument }
+        total_length = total_length + argument.len
+        if generic_index > 0 { total_length = total_length + 1 }
+        generic_index = generic_index + 1
+    }
+    raw: *u8 = std.mem.HeapAllocator.alloc(
+        type_layout.allocator, total_length + 1
+    ) catch |err| { return error.OutOfMemory }
+    offset: i64 = 0
+    raw[offset] = 60
+    offset = offset + 1
+    generic_index = 0
+    while generic_index < declaration.generic_param_count {
+        if generic_index > 0 {
+            raw[offset] = 44
+            offset = offset + 1
+        }
+        argument: ZAstText = ZAstModule.generic_default_argument(
+            type_layout.ast, declaration, generic_index
+        )
+        argument_index: i64 = 0
+        while argument_index < argument.len {
+            raw[offset] = argument.ptr[argument_index]
+            offset = offset + 1
+            argument_index = argument_index + 1
+        }
+        generic_index = generic_index + 1
+    }
+    raw[offset] = 62
+    raw[offset + 1] = 0
+    return ZAstText{ ptr: raw, len: offset + 1 }
+}
+
+
+export fn zbackend_ir_complete_generic_suffix(
+    type_layout: *ZBackendIrTypeLayout,
+    declaration: ZAstDecl,
+    suffix: ZAstText
+) !ZAstText {
+    supplied_count: i64 = 0
+    while zbackend_ir_generic_argument_at(suffix, supplied_count).len > 0 {
+        supplied_count = supplied_count + 1
+    }
+    if supplied_count < declaration.generic_required_param_count ||
+        supplied_count > declaration.generic_param_count {
+        return error.InvalidArgument
+    }
+    if supplied_count == declaration.generic_param_count { return suffix }
+    total_length: i64 = 2
+    generic_index: i64 = 0
+    while generic_index < declaration.generic_param_count {
+        argument: ZAstText = ZAstText.empty()
+        if generic_index < supplied_count {
+            argument = zbackend_ir_generic_argument_at(suffix, generic_index)
+        } else {
+            argument = ZAstModule.generic_default_argument(
+                type_layout.ast, declaration, generic_index
+            )
+        }
+        if argument.len == 0 { return error.InvalidArgument }
+        total_length = total_length + argument.len
+        if generic_index > 0 { total_length = total_length + 1 }
+        generic_index = generic_index + 1
+    }
+    raw: *u8 = std.mem.HeapAllocator.alloc(
+        type_layout.allocator, total_length + 1
+    ) catch |err| { return error.OutOfMemory }
+    offset: i64 = 0
+    raw[offset] = 60
+    offset = offset + 1
+    generic_index = 0
+    while generic_index < declaration.generic_param_count {
+        if generic_index > 0 {
+            raw[offset] = 44
+            offset = offset + 1
+        }
+        argument: ZAstText = ZAstText.empty()
+        if generic_index < supplied_count {
+            argument = zbackend_ir_generic_argument_at(suffix, generic_index)
+        } else {
+            argument = ZAstModule.generic_default_argument(
+                type_layout.ast, declaration, generic_index
+            )
+        }
+        argument_index: i64 = 0
+        while argument_index < argument.len {
+            raw[offset] = argument.ptr[argument_index]
+            offset = offset + 1
+            argument_index = argument_index + 1
+        }
+        generic_index = generic_index + 1
+    }
+    raw[offset] = 62
+    raw[offset + 1] = 0
+    return ZAstText{ ptr: raw, len: offset + 1 }
+}
+
+
+export fn zbackend_ir_type_id_text(
+    type_layout: *ZBackendIrTypeLayout,
+    type_id: i64
+) -> ZAstText {
+    if type_id <= 0 || type_id > type_layout.type_count { return ZAstText.empty() }
+    item: ZBackendIrType = type_layout.types[type_id - 1]
+    if item.scalar != "" {
+        return ZAstText{ ptr: cast(*u8, item.scalar), len: std.str.len(item.scalar) }
+    }
+    if item.name != "" {
+        return ZAstText{ ptr: cast(*u8, item.name), len: std.str.len(item.name) }
+    }
+    return ZAstText.empty()
+}
+
+
+export fn zbackend_ir_function_value_generic_suffix(
+    type_layout: *ZBackendIrTypeLayout,
+    declaration: ZAstDecl,
+    function_type_id: i64
+) !ZAstText {
+    if function_type_id <= 0 || function_type_id > type_layout.type_count {
+        return error.InvalidArgument
+    }
+    function_type: ZBackendIrType = type_layout.types[function_type_id - 1]
+    if function_type.kind != "function" ||
+        function_type.field_count != declaration.param_count {
+        return error.InvalidArgument
+    }
+    arguments_raw: *u8 = std.mem.HeapAllocator.alloc(
+        type_layout.allocator,
+        declaration.generic_param_count * Builtin.sizeof(ZAstText)
+    ) catch |err| { return error.OutOfMemory }
+    arguments: *ZAstText = cast(*ZAstText, arguments_raw)
+    total_length: i64 = 2
+    generic_index: i64 = 0
+    while generic_index < declaration.generic_param_count {
+        generic_name: ZAstText = type_layout.ast.generic_params[
+            declaration.generic_param_start + generic_index
+        ]
+        argument: ZAstText = ZAstText.empty()
+        parameter_index: i64 = 0
+        while parameter_index < declaration.param_count {
+            parameter: ZAstParam = type_layout.ast.params[
+                declaration.param_start + parameter_index
+            ]
+            if ZAstText.eql(
+                zbackend_ir_trim_type_text(type_layout.ast.types[parameter.type_index].text),
+                generic_name
+            ) {
+                argument = zbackend_ir_type_id_text(
+                    type_layout, function_type.fields[parameter_index].type_id
+                )
+            }
+            parameter_index = parameter_index + 1
+        }
+        if argument.len == 0 && declaration.return_type_index != ZAstNoIndex &&
+            ZAstText.eql(
+                zbackend_ir_trim_type_text(
+                    type_layout.ast.types[declaration.return_type_index].text
+                ),
+                generic_name
+            ) {
+            argument = zbackend_ir_type_id_text(
+                type_layout, function_type.element_type
+            )
+        }
+        if argument.len == 0 {
+            argument = ZAstModule.generic_default_argument(
+                type_layout.ast, declaration, generic_index
+            )
+        }
+        if argument.len == 0 { return error.InvalidArgument }
+        arguments[generic_index] = argument
+        total_length = total_length + argument.len
+        if generic_index > 0 { total_length = total_length + 1 }
+        generic_index = generic_index + 1
+    }
+    raw: *u8 = std.mem.HeapAllocator.alloc(
+        type_layout.allocator, total_length + 1
+    ) catch |err| { return error.OutOfMemory }
+    offset: i64 = 0
+    raw[offset] = 60
+    offset = offset + 1
+    generic_index = 0
+    while generic_index < declaration.generic_param_count {
+        if generic_index > 0 {
+            raw[offset] = 44
+            offset = offset + 1
+        }
+        argument_index: i64 = 0
+        while argument_index < arguments[generic_index].len {
+            raw[offset] = arguments[generic_index].ptr[argument_index]
+            offset = offset + 1
+            argument_index = argument_index + 1
+        }
+        generic_index = generic_index + 1
+    }
+    raw[offset] = 62
+    raw[offset + 1] = 0
+    return ZAstText{ ptr: raw, len: offset + 1 }
+}
+
+
+export fn zbackend_ir_append_generic_instance(
+    type_layout: *ZBackendIrTypeLayout,
+    declaration_index: i64,
+    suffix: ZAstText
+) !i64 {
+    if suffix.len == 0 { return error.InvalidArgument }
+    instance_index: i64 = 0
+    while instance_index < type_layout.generic_instance_count {
+        if type_layout.generic_instance_declarations[instance_index] == declaration_index &&
+            ZAstText.eql(type_layout.generic_instance_suffixes[instance_index], suffix) {
+            return 0
+        }
+        instance_index = instance_index + 1
+    }
+    if type_layout.generic_instance_count >= type_layout.ast.expr_count {
+        return error.OutOfBounds
+    }
+    type_layout.generic_instance_declarations[type_layout.generic_instance_count] = declaration_index
+    type_layout.generic_instance_suffixes[type_layout.generic_instance_count] = suffix
+    type_layout.generic_instance_count = type_layout.generic_instance_count + 1
+    return 0
+}
+
+
+export fn zbackend_ir_ensure_generic_instance_id(
+    type_layout: *ZBackendIrTypeLayout,
+    declaration_name: ZAstText,
+    suffix: ZAstText
+) !i64 {
+    existing: i64 = zbackend_ir_find_generic_instance_id(
+        type_layout, declaration_name, suffix
+    )
+    if existing > 0 { return existing }
+    declaration_index: i64 = zbackend_ir_owning_declaration_index(
+        type_layout.ast, declaration_name
+    )
+    if declaration_index == ZAstNoIndex { return error.InvalidArgument }
+    zbackend_ir_append_generic_instance(
+        type_layout, declaration_index, suffix
+    ) catch |err| { return err }
+    return zbackend_ir_generic_instance_id(
+        type_layout, declaration_name, suffix
+    ) catch |err| { return err }
+}

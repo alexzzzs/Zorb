@@ -1,0 +1,728 @@
+import "../../runtime/std/errors.zorb"
+import "../../runtime/std/io.zorb"
+import "../../runtime/std/mem.zorb"
+import "../token.zorb"
+import "../ast/types.zorb"
+import "../ast.zorb"
+import "../ast/resolution.zorb"
+import "../ast/arena.zorb"
+import "../ast/type_check.zorb"
+import "../ast/statement_check.zorb"
+import "../ast/validation.zorb"
+import "../ast/warnings.zorb"
+import "types.zorb"
+
+export fn zparser_expression_buffer_init() -> ZParserExpressionBuffer {
+    return ZParserExpressionBuffer{
+        values: cast(*i64, 0),
+        count: 0,
+        capacity: 0
+    }
+}
+
+
+export fn zparser_expression_buffer_append(
+    buffer: *ZParserExpressionBuffer,
+    allocator: *std.mem.HeapAllocator,
+    value: i64
+) !i64 {
+    if buffer.count >= buffer.capacity {
+        new_capacity: i64 = 4
+        if buffer.capacity > 0 { new_capacity = buffer.capacity * 2 }
+        raw: *u8 = std.mem.HeapAllocator.alloc(
+            allocator, new_capacity * Builtin.sizeof(i64)
+        ) catch |err| { return error.OutOfMemory }
+        new_values: *i64 = cast(*i64, raw)
+        index: i64 = 0
+        while index < buffer.count {
+            new_values[index] = buffer.values[index]
+            index = index + 1
+        }
+        buffer.values = new_values
+        buffer.capacity = new_capacity
+    }
+    buffer.values[buffer.count] = value
+    buffer.count = buffer.count + 1
+    return 0
+}
+
+
+export fn zparser_expression_buffer_flush(
+    buffer: *ZParserExpressionBuffer,
+    allocator: *std.mem.HeapAllocator,
+    module: *ZAstModule
+) !i64 {
+    start: i64 = module.expr_arg_count
+    index: i64 = 0
+    while index < buffer.count {
+        ZAstModule.append_expr_arg(
+            module, allocator, buffer.values[index]
+        ) catch |err| { return err }
+        index = index + 1
+    }
+    return start
+}
+
+
+export fn zparser_current(self: *ZParser) -> ZToken {
+    if self.index >= self.tokens.len {
+        return self.tokens.ptr[self.tokens.len - 1]
+    }
+    return self.tokens.ptr[self.index]
+}
+
+
+export fn zparser_at(self: *ZParser, kind: i64) -> bool {
+    return zparser_current(self).kind == kind
+}
+
+
+export fn zparser_peek_kind(self: *ZParser, offset: i64) -> i64 {
+    index: i64 = self.index + offset
+    if index >= self.tokens.len {
+        return ZTokenEof
+    }
+    return self.tokens.ptr[index].kind
+}
+
+
+export fn zparser_advance(self: *ZParser) -> ZToken {
+    token: ZToken = zparser_current(self)
+    if self.index < self.tokens.len {
+        self.index = self.index + 1
+    }
+    return token
+}
+
+
+// Retain the first syntax error for the public diagnostic while still
+// recovering through the rest of the file. A parser session can therefore
+// validate later declarations without losing the stable primary location.
+export fn zparser_record_error(self: *ZParser) {
+    token: ZToken = zparser_current(self)
+    self.parse_error_count = self.parse_error_count + 1
+    if self.first_error_line == 0 {
+        self.first_error_line = token.line
+        self.first_error_column = token.column
+        self.first_error_length = token.len
+        if self.first_error_length < 1 {
+            self.first_error_length = 1
+        }
+    }
+}
+
+
+// Switch branch ordering is a syntactic rule, but the flattened statement
+// arena is only complete after its body has been parsed.  Record the stored
+// statement span so the public parser diagnostic still identifies the
+// offending branch rather than the token after the switch body.
+export fn zparser_record_error_span(self: *ZParser, span: ZAstSpan) {
+    self.parse_error_count = self.parse_error_count + 1
+    if self.first_error_line == 0 {
+        self.first_error_line = span.line
+        self.first_error_column = span.column
+        self.first_error_length = span.length
+        if self.first_error_length < 1 {
+            self.first_error_length = 1
+        }
+    }
+}
+
+
+// The switch AST stores a branch span from its keyword, whereas Stage 0
+// reports branch-order errors at the opening body brace.  Recover that token
+// from the immutable lexer stream instead of relying on the parser's current
+// position after the enclosing switch has closed.
+export fn zparser_switch_branch_body_span(self: *ZParser, branch_span: ZAstSpan) -> ZAstSpan {
+    token_index: i64 = 0
+    while token_index < self.tokens.len {
+        token: ZToken = self.tokens.ptr[token_index]
+        if token.line == branch_span.line && token.column >= branch_span.column && token.kind == ZTokenLBrace {
+            span: ZAstSpan = ZAstSpan.empty()
+            span.line = token.line
+            span.column = token.column
+            span.length = token.len
+            return span
+        }
+        token_index = token_index + 1
+    }
+    return branch_span
+}
+
+
+export fn zparser_validate_switch_branch_order(self: *ZParser, module: *ZAstModule, switch_index: i64) {
+    switch_stmt: ZAstStmt = module.stmts[switch_index]
+    child_index: i64 = switch_stmt.child_start
+    child_end: i64 = switch_stmt.child_start + switch_stmt.child_count
+    saw_else: bool = false
+    while child_index < child_end {
+        child: ZAstStmt = module.stmts[child_index]
+        // Switch bodies contain branches only. Their branch bodies are
+        // skipped below, so this check applies solely to direct children.
+        if child.kind != ZAstStmtCase && child.kind != ZAstStmtElse {
+            zparser_record_error_span(self, child.span)
+            return
+        }
+        if child.kind == ZAstStmtElse {
+            if saw_else {
+                zparser_record_error_span(self, zparser_switch_branch_body_span(self, child.span))
+                return
+            }
+            saw_else = true
+        } else if child.kind == ZAstStmtCase && saw_else {
+            if child.expr_index != ZAstNoIndex {
+                zparser_record_error_span(self, module.exprs[child.expr_index].span)
+            } else {
+                zparser_record_error_span(self, child.span)
+            }
+            return
+        }
+        if zast_stmt_has_children(child.kind) {
+            child_index = child.child_start + child.child_count
+        } else {
+            child_index = child_index + 1
+        }
+    }
+}
+
+
+// A declaration/statement/expression span is measured from the first token it
+// consumed through the last one. This preserves exact source columns for the
+// common one-line case and remains deterministic for multi-line constructs.
+export fn zparser_span_from_indices(self: *ZParser, start_index: i64, end_index: i64) -> ZAstSpan {
+    span: ZAstSpan = ZAstSpan.empty()
+    if start_index < 0 || start_index >= self.tokens.len || end_index <= start_index {
+        return span
+    }
+
+    start: ZToken = self.tokens.ptr[start_index]
+    last_index: i64 = end_index - 1
+    if last_index >= self.tokens.len {
+        last_index = self.tokens.len - 1
+    }
+    last: ZToken = self.tokens.ptr[last_index]
+    span.line = start.line
+    span.column = start.column
+    // Identifier interning and string escape decoding can place token text in
+    // separate allocations. Source span arithmetic must therefore use lexer
+    // coordinates, never pointer distance between token payloads.
+    if start.line == last.line {
+        span.length = last.column + last.len - start.column
+    } else {
+        // Multi-line rendering needs the start position; a one-byte primary
+        // extent remains deterministic until a full byte-offset map is added.
+        span.length = 1
+    }
+    if span.length < 1 {
+        span.length = 1
+    }
+    return span
+}
+
+
+export fn zparser_attribute_name_known(token: ZToken) -> bool {
+    // Keep these checks separate. The bootstrap evaluator historically did
+    // not preserve a long chained `||` expression reliably at this callsite.
+    if token.kind == ZTokenAlign { return true }
+    if token.kind == ZTokenAbi { return true }
+    if token.kind == ZTokenSection { return true }
+    if token.kind == ZTokenPacked { return true }
+    if token.kind == ZTokenLayout { return true }
+    if token.kind == ZTokenNoInline { return true }
+    if token.kind == ZTokenNoClone { return true }
+    if token.kind == ZTokenVolatile { return true }
+    // Attributes may arrive from a lexer built against an older keyword table
+    // during bootstrap. Accept the canonical spelling as well as its keyword
+    // token so declaration and statement attribute parsing share one grammar.
+    name: ZAstText = ZAstText.from_token(token)
+    if ZAstText.eql_string(name, "align") { return true }
+    if ZAstText.eql_string(name, "abi") { return true }
+    if ZAstText.eql_string(name, "section") { return true }
+    if ZAstText.eql_string(name, "packed") { return true }
+    if ZAstText.eql_string(name, "layout") { return true }
+    if ZAstText.eql_string(name, "noinline") { return true }
+    if ZAstText.eql_string(name, "noclone") { return true }
+    if ZAstText.eql_string(name, "volatile") { return true }
+    return ZAstText.eql_string(name, "c_header")
+}
+
+
+// Newlines are not tokens, so a declaration attribute immediately after an
+// initializer can otherwise be mistaken for postfix indexing. Only recognize
+// a bracket on a later source line whose first item is a known attribute;
+// ordinary `value[index]` expressions retain their existing grammar.
+export fn zparser_is_next_line_attribute(self: *ZParser) -> bool {
+    if !zparser_at(self, ZTokenLBracket) || self.index <= 0 || self.index + 1 >= self.tokens.len {
+        return false
+    }
+    if self.tokens.ptr[self.index].line <= self.tokens.ptr[self.index - 1].line {
+        return false
+    }
+    return zparser_attribute_name_known(self.tokens.ptr[self.index + 1])
+}
+
+
+export fn zparser_skip_until_semicolon_or_top_level(self: *ZParser) {
+    depth: i64 = 0
+    while !zparser_at(self, ZTokenEof) {
+        kind: i64 = zparser_current(self).kind
+        if depth == 0 && kind == ZTokenSemicolon {
+            zparser_advance(self)
+            return
+        }
+
+        if depth == 0 && (kind == ZTokenImport || kind == ZTokenExport || kind == ZTokenExtern || kind == ZTokenFn || kind == ZTokenConst || kind == ZTokenError || kind == ZTokenStruct || kind == ZTokenEnum || kind == ZTokenUnion) {
+            return
+        }
+        // Top-level value declarations can follow an unterminated previous
+        // declaration on the next source line; preserve the `name:` token
+        // pair instead of swallowing it while skipping optional semicolons.
+        if depth == 0 && kind == ZTokenIdentifier && zparser_peek_kind(self, 1) == ZTokenColon {
+            return
+        }
+        if depth == 0 && zparser_is_next_line_attribute(self) {
+            return
+        }
+
+        if kind == ZTokenLBrace || kind == ZTokenLParen || kind == ZTokenLBracket {
+            depth = depth + 1
+        }
+        if kind == ZTokenRBrace || kind == ZTokenRParen || kind == ZTokenRBracket {
+            if depth == 0 {
+                return
+            }
+            depth = depth - 1
+        }
+
+        zparser_advance(self)
+    }
+}
+
+
+export fn zparser_recover_top_level(self: *ZParser, start_index: i64) {
+    zparser_record_error(self)
+    zparser_skip_until_semicolon_or_top_level(self)
+    if self.index == start_index && !zparser_at(self, ZTokenEof) {
+        zparser_advance(self)
+    }
+}
+
+
+export fn zparser_skip_optional_semicolon(self: *ZParser) {
+    if zparser_at(self, ZTokenSemicolon) {
+        zparser_advance(self)
+    }
+}
+
+
+export fn zparser_abi_name_known(token: ZToken) -> bool {
+    if token.kind != ZTokenIdentifier { return false }
+    name: ZAstText = ZAstText.from_token(token)
+    return ZAstText.eql_string(name, "sysv") || ZAstText.eql_string(name, "sysv64") || ZAstText.eql_string(name, "ms") || ZAstText.eql_string(name, "win64")
+}
+
+
+// Attribute payloads are parsed semantically later. Validate the leading
+// declaration attribute name, then consume its balanced list so annotated
+// declarations enter the same parser path as plain ones.
+export fn zparser_skip_attributes(self: *ZParser) !i64 {
+    if !zparser_at(self, ZTokenLBracket) {
+        return 0
+    }
+    zparser_advance(self)
+    attribute_name: ZToken = zparser_current(self)
+    if !zparser_attribute_name_known(attribute_name) {
+        return error.InvalidArgument
+    }
+    depth: i64 = 1
+    paren_depth: i64 = 0
+    needs_separator: bool = false
+    abi_argument_pending: bool = false
+    while !zparser_at(self, ZTokenEof) {
+        token: ZToken = zparser_advance(self)
+        kind: i64 = token.kind
+        if attribute_name.kind == ZTokenLayout && token.kind == ZTokenIdentifier && ZAstText.eql_string(ZAstText.from_token(token), "explicit") {
+            self.last_attribute_is_explicit_layout = true
+        }
+        if kind == ZTokenLBracket {
+            depth = depth + 1
+        }
+        if kind == ZTokenLParen {
+            paren_depth = paren_depth + 1
+            if attribute_name.kind == ZTokenAbi && paren_depth == 1 {
+                abi_argument_pending = true
+            }
+        }
+        if kind == ZTokenRParen && paren_depth > 0 {
+            paren_depth = paren_depth - 1
+        }
+        if abi_argument_pending && kind != ZTokenLParen {
+            if !zparser_abi_name_known(token) {
+                self.index = self.index - 1
+                return error.InvalidArgument
+            }
+            abi_argument_pending = false
+        }
+        if kind == ZTokenRBracket {
+            depth = depth - 1
+            if depth == 0 {
+                return 0
+            }
+        }
+        if depth == 1 && paren_depth == 0 {
+            if kind == ZTokenComma {
+                needs_separator = false
+            } else if zparser_attribute_name_known(token) {
+                if needs_separator {
+                    self.index = self.index - 1
+                    return error.InvalidArgument
+                }
+                needs_separator = true
+            }
+        }
+    }
+    return error.EndOfFile
+}
+
+
+export fn zparser_expect(self: *ZParser, kind: i64) !ZToken {
+    token: ZToken = zparser_current(self)
+    if token.kind != kind {
+        return error.InvalidArgument
+    }
+    self.index = self.index + 1
+    return token
+}
+
+
+// `offset` is contextual: it is a layout keyword but remains legal as an ABI
+// parameter name (for example `_lseeki64(..., offset: i64, ...)`).
+export fn zparser_expect_name(self: *ZParser) !ZToken {
+    token: ZToken = zparser_current(self)
+    if token.kind != ZTokenIdentifier && token.kind != ZTokenOffset {
+        return error.InvalidArgument
+    }
+    self.index = self.index + 1
+    return token
+}
+
+
+// Generic declarations and explicit generic calls use the same balanced
+// angle-bracket grammar. The subset AST does not retain type parameters yet,
+// but parsing them as a unit prevents `<` from being mistaken for comparison
+// syntax and lets later semantic passes own their validation.
+export fn zparser_skip_angle_bracket_list(self: *ZParser) !i64 {
+    if !zparser_at(self, ZTokenLess) {
+        return 0
+    }
+    depth: i64 = 0
+    while !zparser_at(self, ZTokenEof) {
+        kind: i64 = zparser_advance(self).kind
+        if kind == ZTokenLess {
+            depth = depth + 1
+        }
+        if kind == ZTokenGreater {
+            depth = depth - 1
+            if depth == 0 {
+                return 0
+            }
+        }
+        if kind == ZTokenRShift {
+            depth = depth - 2
+            if depth == 0 {
+                return 0
+            }
+            if depth < 0 {
+                return error.InvalidArgument
+            }
+        }
+    }
+    return error.EndOfFile
+}
+
+
+export fn zparser_text_from_span(self: *ZParser, allocator: *std.mem.HeapAllocator, start_index: i64, end_index: i64) !ZAstText {
+    len: i64 = 0
+    index: i64 = start_index
+    while index < end_index {
+        len = len + self.tokens.ptr[index].len
+        index = index + 1
+    }
+    if len <= 0 {
+        return error.InvalidArgument
+    }
+
+    raw: *u8 = std.mem.HeapAllocator.alloc(allocator, len) catch |err| {
+        return err
+    }
+    out_index: i64 = 0
+    index = start_index
+    while index < end_index {
+        token: ZToken = self.tokens.ptr[index]
+        token_index: i64 = 0
+        while token_index < token.len {
+            raw[out_index] = token.ptr[token_index]
+            out_index = out_index + 1
+            token_index = token_index + 1
+        }
+        index = index + 1
+    }
+
+    text: ZAstText
+    text.ptr = raw
+    text.len = len
+    return text
+}
+
+
+export fn zparser_append_type(
+    self: *ZParser,
+    allocator: *std.mem.HeapAllocator,
+    module: *ZAstModule,
+    text: ZAstText
+) !i64 {
+    index: i64 = ZAstModule.append_type(
+        module, allocator, text
+    ) catch |err| { return err }
+    if self.active_decl != cast(*ZAstDecl, 0) {
+        module.types[index].scope_declaration_start = self.active_decl.stmt_start
+        module.types[index].scope_statement = module.stmt_count_total
+    }
+    return index
+}
+
+
+// Postfix generic arguments belong to the expression prefix, not the next
+// field/call node. Preserve their exact source slice so nominal generic type
+// checks can distinguish `Mode<i64>.Idle` from `Mode<bool>.Idle` without
+// reconstructing text from token fragments.
+export fn zparser_capture_generic_argument_suffix(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule) !i64 {
+    start_index: i64 = self.index
+    zparser_skip_angle_bracket_list(self) catch |err| {
+        return err
+    }
+    text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
+        return err
+    }
+    index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
+        return err
+    }
+    return index
+}
+
+
+export fn zparser_generic_postfix_follows(self: *ZParser) -> bool {
+    if !zparser_at(self, ZTokenLess) {
+        return false
+    }
+    offset: i64 = 0
+    depth: i64 = 0
+    while zparser_peek_kind(self, offset) != ZTokenEof {
+        kind: i64 = zparser_peek_kind(self, offset)
+        if kind == ZTokenLBrace || kind == ZTokenRBrace || kind == ZTokenSemicolon ||
+            kind == ZTokenEquals || kind == ZTokenAndAnd || kind == ZTokenOrOr {
+            return false
+        }
+        if kind == ZTokenLess {
+            depth = depth + 1
+        }
+        if kind == ZTokenGreater {
+            depth = depth - 1
+            if depth == 0 {
+                next: i64 = zparser_peek_kind(self, offset + 1)
+                // A generic specialization can be used as a value, not just
+                // called immediately. Parenthesized values such as
+                // `(identity<i64>)` are used for typed function values; a
+                // comma likewise terminates an argument expression. Keeping
+                // this restricted to delimiters preserves `<` comparisons.
+                return next == ZTokenLParen || next == ZTokenLBrace || next == ZTokenDot || next == ZTokenRParen || next == ZTokenComma
+            }
+        }
+        if kind == ZTokenRShift {
+            depth = depth - 2
+            if depth <= 0 {
+                next: i64 = zparser_peek_kind(self, offset + 1)
+                return depth == 0 && (next == ZTokenLParen || next == ZTokenLBrace || next == ZTokenDot || next == ZTokenRParen || next == ZTokenComma)
+            }
+        }
+        offset = offset + 1
+    }
+    return false
+}
+
+
+export fn zparser_capture_type(self: *ZParser, allocator: *std.mem.HeapAllocator, module: *ZAstModule) !i64 {
+    if zparser_at(self, ZTokenComma) || zparser_at(self, ZTokenRParen) || zparser_at(self, ZTokenRBrace) || zparser_at(self, ZTokenLBrace) || zparser_at(self, ZTokenEquals) || zparser_at(self, ZTokenSemicolon) || zparser_at(self, ZTokenEof) {
+        return error.InvalidArgument
+    }
+
+    start_index: i64 = self.index
+    start_line: i64 = zparser_current(self).line
+    depth: i64 = 0
+    while !zparser_at(self, ZTokenEof) {
+        kind: i64 = zparser_current(self).kind
+        // A type annotation cannot continue into a new statement line at
+        // top level. Newlines are not tokens, but the lexer preserves token
+        // coordinates so uninitialized locals remain unambiguous.
+        if depth == 0 && self.index > start_index && zparser_current(self).line > start_line {
+            text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
+                return err
+            }
+            index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
+                return err
+            }
+            return index
+        }
+        // Semicolons are optional. A new declaration token after a return or
+        // field type therefore terminates the preceding type annotation.
+        if depth == 0 && self.index > start_index && (kind == ZTokenImport || kind == ZTokenExport || kind == ZTokenExtern || kind == ZTokenFn || kind == ZTokenError || kind == ZTokenConst || kind == ZTokenStruct || kind == ZTokenEnum || kind == ZTokenUnion) {
+            text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
+                return err
+            }
+            index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
+                return err
+            }
+            return index
+        }
+        // The lexer intentionally discards newlines. At declaration depth,
+        // `identifier :` can therefore only begin the next local declaration;
+        // treat it as the end of an uninitialized type annotation.
+        if depth == 0 && self.index > start_index && kind == ZTokenIdentifier && zparser_peek_kind(self, 1) == ZTokenColon {
+            text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
+                return err
+            }
+            index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
+                return err
+            }
+            return index
+        }
+        if depth == 0 && (kind == ZTokenComma || kind == ZTokenRParen || kind == ZTokenRBrace || kind == ZTokenLBrace || kind == ZTokenEquals || kind == ZTokenSemicolon) {
+            text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
+                return err
+            }
+            index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
+                return err
+            }
+            return index
+        }
+
+        // Arrays and slices use prefix syntax (`[N]T` / `[]T`). A bracket
+        // after an already-started base type is a postfix form and must fail
+        // at that bracket instead of being captured as arbitrary type text.
+        if depth == 0 && self.index > start_index && kind == ZTokenLBracket {
+            return error.InvalidArgument
+        }
+
+        if kind == ZTokenLBracket || kind == ZTokenLParen || kind == ZTokenLess {
+            depth = depth + 1
+        }
+        if kind == ZTokenRBracket || kind == ZTokenRParen || kind == ZTokenGreater {
+            if depth == 0 {
+                text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index) catch |err| {
+                    return err
+                }
+                index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
+                    return err
+                }
+                return index
+            }
+            depth = depth - 1
+        }
+        // The lexer emits `>>` as one token. In a nested generic type it
+        // closes two angle-bracket levels, just as it does in the dedicated
+        // generic-postfix scanner above.
+        if kind == ZTokenRShift {
+            if depth == 1 {
+                original_token: ZToken = zparser_current(self)
+                first_close_token: ZToken = original_token
+                first_close_token.kind = ZTokenGreater
+                first_close_token.len = 1
+                self.tokens.ptr[self.index] = first_close_token
+                text: ZAstText = zparser_text_from_span(self, allocator, start_index, self.index + 1) catch |err| {
+                    self.tokens.ptr[self.index] = original_token
+                    return err
+                }
+                remaining_close_token: ZToken = original_token
+                remaining_close_token.kind = ZTokenGreater
+                remaining_close_token.ptr = original_token.ptr + 1
+                remaining_close_token.len = 1
+                remaining_close_token.column = original_token.column + 1
+                self.tokens.ptr[self.index] = remaining_close_token
+                index: i64 = zparser_append_type(self, allocator, module, text) catch |err| {
+                    return err
+                }
+                return index
+            }
+            if depth < 2 {
+                return error.InvalidArgument
+            }
+            depth = depth - 2
+        }
+
+        zparser_advance(self)
+    }
+
+    return error.EndOfFile
+}
+
+
+export fn zparser_binary_precedence(kind: i64) -> i64 {
+    if kind == ZTokenStar || kind == ZTokenSlash || kind == ZTokenPercent {
+        return 9
+    }
+    if kind == ZTokenPlus || kind == ZTokenMinus {
+        return 8
+    }
+    if kind == ZTokenLShift || kind == ZTokenRShift {
+        return 7
+    }
+    if kind == ZTokenAmp {
+        return 6
+    }
+    if kind == ZTokenCaret {
+        return 5
+    }
+    if kind == ZTokenPipe {
+        return 4
+    }
+    if kind == ZTokenGreater || kind == ZTokenLess || kind == ZTokenGreaterEqual || kind == ZTokenLessEqual || kind == ZTokenEqualEqual || kind == ZTokenBangEqual {
+        return 3
+    }
+    if kind == ZTokenAndAnd {
+        return 2
+    }
+    if kind == ZTokenOrOr {
+        return 1
+    }
+    return 0
+}
+
+
+export fn zparser_expression_stops(self: *ZParser, stop_comma: bool, stop_lbrace: bool, stop_statement: bool) -> bool {
+    kind: i64 = zparser_current(self).kind
+    if kind == ZTokenEof || kind == ZTokenRBrace || kind == ZTokenSemicolon {
+        return true
+    }
+    if stop_comma && kind == ZTokenComma {
+        return true
+    }
+    if stop_lbrace && kind == ZTokenLBrace {
+        return true
+    }
+    // After a complete statement expression, a brace starts the following
+    // control/body region. Struct literals consume their own brace in postfix
+    // parsing before this boundary is consulted.
+    if stop_statement && kind == ZTokenLBrace {
+        return true
+    }
+    if kind == ZTokenRParen || kind == ZTokenRBracket {
+        return true
+    }
+    if stop_statement && (kind == ZTokenReturn || kind == ZTokenIf || kind == ZTokenWhile || kind == ZTokenFor || kind == ZTokenSwitch || kind == ZTokenMatch || kind == ZTokenContinue || kind == ZTokenBreak || kind == ZTokenImport || kind == ZTokenExtern || kind == ZTokenFn || kind == ZTokenConst || kind == ZTokenStruct || kind == ZTokenEnum || kind == ZTokenUnion) {
+        return true
+    }
+    if stop_statement && kind == ZTokenIdentifier && zparser_peek_kind(self, 1) == ZTokenColon {
+        return true
+    }
+    return false
+}
