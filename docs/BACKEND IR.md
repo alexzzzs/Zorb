@@ -2,12 +2,14 @@
 
 Backend IR is the versioned JSON boundary between the compiler frontend and
 `backend/llvm`. It is an internal compiler protocol, not a source-language or
-LLVM API. The C# seed writer and the native Zorb writer must emit the same
-contract.
+LLVM API. The native Zorb writer emits the current contract; the frozen C# seed
+writer remains a version 2 compatibility producer.
 
 The canonical schema is defined by
 [`backend/llvm/src/backend_ir.zig`](../backend/llvm/src/backend_ir.zig). The
-current schema version is `2`. Unknown JSON fields are rejected by the backend.
+current schema version is `3`. The backend also accepts version 2 modules from
+the frozen C# seed writer, but version 2 cannot contain the `pointer_difference`
+instruction. Unknown JSON fields are rejected by the backend.
 
 ## Module envelope
 
@@ -15,7 +17,7 @@ Every document contains:
 
 | Field | Type | Contract |
 | --- | --- | --- |
-| `schema_version` | unsigned integer | Must equal the backend schema version. |
+| `schema_version` | unsigned integer | Must be `3`, or legacy version `2` without version 3 instructions. |
 | `module_name` | string | Non-empty diagnostic/module identity. |
 | `target` | object | Target triple plus optional CPU, features, and optimization level. |
 | `output_kind` | string | `llvm_ir`, `bitcode`, `object`, or `assembly`. |
@@ -62,6 +64,12 @@ operation-specific optional fields. Operation names and their payload fields
 are defined by `InstructionOp` in the canonical schema. Producers must omit
 irrelevant optional fields rather than assigning invented sentinel values.
 
+Schema version 3 adds `pointer_difference`. Its `lhs` and `rhs` are pointer
+values, `source_type` is their pointee type, and the result `type` is signed
+`i64`. The backend subtracts their target pointer representations and divides
+the signed byte difference by the pointee's ABI size. Version 2 modules cannot
+use this instruction.
+
 Control flow ends with one of `return_void`, `return_value`, `branch`,
 `conditional_branch`, or `unreachable`. Phi instructions pair
 `incoming_values` and `incoming_blocks` by position.
@@ -72,10 +80,13 @@ Any incompatible field, enum, reference, or semantic change increments
 `schema_version`. A change is complete only when all of these agree:
 
 1. the Zig schema and validator;
-2. the C# seed writer;
-3. the native Zorb writer;
-4. the checked-in JSON fixtures and contract tests; and
-5. this document.
+2. the native Zorb writer;
+3. the checked-in JSON fixtures and contract tests; and
+4. this document.
+
+The frozen C# seed writer may continue producing version 2 while it is used for
+recovery bootstrapping. New version 3 instructions must be emitted by the
+native writer.
 
 Additive fields still require a version increment while unknown fields are
 rejected. This keeps old bootstrap compilers from silently producing a module
@@ -90,7 +101,7 @@ The native frontend can emit this contract with
 Native lowering covers the compiler's admitted language surface: scalar and
 aggregate types, globals and constants, declarations and direct/function-value
 calls, locals and assignments, casts, pointers, arrays, slices and strings,
-struct/enum/union/error-union operations, inline assembly, and structured
+struct/enum/union/error-union operations, pointer differences, inline assembly, and structured
 control flow including loops, switch, match, catch, break, and continue.
 Generic declarations are monomorphized before or during lowering.
 

@@ -378,7 +378,7 @@ Meaning:
 - Generic calls may provide explicit type arguments before the argument list, for example `identity<i64>(42)`.
 - When the parameter types determine the instantiation directly, generic calls may omit them, for example `identity(42)`.
 - Generic call value-argument arity must exactly match the declaration parameter list. Explicit generic type arguments must satisfy the declaration's type-parameter arity after accounting for any trailing defaulted type parameters.
-- Generic function values may appear anywhere an expected concrete function type is available, such as variable initializers, call arguments, returns, and aggregate fields. The compiler infers the concrete instantiation from that expected function type.
+- An uninstantiated generic function cannot yet be used as a first-class value in the native frontend. The compiler does not infer its concrete instantiation from an expected function type.
 
 ### Attributes
 
@@ -659,7 +659,7 @@ For arithmetic and bitwise operators:
 
 - operands generally must be numeric types
 - `+` and `-` also permit the pointer-and-integer combinations described in [Pointer Arithmetic](#pointer-arithmetic)
-- pointer-to-pointer arithmetic, including `pointer - pointer`, remains unsupported
+- subtracting compatible non-void pointers produces a signed `i64` element distance
 
 For logical operators:
 
@@ -785,7 +785,9 @@ Important consequence:
 
 - `pointer + integer` and `integer + pointer` produce a pointer of the same type as the pointer operand.
 - `pointer - integer` produces a pointer of the same type as the left operand.
-- Pointer-to-pointer arithmetic is not supported.
+- `pointer - pointer` is supported when both pointers have the same non-void pointee type and produces an `i64` element distance, not a byte distance.
+- Pointer subtraction is defined only when both pointers refer to elements of the same array object, or one past that array, and the element distance fits in `i64`.
+- Subtracting pointers with different pointee types or `*void` pointers is a semantic error with code `pointer.invalid-difference`.
 - Other arithmetic operators require numeric operands.
 
 ## Arrays

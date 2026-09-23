@@ -78,6 +78,7 @@ class CompilerRunnerTests(unittest.TestCase):
         self.assertEqual(expected_phase_from_code("type.not-assignable"), "semantic-failure")
         self.assertEqual(expected_phase_from_code("name.unknown"), "semantic-failure")
         self.assertEqual(expected_phase_from_code("flow.missing-return"), "semantic-failure")
+        self.assertEqual(expected_phase_from_code("pointer.invalid-difference"), "semantic-failure")
         with self.assertRaisesRegex(SuiteFailure, "unrecognized structured diagnostic code"):
             expected_phase_from_code("backend.invalid")
 

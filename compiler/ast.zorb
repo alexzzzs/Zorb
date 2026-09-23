@@ -64,6 +64,7 @@ export const ZAstSemanticErrorUnionLiteralVariantCount: i64 = 4
 export const ZAstSemanticErrorGenericConstraint: i64 = 5
 export const ZAstSemanticErrorUnknownName: i64 = 6
 export const ZAstSemanticErrorNotAssignable: i64 = 7
+export const ZAstSemanticErrorPointerDifference: i64 = 8
 export const ZAstCallExplicitTypeArguments: i64 = 1
 export const ZAstWarningMixedSignednessComparison: i64 = 1
 export const ZAstWarningPointerAlignment: i64 = 2
@@ -1793,6 +1794,9 @@ fn zast_expr_type_text(self: *ZAstModule, decl: ZAstDecl, expr_index: i64, throu
         }
         left_type: ZAstText = zast_expr_type_text(self, decl, expr.left, through_stmt)
         right_type: ZAstText = zast_expr_type_text(self, decl, expr.right, through_stmt)
+        if expr.op == ZTokenMinus && zast_is_pointer_type(left_type) && zast_is_pointer_type(right_type) {
+            return zast_text_from_string("i64")
+        }
         if (expr.op == ZTokenPlus || expr.op == ZTokenMinus) && zast_is_pointer_type(left_type) {
             return left_type
         }
@@ -3299,7 +3303,13 @@ fn zast_validate_boolean_operators(self: *ZAstModule, decl: ZAstDecl, expr_index
                         self.semantic_error_span = self.exprs[expr.right].span
                         return error.InvalidArgument
                     }
-                    if !zast_is_scalar_integer_type(right_type) {
+                    if right_is_pointer {
+                        if !zast_pointer_difference_types_match(left_type, right_type) {
+                            self.semantic_error_span = expr.span
+                            self.semantic_error_category = ZAstSemanticErrorPointerDifference
+                            return error.InvalidArgument
+                        }
+                    } else if !zast_is_scalar_integer_type(right_type) {
                         self.semantic_error_span = self.exprs[expr.left].span
                         return error.InvalidArgument
                     }
@@ -3724,6 +3734,30 @@ fn zast_is_scalar_integer_type(type_text: ZAstText) -> bool {
 fn zast_is_pointer_type(type_text: ZAstText) -> bool {
     type_text = zast_text_skip_ws(type_text)
     return type_text.len > 0 && type_text.ptr[0] == 42
+}
+
+fn zast_pointer_element_type_text(type_text: ZAstText) -> ZAstText {
+    type_text = zast_text_skip_ws(type_text)
+    if type_text.len < 2 || type_text.ptr[0] != 42 {
+        return ZAstText.empty()
+    }
+    element_type: ZAstText
+    element_type.ptr = type_text.ptr + 1
+    element_type.len = type_text.len - 1
+    return zast_text_skip_ws(element_type)
+}
+
+fn zast_pointer_difference_types_match(left: ZAstText, right: ZAstText) -> bool {
+    left_element: ZAstText = zast_pointer_element_type_text(left)
+    right_element: ZAstText = zast_pointer_element_type_text(right)
+    if left_element.len == 0 || right_element.len == 0 {
+        return false
+    }
+    if ZAstText.eql_string(zast_type_text_unwrap(left_element), "void") ||
+        ZAstText.eql_string(zast_type_text_unwrap(right_element), "void") {
+        return false
+    }
+    return zast_text_same_ignoring_ws(left_element, right_element)
 }
 
 fn zast_type_has_generic_arguments(type_text: ZAstText) -> bool {

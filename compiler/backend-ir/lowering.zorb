@@ -4816,10 +4816,19 @@ fn zbackend_ir_cfg_expression_type_id(
         left_type_id: i64 = zbackend_ir_cfg_expression_type_id(
             context, expression.left, fallback_type_id
         ) catch |err| { return err }
-        if context.ast.exprs[expression.left].kind != ZAstExprInteger { return left_type_id }
-        return zbackend_ir_cfg_expression_type_id(
+        right_type_id: i64 = zbackend_ir_cfg_expression_type_id(
             context, expression.right, fallback_type_id
         ) catch |err| { return err }
+        if expression.op == ZTokenMinus && left_type_id > 0 && right_type_id > 0 &&
+            left_type_id <= context.type_layout.type_count && right_type_id <= context.type_layout.type_count &&
+            context.type_layout.types[left_type_id - 1].kind == "pointer" &&
+            context.type_layout.types[right_type_id - 1].kind == "pointer" {
+            return zbackend_ir_type_layout_intern_scalar(
+                context.type_layout, "i64"
+            ) catch |err| { return err }
+        }
+        if context.ast.exprs[expression.left].kind != ZAstExprInteger { return left_type_id }
+        return right_type_id
     }
     if expression.kind == ZAstExprCall {
         expression.name = zbackend_ir_resolved_call_name(
@@ -5248,6 +5257,42 @@ fn zbackend_ir_cfg_lower_pointer_arithmetic(
     return zbackend_ir_cfg_append_instruction(context, address) catch |err| { return err }
 }
 
+fn zbackend_ir_cfg_lower_pointer_difference(
+    context: *ZBackendIrControlFlowLowering,
+    expression: ZAstExpr,
+    lhs_pointer_type_id: i64,
+    rhs_pointer_type_id: i64
+) !i64 {
+    if lhs_pointer_type_id <= 0 || lhs_pointer_type_id > context.type_layout.type_count ||
+        rhs_pointer_type_id <= 0 || rhs_pointer_type_id > context.type_layout.type_count {
+        return error.InvalidArgument
+    }
+    lhs_pointer_type: ZBackendIrType = context.type_layout.types[lhs_pointer_type_id - 1]
+    rhs_pointer_type: ZBackendIrType = context.type_layout.types[rhs_pointer_type_id - 1]
+    if lhs_pointer_type.kind != "pointer" || rhs_pointer_type.kind != "pointer" ||
+        lhs_pointer_type.element_type != rhs_pointer_type.element_type {
+        return error.InvalidArgument
+    }
+    result_type_id: i64 = zbackend_ir_type_layout_intern_scalar(
+        context.type_layout, "i64"
+    ) catch |err| { return err }
+    lhs: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.left, lhs_pointer_type_id
+    ) catch |err| { return err }
+    rhs: i64 = zbackend_ir_cfg_lower_expression_as(
+        context, expression.right, rhs_pointer_type_id
+    ) catch |err| { return err }
+    id: i64 = context.next_value_id
+    context.next_value_id = context.next_value_id + 1
+    difference: ZBackendIrInstruction = zbackend_ir_new_instruction(
+        id, "pointer_difference", result_type_id
+    )
+    difference.source_type = lhs_pointer_type.element_type
+    difference.lhs = lhs
+    difference.rhs = rhs
+    return zbackend_ir_cfg_append_instruction(context, difference) catch |err| { return err }
+}
+
 fn zbackend_ir_cfg_lower_struct_literal_expression(
     context: *ZBackendIrControlFlowLowering,
     expression: ZAstExpr
@@ -5389,6 +5434,11 @@ fn zbackend_ir_cfg_lower_expression_as(
                 context.type_layout.types[lhs_type_id - 1].kind == "pointer"
             rhs_is_pointer: bool = rhs_type_id > 0 && rhs_type_id <= context.type_layout.type_count &&
                 context.type_layout.types[rhs_type_id - 1].kind == "pointer"
+            if expression.op == ZTokenMinus && lhs_is_pointer && rhs_is_pointer {
+                return zbackend_ir_cfg_lower_pointer_difference(
+                    context, expression, lhs_type_id, rhs_type_id
+                ) catch |err| { return err }
+            }
             if (expression.op == ZTokenPlus || expression.op == ZTokenMinus) && lhs_is_pointer {
                 return zbackend_ir_cfg_lower_pointer_arithmetic(
                     context, expression, lhs_type_id

@@ -1,0 +1,3 @@
+fn distance(left: *i32, right: *i32) -> i64 {
+    return left - right
+}

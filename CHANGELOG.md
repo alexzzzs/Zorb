@@ -13,6 +13,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Signed pointer subtraction returning an `i64` element distance,
+  with typed-pointer checks and ABI-sized LLVM lowering.
 - A cross-platform `std.process` child-process API with inherited standard
   handles, null-terminated argv vectors, `spawn`, `wait`, `run`, and explicit
   active-child state on Linux and Windows.

@@ -890,7 +890,47 @@
       "feature": "types.pointer-arithmetic",
       "expected": "semantic-failure",
       "gate": "frontend",
-      "reason": "Verified pointer arithmetic rejects pointer-pointer subtraction, integer-pointer subtraction, multiplication, and division."
+      "reason": "Verified pointer arithmetic rejects integer-pointer subtraction, multiplication, and division."
+    },
+    {
+      "name": "pointer_difference_scalar",
+      "path": "tests/csharp/fixtures/pointer_difference_scalar/main.zorb",
+      "classification": "native-verified",
+      "feature": "types.pointer-difference",
+      "expected": "success",
+      "reason": "Native frontend and LLVM backend lower scalar pointer subtraction to a signed element distance."
+    },
+    {
+      "name": "pointer_difference_aggregate",
+      "path": "tests/csharp/fixtures/pointer_difference_aggregate/main.zorb",
+      "classification": "native-verified",
+      "feature": "types.pointer-difference",
+      "expected": "success",
+      "reason": "Native frontend and LLVM backend use aggregate ABI size when lowering pointer subtraction."
+    },
+    {
+      "name": "pointer_difference_imported",
+      "path": "tests/csharp/fixtures/pointer_difference_imported/main.zorb",
+      "classification": "native-verified",
+      "feature": "types.pointer-difference",
+      "expected": "success",
+      "reason": "Native frontend and LLVM backend lower pointer subtraction for an imported pointee type."
+    },
+    {
+      "name": "pointer_difference_incompatible",
+      "path": "tests/csharp/fixtures/pointer_difference_incompatible/main.zorb",
+      "classification": "native-verified",
+      "feature": "types.pointer-difference",
+      "expected": "semantic-failure",
+      "reason": "Native frontend reports the stable pointer.invalid-difference diagnostic for mismatched pointee types."
+    },
+    {
+      "name": "pointer_difference_void",
+      "path": "tests/csharp/fixtures/pointer_difference_void/main.zorb",
+      "classification": "native-verified",
+      "feature": "types.pointer-difference",
+      "expected": "semantic-failure",
+      "reason": "Native frontend reports the stable pointer.invalid-difference diagnostic for void pointers."
     },
     {
       "name": "global_array_initializer_requires_literal",
@@ -3314,6 +3354,14 @@
       "expected": "success",
       "gate": "frontend",
       "reason": "Verified expected outcome through the native frontend differential gate."
+    },
+    {
+      "name": "runtime_pointer_difference",
+      "path": "tests/csharp/fixtures/runtime_pointer_difference/main.zorb",
+      "classification": "native-verified",
+      "feature": "types.pointer-difference",
+      "expected": "success",
+      "reason": "Native executable checks forward, backward, and zero signed element distances."
     },
     {
       "name": "runtime_net_line_protocol",

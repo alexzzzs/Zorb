@@ -1,0 +1,32 @@
+struct Cell {
+    x: i64,
+    y: i64,
+}
+
+fn main() -> i32 {
+    values: [4]i64 = [4]i64{ 10, 20, 30, 40 }
+    first: *i64 = &values[0]
+    third: *i64 = first + 2
+    if third - first != 2 {
+        return 1
+    }
+    if first - third != -2 {
+        return 2
+    }
+    if first - first != 0 {
+        return 3
+    }
+    cells: [3]Cell
+    cell_first: *Cell = &cells[0]
+    cell_third: *Cell = cell_first + 2
+    if cell_third - cell_first != 2 {
+        return 4
+    }
+    if cell_first - cell_third != -2 {
+        return 5
+    }
+    if cell_first - cell_first != 0 {
+        return 6
+    }
+    return 0
+}

@@ -1,0 +1,8 @@
+struct Cell {
+    x: i64,
+    y: i64,
+}
+
+fn distance(left: *Cell, right: *Cell) -> i64 {
+    return left - right
+}

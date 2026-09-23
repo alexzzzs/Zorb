@@ -1,0 +1,5 @@
+import "lib.zorb" as elements
+
+fn distance(left: *elements.Cell, right: *elements.Cell) -> i64 {
+    return left - right
+}

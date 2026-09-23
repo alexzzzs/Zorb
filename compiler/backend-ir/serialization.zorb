@@ -106,6 +106,13 @@ fn zbackend_ir_write_instructions(instructions: *ZBackendIrInstruction, count: i
             std.io.print_i64(instruction.lhs)
             std.io.print(",\"rhs\":")
             std.io.print_i64(instruction.rhs)
+        } else if instruction.op == "pointer_difference" {
+            std.io.print(",\"source_type\":")
+            std.io.print_i64(instruction.source_type)
+            std.io.print(",\"lhs\":")
+            std.io.print_i64(instruction.lhs)
+            std.io.print(",\"rhs\":")
+            std.io.print_i64(instruction.rhs)
         } else if instruction.op == "compare" {
             std.io.print(",\"compare_op\":")
             ZJson.write_string(instruction.compare_op)

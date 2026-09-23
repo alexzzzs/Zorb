@@ -1,6 +1,7 @@
 const std = @import("std");
 
-pub const schema_version = 2;
+pub const legacy_schema_version = 2;
+pub const schema_version = 3;
 
 pub const OutputKind = enum {
     llvm_ir,
@@ -170,6 +171,7 @@ pub const InstructionOp = enum {
     load,
     store,
     binary,
+    pointer_difference,
     compare,
     cast,
     phi,
@@ -274,12 +276,24 @@ pub const Module = struct {
     functions: []const Function = &.{},
 
     pub fn validate(self: Module, diagnostics: *std.Io.Writer) !void {
-        if (self.schema_version != schema_version) {
+        if (self.schema_version != schema_version and self.schema_version != legacy_schema_version) {
             try diagnostics.print(
-                "unsupported backend IR schema version {d}; expected {d}\n",
-                .{ self.schema_version, schema_version },
+                "unsupported backend IR schema version {d}; expected version {d} or legacy version {d}\n",
+                .{ self.schema_version, schema_version, legacy_schema_version },
             );
             return error.InvalidBackendIr;
+        }
+        if (self.schema_version == legacy_schema_version) {
+            for (self.functions) |function| {
+                for (function.blocks) |block| {
+                    for (block.instructions) |instruction| {
+                        if (instruction.op == .pointer_difference) {
+                            try diagnostics.writeAll("pointer_difference requires backend IR schema version 3\n");
+                            return error.InvalidBackendIr;
+                        }
+                    }
+                }
+            }
         }
         if (self.module_name.len == 0 or self.target.triple.len == 0 or self.output_path.len == 0) {
             try diagnostics.writeAll("module_name, target.triple, and output_path must be non-empty\n");
@@ -324,7 +338,7 @@ pub const Module = struct {
     }
 };
 
-test "parse and validate scalar module" {
+test "parse and validate legacy scalar module" {
     const json =
         \\{
         \\  "schema_version": 2,
@@ -342,6 +356,54 @@ test "parse and validate scalar module" {
     var diagnostic_buffer: [256]u8 = undefined;
     var diagnostics: std.Io.Writer = .fixed(&diagnostic_buffer);
     try parsed.value.validate(&diagnostics);
+}
+
+test "parse and validate current scalar module" {
+    const json =
+        \\{
+        \\  "schema_version": 3,
+        \\  "module_name": "test",
+        \\  "target": {"triple":"x86_64-pc-linux-gnu"},
+        \\  "output_kind": "llvm_ir",
+        \\  "output_path": "test.ll",
+        \\  "types": [],
+        \\  "functions": []
+        \\}
+    ;
+    const parsed = try std.json.parseFromSlice(Module, std.testing.allocator, json, .{});
+    defer parsed.deinit();
+
+    var diagnostic_buffer: [256]u8 = undefined;
+    var diagnostics: std.Io.Writer = .fixed(&diagnostic_buffer);
+    try parsed.value.validate(&diagnostics);
+}
+
+test "legacy modules reject version 3 instructions" {
+    const instructions = [_]Instruction{
+        .{ .id = 4, .op = .pointer_difference, .type = 1, .lhs = 2, .rhs = 3, .source_type = 2 },
+    };
+    const blocks = [_]Block{
+        .{
+            .id = 1,
+            .name = "entry",
+            .instructions = &instructions,
+            .terminator = .{ .op = .return_void },
+        },
+    };
+    const functions = [_]Function{
+        .{ .id = 1, .name = "test", .return_type = 1, .blocks = &blocks },
+    };
+    const module = Module{
+        .schema_version = legacy_schema_version,
+        .module_name = "test",
+        .target = .{ .triple = "x86_64-pc-linux-gnu" },
+        .output_kind = .llvm_ir,
+        .output_path = "test.ll",
+        .functions = &functions,
+    };
+    var diagnostic_buffer: [256]u8 = undefined;
+    var diagnostics: std.Io.Writer = .fixed(&diagnostic_buffer);
+    try std.testing.expectError(error.InvalidBackendIr, module.validate(&diagnostics));
 }
 
 test "functions report operations lowered through inline assembly" {

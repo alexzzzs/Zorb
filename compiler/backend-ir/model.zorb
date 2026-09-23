@@ -1,4 +1,4 @@
-export const ZBackendIrSchemaVersion: i64 = 2
+export const ZBackendIrSchemaVersion: i64 = 3
 
 export struct ZBackendIrTarget {
     triple: string,

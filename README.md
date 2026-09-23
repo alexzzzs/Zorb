@@ -31,6 +31,8 @@ The compiler supports a focused language subset:
 - `if`, `else`, `while`, `for`, `switch`, `match`, `continue`, `break`, and `return`
 - logical `&&`, `||`, and unary `!` on `bool`
 - pointers, fixed-size arrays, slice types, function types, and error unions
+- pointer arithmetic and matching non-void pointer subtraction yielding signed
+  `i64` element distances
 - typed struct literals, typed array literals, and local array value copies
 - imports, including `import "file.zorb" as alias`
 - inline assembly
@@ -101,8 +103,9 @@ Generic calls may provide explicit type arguments such as `identity<i64>(42)`, o
 Each concrete use is monomorphized into a distinct backend function or concrete nominal type. Generic unions also monomorphize their generated `.Tag` enums per concrete use, so expressions such as `Result<i64, bool>.Tag.Ok` remain type-safe.
 Constraints are exact-type requirements after substituting any earlier type
 arguments; they are not a trait or interface system. Generic `extern fn`
-declarations monomorphize per concrete use. First-class values for
-uninstantiated generic functions are still not supported.
+declarations monomorphize per concrete use. The native frontend does not yet
+support uninstantiated generic functions as first-class values or infer their
+concrete instantiation from an expected function type.
 
 Cross-platform stdlib helpers currently include:
 

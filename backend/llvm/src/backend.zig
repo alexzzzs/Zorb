@@ -590,6 +590,7 @@ pub const Backend = struct {
             .function_address,
             => try self.emitMemoryInstruction(builder, values, instruction),
             .binary,
+            .pointer_difference,
             .compare,
             .cast,
             => try self.emitArithmeticInstruction(builder, values, instruction),
@@ -725,6 +726,25 @@ pub const Backend = struct {
                     .arithmetic_shift_right => llvm.LLVMBuildAShr(builder, lhs, rhs, ""),
                     .logical_shift_right => llvm.LLVMBuildLShr(builder, lhs, rhs, ""),
                 };
+            },
+            .pointer_difference => blk: {
+                const lhs = try instructionValue(values, instruction.lhs);
+                const rhs = try instructionValue(values, instruction.rhs);
+                const result_type_def = self.findTypeDef(instruction.type) orelse return error.InvalidBackendIr;
+                if (result_type_def.kind != .scalar or result_type_def.scalar != .i64) {
+                    return error.InvalidBackendIr;
+                }
+                const difference_type = try self.typeById(instruction.type);
+                const element_type = try self.typeById(instruction.source_type orelse return error.InvalidBackendIr);
+                const element_size = llvm.LLVMABISizeOfType(self.target_data, element_type);
+                if (element_size == 0 or element_size > 0x7fff_ffff_ffff_ffff) {
+                    return error.InvalidBackendIr;
+                }
+                const lhs_integer = llvm.LLVMBuildPtrToInt(builder, lhs, difference_type, "");
+                const rhs_integer = llvm.LLVMBuildPtrToInt(builder, rhs, difference_type, "");
+                const byte_difference = llvm.LLVMBuildSub(builder, lhs_integer, rhs_integer, "");
+                const element_size_value = llvm.LLVMConstInt(difference_type, element_size, 0);
+                break :blk llvm.LLVMBuildSDiv(builder, byte_difference, element_size_value, "");
             },
             .compare => blk: {
                 const lhs = try instructionValue(values, instruction.lhs);

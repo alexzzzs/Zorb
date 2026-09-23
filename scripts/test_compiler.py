@@ -59,7 +59,7 @@ VALID_OUTCOMES = {
     "semantic-failure",
 }
 DIAGNOSTIC_PATTERN = re.compile(r"error\[(?P<code>[a-z0-9.-]+)\]")
-SEMANTIC_DIAGNOSTIC_PREFIXES = ("name.", "type.", "flow.")
+SEMANTIC_DIAGNOSTIC_PREFIXES = ("name.", "type.", "flow.", "pointer.")
 
 
 @dataclass(frozen=True)
@@ -613,6 +613,26 @@ class NativeCompilerSuite:
             raise SuiteFailure(
                 f"expected {case.expected}, got {phase}\n{checked.output.strip()}"
             )
+        expected_codes = read_expectation_lines(case.path.parent / "expect-diagnostic-code.txt")
+        if expected_codes:
+            if len(expected_codes) != 1:
+                raise SuiteFailure("fixture must specify exactly one expected diagnostic code")
+            json_checked = self._run_command(
+                [self.compiler, "check", case.path, CHECK_JSON_OPTION]
+            )
+            if json_checked.returncode == 0:
+                raise SuiteFailure("JSON check accepted input expecting a diagnostic")
+            diagnostics = parse_json_diagnostics(json_checked)
+            actual_codes = [
+                str(diagnostic["code"])
+                for diagnostic in diagnostics
+                if diagnostic["severity"] == "error"
+            ]
+            if actual_codes != expected_codes:
+                raise SuiteFailure(
+                    f"expected diagnostic codes {expected_codes!r}, got {actual_codes!r}\n"
+                    f"{json_checked.output.strip()}"
+                )
         return checked
 
     def _validate_warning_expectations(

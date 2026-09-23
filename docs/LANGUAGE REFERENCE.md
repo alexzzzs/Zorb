@@ -437,7 +437,7 @@ Rules:
 - A non-generic function rejects type arguments.
 - Function-pointer calls do not accept type arguments.
 - `extern fn` declarations may declare type parameters and monomorphize per concrete use.
-- Generic function values may appear in contexts with an expected concrete function type, and the compiler infers the concrete instantiation from that expected type.
+- An uninstantiated generic function cannot yet be used as a first-class value in the native frontend. The compiler does not infer its concrete instantiation from an expected function type.
 
 ### Extern Functions
 
@@ -577,6 +577,27 @@ ptr_to_ptr: **u8
 `&expr` takes the address of an expression. Taking the address of a pointer increases pointer depth by one.
 
 Special case: `&array` produces `*T`, a pointer to the first element, not a pointer-to-array type.
+
+#### Pointer Arithmetic and Difference
+
+Pointer addition and subtraction by an integer are scaled by the pointee type:
+
+```zorb
+next: *i32 = values + 1
+previous: *i32 = next - 1
+```
+
+Subtracting two pointers with the same non-`void` pointee type returns a signed
+`i64` element distance:
+
+```zorb
+distance: i64 = end - start
+```
+
+Both pointers must refer to elements of the same array object, or one past it,
+and the result must fit in `i64` for the operation to be defined. The result
+counts elements rather than bytes. Different pointee types and `*void` are
+rejected with the `pointer.invalid-difference` diagnostic.
 
 ### Arrays
 

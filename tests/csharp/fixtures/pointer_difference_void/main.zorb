@@ -1,0 +1,3 @@
+fn distance(left: *void, right: *void) -> i64 {
+    return left - right
+}
