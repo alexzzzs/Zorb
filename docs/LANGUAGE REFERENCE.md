@@ -13,9 +13,9 @@ The frontend checks the program and lowers it to the versioned
 Stable build targets are `host-linux`, `freestanding-linux`,
 `host-linux-aarch64`, `freestanding-linux-aarch64`, `host-windows`, and
 `bare-metal-x86_64`. The bare-metal target builds kernel ELF files and does not
-support `run`. Hosted Windows uses the MSVC ABI; MinGW is unsupported. AArch64
-cross-host requirements are described in the
-[bootstrap guide](BOOTSTRAPPING.md).
+support `run`. Hosted Windows uses the MSVC ABI; MinGW is unsupported. Host
+and toolchain requirements are listed in the
+[backend target matrix](../backend/llvm/README.md#supported-output-targets).
 
 ## Imports and visibility
 

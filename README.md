@@ -26,9 +26,9 @@ requires Zig 0.16 and LLVM 22; executable output also needs the host linker
 `build` supports `host-linux`, `freestanding-linux`, `host-linux-aarch64`,
 `freestanding-linux-aarch64`, `host-windows`, and `bare-metal-x86_64`.
 `bare-metal-x86_64` produces a kernel ELF and does not support `run`. Hosted
-Windows uses the MSVC ABI; MinGW output is not supported. Cross-host AArch64
-build and runtime requirements are in the
-[bootstrap guide](docs/BOOTSTRAPPING.md).
+Windows uses the MSVC ABI; MinGW output is not supported. See the
+[backend target matrix](backend/llvm/README.md#supported-output-targets) for
+host and toolchain requirements.
 
 Emit LLVM IR, assembly, object files, or bitcode without linking:
 
