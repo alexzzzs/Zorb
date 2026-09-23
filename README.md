@@ -5,9 +5,6 @@ combines a Zorb frontend with an in-process Zig 0.16 and LLVM 22 backend. A
 pinned Zorb release is the normal bootstrap seed; the C# compiler is kept for
 explicit recovery only.
 
-See [architecture](docs/ARCHITECTURE.md) and
-[bootstrapping](docs/BOOTSTRAPPING.md) for how the compiler is built.
-
 ## Quick start
 
 Bootstrap the compiler, check a source file, then build or run it:
@@ -19,14 +16,10 @@ python scripts/bootstrap_compiler.py bootstrap
 ./build/zorb run main.zorb
 ```
 
-Bootstrap resolves and verifies the pinned compiler seed for Linux x64, Linux
-ARM64, or Windows x64. See the [bootstrap guide](docs/BOOTSTRAPPING.md) for
-offline seeds and recovery builds.
-
-Building the backend from source requires Zig 0.16 and LLVM 22 development
-headers and libraries. Building executable output also requires the host linker
-driver (`cc` on Linux or `clang-cl` on Windows). The compiler package does not
-include those host tools.
+Bootstrap verifies a pinned compiler seed. Building the backend from source
+requires Zig 0.16 and LLVM 22; executable output also needs the host linker
+(`cc` on Linux or `clang-cl` on Windows). See the
+[bootstrap guide](docs/BOOTSTRAPPING.md) for offline seeds and recovery builds.
 
 ## Targets
 

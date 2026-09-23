@@ -1,18 +1,7 @@
 # Zorb Semantics
 
-This document describes the target semantics for the current Zorb compiler line in this repository.
-
-## Status
-
-- This spec is the source of truth for semantic tightening work.
-- The compiler should move toward this document.
-- Current language behavior should be described here directly rather than deferred to implementation-shaped shortcuts.
-
-## Source Files
-
-- A Zorb program is compiled from one entry source file.
-- Additional source files may be loaded through `import`.
-- Source locations are tracked as file, line, column, and token-length metadata on AST nodes.
+This reference describes Zorb's syntax, type rules, and runtime behavior. It
+notes current restrictions where they affect programs.
 
 ## Lexical Structure
 
@@ -227,12 +216,7 @@ Notes:
 - `N` must be a constant integer expression that resolves at semantic-check time.
 - See [Constant Integer Evaluation](#constant-integer-evaluation) for the shared compile-time rules that govern `N`.
 - Arrays may appear in variable declarations and struct fields.
-- Struct field array sizes are resolved through the same constant-integer rules as variable declarations.
-- Arrays do not implicitly decay to pointers in unrelated expression contexts.
-- Arrays decay to `*T` whenever a context expects exactly that element pointer type, including variable initialization, assignment, struct literals, returns, and function calls.
-- Arrays also coerce to `[]T` when assigned, initialized, returned, used in struct literals, or passed to a function expecting that matching slice type.
-- `&array` is an explicit way to obtain a pointer to the first element, with type `*T`.
-- Indexing an array or pointer produces an element value of type `T`.
+- Array decay, slice coercion, and indexing are described in [Arrays](#arrays).
 
 ### Slice Types
 
@@ -269,10 +253,7 @@ fn name(...) -> !T
 !T
 ```
 
-- `!T` represents a result-like type carrying either a success value of `T` or an error code.
-- Error unions are nominally represented as a result-like aggregate with a
-  `value` field and an `i32` error code field.
-- Pointer depth inside `T` is preserved.
+`!T` is an error-union type; see the section below for its rules.
 
 ## Declarations
 
@@ -428,8 +409,6 @@ The current statement forms are:
 - `continue`
 - `break`
 - inline `asm`
-
-`break` exits the nearest enclosing `while` or `for`.
 
 There is no dedicated block statement syntax beyond the bodies of `if`, `else`, `while`, `for`, `switch` cases, `match` cases, and functions.
 
@@ -760,11 +739,8 @@ The current assignability relation is:
 6. Two non-numeric, non-pointer, non-built-in nominal types are assignable only if name and namespace path match.
 7. Function types are assignable only if return type and parameter types match structurally.
 
-Important consequence:
-
-- Pointer-to-integer and integer-to-pointer conversion require an explicit `cast(...)`.
-- `string` does not implicitly convert to pointer or integer types.
-- Numeric conversions are intentionally stricter than earlier compiler behavior.
+`string` does not implicitly convert to pointer or integer types. Numeric
+conversion rules are listed under [Numeric Conversions](#numeric-conversions).
 
 ## Pointer Rules
 
@@ -898,7 +874,6 @@ Important consequence:
 ### Argument Checking
 
 - Each argument must be assignable to the corresponding parameter type.
-- If both parameter and argument are pointers, pointer levels must match exactly.
 
 ## Inline Assembly
 
@@ -967,26 +942,3 @@ object code.
 - Parser expectation failures report diagnostics and continue by advancing.
 - Top-level parser recovery uses synchronization on declaration and statement-start tokens.
 - Semantic checking accumulates diagnostics rather than stopping immediately.
-
-## Resolved Current-Line Decisions
-
-The current compiler line treats these behaviors as settled semantics:
-
-- Conditions require `bool`; numeric and pointer truthiness is rejected.
-- Arrays decay only to exact `*T` in contexts that explicitly expect that type and do not implicitly decay to `*void`.
-- `&array` yields an element pointer `*T`, not a pointer-to-array type.
-- `error.Name` resolves through visible `error Name = <integer-literal>` declarations.
-- Distinct visible error declarations must use distinct integer values.
-- Import aliases are file-oriented and do not inject unqualified imported names.
-- Imported names are not re-exported transitively.
-
-## Suggested Process For Evolving This File
-
-For each semantic change:
-
-1. Update this file first or in the same change.
-2. Add at least one positive fixture.
-3. Add at least one negative fixture when the rule rejects code.
-4. Keep implementation shortcuts called out explicitly until they are redesigned.
-
-That discipline is what turns a compiler project into a language.
