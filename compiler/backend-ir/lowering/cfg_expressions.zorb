@@ -408,7 +408,8 @@ export fn zbackend_ir_cfg_lower_expression_as(
         }
         protected_type: ZBackendIrType = context.type_layout.types[protected_type_id - 1]
         if protected_type.kind != "error_union" { return error.InvalidArgument }
-        result: i64 = context.lower_catch_expression_fn(
+        lower_catch_expression_fn: fn(*ZBackendIrControlFlowLowering, i64, bool, i64) -> !i64 = context.lower_catch_expression_fn
+        result: i64 = lower_catch_expression_fn(
             context, expression_index, false, protected_type_id
         ) catch |err| { return err }
         return zbackend_ir_cfg_emit_cast_value(
@@ -902,7 +903,7 @@ export fn zbackend_ir_cfg_lower_address(
         context.local_count
     )
     result: i64 = zbackend_ir_expression_lower_address(
-        &expression_context, expression_index
+        &expression_context, expression_index, zbackend_ir_lower_expression
     ) catch |err| { return err }
     context.blocks[block_index].instruction_count = instruction_start + expression_context.instruction_count
     context.next_value_id = expression_context.next_value_id

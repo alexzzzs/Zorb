@@ -51,8 +51,7 @@ export fn zbackend_ir_expression_context(
         local_addresses: cast(*i64, 0),
         local_type_ids: cast(*i64, 0),
         local_count: 0,
-        current_statement_index: current_statement_index,
-        lower_expression_fn: zbackend_ir_lower_expression
+        current_statement_index: current_statement_index
     }
 }
 

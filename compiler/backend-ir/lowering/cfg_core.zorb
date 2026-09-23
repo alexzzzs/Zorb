@@ -32,13 +32,14 @@ export fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, e
     if expected_type.kind == "slice" && actual_type.kind == "array" &&
         expected_type.element_type == actual_type.element_type {
         return zbackend_ir_expression_lower_array_to_slice(
-            context, expression_index, actual_type_id, context.value_type_id
+            context, expression_index, actual_type_id, context.value_type_id,
+            zbackend_ir_lower_expression
         ) catch |err| { return err }
     }
     if expected_type.kind == "pointer" && actual_type.kind == "array" &&
         expected_type.element_type == actual_type.element_type {
         return zbackend_ir_expression_lower_array_to_pointer(
-            context, expression_index, actual_type_id
+            context, expression_index, actual_type_id, zbackend_ir_lower_expression
         ) catch |err| { return err }
     }
     global_value_name: ZAstText = zbackend_ir_resolved_global_name(
@@ -119,7 +120,7 @@ export fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, e
         }
         if zbackend_ir_is_global_name(context.ast, expression.name) {
             address: i64 = zbackend_ir_expression_lower_address(
-                context, expression_index
+                context, expression_index, zbackend_ir_lower_expression
             ) catch |err| { return err }
             id: i64 = context.next_value_id
             context.next_value_id = context.next_value_id + 1
@@ -253,7 +254,7 @@ export fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, e
             context, expression.left, context.value_type_id
         ) catch |err| { return err }
         address: i64 = zbackend_ir_expression_lower_address(
-            context, expression.left
+            context, expression.left, zbackend_ir_lower_expression
         ) catch |err| { return err }
         operand_type: ZBackendIrType = context.type_layout.types[operand_type_id - 1]
         if operand_type.kind != "array" { return address }
@@ -274,7 +275,7 @@ export fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, e
     if (expression.kind == ZAstExprUnary && expression.op == ZTokenStar) ||
         expression.kind == ZAstExprIndex {
         address: i64 = zbackend_ir_expression_lower_address(
-            context, expression_index
+            context, expression_index, zbackend_ir_lower_expression
         ) catch |err| { return err }
         type_id: i64 = zbackend_ir_expression_type_id(
             context, expression_index, context.value_type_id
@@ -493,7 +494,7 @@ export fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, e
             return zbackend_ir_append_instruction(context, extract) catch |err| { return err }
         }
         address: i64 = zbackend_ir_expression_lower_address(
-            context, expression_index
+            context, expression_index, zbackend_ir_lower_expression
         ) catch |err| { return err }
         field_type_id: i64 = zbackend_ir_expression_type_id(
             context, expression_index, context.value_type_id
@@ -538,7 +539,7 @@ export fn zbackend_ir_lower_expression(context: *ZBackendIrExpressionLowering, e
     }
     if expression.kind == ZAstExprUnary && expression.op == ZTokenBang {
         return zbackend_ir_lower_logical_not(
-            context, expression.left
+            context, expression.left, zbackend_ir_lower_expression
         ) catch |err| { return err }
     }
     if expression.kind == ZAstExprBinary {

@@ -519,7 +519,8 @@ export fn zbackend_ir_cfg_lower_sequence(
         }
         if statement.kind == ZAstStmtExpr {
             if context.ast.exprs[statement.expr_index].kind == ZAstExprCatch {
-                context.lower_catch_expression_fn(
+                lower_catch_expression_fn: fn(*ZBackendIrControlFlowLowering, i64, bool, i64) -> !i64 = context.lower_catch_expression_fn
+                lower_catch_expression_fn(
                     context, statement.expr_index, true, ZBACKEND_IR_NO_TYPE_ID
                 ) catch |err| { return err }
             } else {

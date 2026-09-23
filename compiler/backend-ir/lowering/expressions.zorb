@@ -21,7 +21,8 @@ import "expression_support.zorb"
 
 export fn zbackend_ir_expression_lower_address(
     context: *ZBackendIrExpressionLowering,
-    expression_index: i64
+    expression_index: i64,
+    lower_expression_fn: fn(*ZBackendIrExpressionLowering, i64) -> !i64
 ) !i64 {
     expression: ZAstExpr = context.ast.exprs[expression_index]
     if expression.kind == ZAstExprIdentifier {
@@ -79,7 +80,7 @@ export fn zbackend_ir_expression_lower_address(
         return address_id
     }
     if expression.kind == ZAstExprUnary && expression.op == ZTokenStar {
-        return context.lower_expression_fn(context, expression.left) catch |err| { return err }
+        return lower_expression_fn(context, expression.left) catch |err| { return err }
     }
     if expression.kind == ZAstExprIndex {
         target_type_id: i64 = zbackend_ir_expression_type_id(
@@ -96,19 +97,19 @@ export fn zbackend_ir_expression_lower_address(
         previous_value_is_signed: bool = context.value_is_signed
         context.value_type_id = index_type_id
         context.value_is_signed = true
-        index_value: i64 = context.lower_expression_fn(context, expression.right) catch |err| { return err }
+        index_value: i64 = lower_expression_fn(context, expression.right) catch |err| { return err }
         context.value_type_id = previous_value_type_id
         context.value_is_signed = previous_value_is_signed
         if target_type.kind == "array" {
             base_address: i64 = zbackend_ir_expression_lower_address(
-                context, expression.left
+                context, expression.left, lower_expression_fn
             ) catch |err| { return err }
             return zbackend_ir_expression_emit_index_address(
                 context, base_address, index_value, target_type_id, target_type.element_type
             ) catch |err| { return err }
         }
         if target_type.kind == "pointer" {
-            base_address: i64 = context.lower_expression_fn(context, expression.left) catch |err| { return err }
+            base_address: i64 = lower_expression_fn(context, expression.left) catch |err| { return err }
             return zbackend_ir_expression_emit_index_address(
                 context, base_address, index_value, target_type.element_type, target_type.element_type
             ) catch |err| { return err }
@@ -123,10 +124,10 @@ export fn zbackend_ir_expression_lower_address(
         target_type: ZBackendIrType = context.type_layout.types[target_type_id - 1]
         if target_type.kind == "pointer" {
             container_type_id = target_type.element_type
-            base_address = context.lower_expression_fn(context, expression.left) catch |err| { return err }
+            base_address = lower_expression_fn(context, expression.left) catch |err| { return err }
         } else {
             base_address = zbackend_ir_expression_lower_address(
-                context, expression.left
+                context, expression.left, lower_expression_fn
             ) catch |err| { return err }
         }
         if target_type.kind == "slice" {
@@ -174,7 +175,7 @@ export fn zbackend_ir_expression_lower_address(
     temporary_type: i64 = zbackend_ir_expression_type_id(
         context, expression_index, context.value_type_id
     ) catch |err| { return err }
-    temporary_value: i64 = context.lower_expression_fn(context, expression_index) catch |err| { return err }
+    temporary_value: i64 = lower_expression_fn(context, expression_index) catch |err| { return err }
     address_id: i64 = context.next_value_id
     context.next_value_id = context.next_value_id + 1
     alloca: ZBackendIrInstruction = zbackend_ir_new_instruction(
@@ -197,7 +198,8 @@ export fn zbackend_ir_expression_lower_array_to_slice(
     context: *ZBackendIrExpressionLowering,
     expression_index: i64,
     array_type_id: i64,
-    slice_type_id: i64
+    slice_type_id: i64,
+    lower_expression_fn: fn(*ZBackendIrExpressionLowering, i64) -> !i64
 ) !i64 {
     array_type: ZBackendIrType = context.type_layout.types[array_type_id - 1]
     if array_type.kind != "array" { return error.InvalidArgument }
@@ -216,7 +218,7 @@ export fn zbackend_ir_expression_lower_array_to_slice(
     context.value_type_id = array_type_id
     context.value_is_signed = false
     array_address: i64 = zbackend_ir_expression_lower_address(
-        context, expression_index
+        context, expression_index, lower_expression_fn
     ) catch |err| { return err }
     context.value_type_id = previous_value_type_id
     context.value_is_signed = previous_value_is_signed
@@ -250,7 +252,8 @@ export fn zbackend_ir_expression_lower_array_to_slice(
 export fn zbackend_ir_expression_lower_array_to_pointer(
     context: *ZBackendIrExpressionLowering,
     expression_index: i64,
-    array_type_id: i64
+    array_type_id: i64,
+    lower_expression_fn: fn(*ZBackendIrExpressionLowering, i64) -> !i64
 ) !i64 {
     array_type: ZBackendIrType = context.type_layout.types[array_type_id - 1]
     if array_type.kind != "array" { return error.InvalidArgument }
@@ -265,7 +268,7 @@ export fn zbackend_ir_expression_lower_array_to_pointer(
     zero.integer = 0
     zbackend_ir_append_instruction(context, zero) catch |err| { return err }
     array_address: i64 = zbackend_ir_expression_lower_address(
-        context, expression_index
+        context, expression_index, lower_expression_fn
     ) catch |err| { return err }
     return zbackend_ir_expression_emit_index_address(
         context, array_address, zero_id, array_type_id, array_type.element_type
@@ -275,9 +278,10 @@ export fn zbackend_ir_expression_lower_array_to_pointer(
 
 export fn zbackend_ir_lower_logical_not(
     context: *ZBackendIrExpressionLowering,
-    operand_expression: i64
+    operand_expression: i64,
+    lower_expression_fn: fn(*ZBackendIrExpressionLowering, i64) -> !i64
 ) !i64 {
-    operand: i64 = context.lower_expression_fn(context, operand_expression
+    operand: i64 = lower_expression_fn(context, operand_expression
     ) catch |err| { return err }
     zero_id: i64 = context.next_value_id
     context.next_value_id = context.next_value_id + 1

@@ -61,8 +61,7 @@ export struct ZBackendIrExpressionLowering {
     local_addresses: *i64,
     local_type_ids: *i64,
     local_count: i64,
-    current_statement_index: i64,
-    lower_expression_fn: fn(*ZBackendIrExpressionLowering, i64) -> !i64
+    current_statement_index: i64
 }
 
 
