@@ -7,12 +7,12 @@ pub fn readMessage(allocator: std.mem.Allocator, reader: *std.Io.Reader) !?[]u8 
     var content_length: ?usize = null;
 
     while (true) {
-        const line = reader.takeDelimiterExclusive('\n') catch |err| switch (err) {
-            error.EndOfStream => return null,
+        const maybe_line = reader.takeDelimiter('\n') catch |err| switch (err) {
             error.ReadFailed => return error.ReadFailed,
             error.StreamTooLong => return error.HeaderLineTooLong,
         };
-        const header = std.mem.trim(u8, line, "\r");
+        const line = maybe_line orelse return null;
+        const header = std.mem.trim(u8, line, "\r\n");
         if (header.len == 0) break;
 
         if (std.mem.startsWith(u8, header, "Content-Length:")) {
@@ -28,7 +28,8 @@ pub fn readMessage(allocator: std.mem.Allocator, reader: *std.Io.Reader) !?[]u8 
 }
 
 pub fn writeMessage(allocator: std.mem.Allocator, io: std.Io, payload: []const u8) !void {
-    const header = try std.fmt.allocPrint(allocator,
+    const header = try std.fmt.allocPrint(
+        allocator,
         "Content-Length: {d}\r\n\r\n",
         .{payload.len},
     );
