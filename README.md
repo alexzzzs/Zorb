@@ -65,6 +65,7 @@ Runnable examples are in [`examples/`](examples/). Start with
 
 | Guide | Covers |
 | --- | --- |
+| [Editor support](docs/EDITOR%20SUPPORT.md) | Language server setup and current editor features |
 | [Language reference](docs/LANGUAGE%20REFERENCE.md) | Syntax and supported language features |
 | [Semantics](docs/SEMANTICS.md) | Type checking and runtime behavior |
 | [Standard library](docs/STANDARD%20LIBRARY.md) | Public library APIs and target support |

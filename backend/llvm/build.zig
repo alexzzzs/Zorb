@@ -71,6 +71,16 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(backend);
 
+    const lsp = b.addExecutable(.{
+        .name = "zorb-lsp",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/lsp.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(lsp);
+
     const api_module = b.createModule(.{
         .root_source_file = b.path("src/api.zig"),
         .target = target,
