@@ -13,6 +13,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- An initial `zorb-lsp` language server for editor diagnostics, with full-document
+  synchronization, relative import support for unsaved documents, and release
+  packaging.
 - Signed pointer subtraction returning an `i64` element distance,
   with typed-pointer checks and ABI-sized LLVM lowering.
 - A cross-platform `std.process` child-process API with inherited standard

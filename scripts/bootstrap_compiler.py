@@ -486,6 +486,11 @@ def publish(options: argparse.Namespace, environment: BuildEnvironment) -> None:
 
     if environment.target != "host-windows":
         verify_linux_static_binary(output_dir / "zorb")
+    lsp_name = "zorb-lsp.exe" if environment.target == "host-windows" else "zorb-lsp"
+    lsp_source = environment.backend_dir / "zig-out/bin" / lsp_name
+    if not lsp_source.is_file():
+        raise BuildError(f"Zig did not produce the Zorb language server: {lsp_source}")
+    shutil.copy2(lsp_source, output_dir / lsp_name)
     print("Verified byte-identical generation-2 and generation-3 compilers.")
     print(f"Published {environment.target} compiler to {output_dir}")
 
