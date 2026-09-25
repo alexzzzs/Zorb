@@ -73,6 +73,8 @@ pub fn collect(
         .stdout_limit = .limited(MAX_COMPILER_OUTPUT_BYTES),
         .stderr_limit = .limited(MAX_COMPILER_OUTPUT_BYTES),
     });
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
 
     var diagnostics: std.ArrayList(Diagnostic) = .empty;
     try appendCompilerDiagnostics(allocator, source_text, overlay_path, result.stdout, &diagnostics);

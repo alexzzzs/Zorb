@@ -95,7 +95,12 @@ fn handleMessage(allocator: std.mem.Allocator, server: *Server, message: []const
     }
     if (std.mem.eql(u8, method, "shutdown")) {
         server.shutdown_received = true;
-        if (id) |request_id| try sendResponse(allocator, server.io, request_id, std.json.Value.null);
+        if (id) |request_id| try sendResponse(
+            allocator,
+            server.io,
+            request_id,
+            std.json.Value{ .null = {} },
+        );
         return false;
     }
     if (std.mem.eql(u8, method, "exit")) {
@@ -183,12 +188,18 @@ fn publishDiagnostics(
 }
 
 fn sendResponse(allocator: std.mem.Allocator, io: std.Io, id: std.json.Value, result: anytype) !void {
+    const payload = try responseJson(allocator, id, result);
+    defer allocator.free(payload);
+    try rpc.writeMessage(allocator, io, payload);
+}
+
+fn responseJson(allocator: std.mem.Allocator, id: std.json.Value, result: anytype) ![]u8 {
     const Response = struct {
         jsonrpc: []const u8 = "2.0",
         id: std.json.Value,
         result: @TypeOf(result),
     };
-    try rpc.writeJson(allocator, io, Response{ .id = id, .result = result });
+    return try std.json.Stringify.valueAlloc(allocator, Response{ .id = id, .result = result }, .{});
 }
 
 fn sendError(
@@ -218,4 +229,18 @@ fn field(value: std.json.Value, name: []const u8) ?std.json.Value {
 fn stringField(value: std.json.Value, name: []const u8) ?[]const u8 {
     const child = field(value, name) orelse return null;
     return if (child == .string) child.string else null;
+}
+
+test "shutdown response serializes a JSON null result" {
+    const payload = try responseJson(
+        std.testing.allocator,
+        .{ .integer = 1 },
+        std.json.Value{ .null = {} },
+    );
+    defer std.testing.allocator.free(payload);
+
+    try std.testing.expectEqualStrings(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}",
+        payload,
+    );
 }

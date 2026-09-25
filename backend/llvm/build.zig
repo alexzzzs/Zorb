@@ -133,9 +133,18 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_link_args_tests = b.addRunArtifact(link_args_tests);
+    const lsp_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/lsp.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_lsp_tests = b.addRunArtifact(lsp_tests);
     const test_step = b.step("test", "Run Zig backend tests");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_link_args_tests.step);
+    test_step.dependOn(&run_lsp_tests.step);
 }
 
 fn linkStaticLlvm(module: *std.Build.Module, cxx_runtime: []const u8) void {
