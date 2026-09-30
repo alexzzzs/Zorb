@@ -550,12 +550,14 @@ export fn zbackend_ir_type_layout_pointer_to(
 export fn zbackend_ir_module_type_layout(
     allocator: *std.mem.HeapAllocator,
     ast: *ZAstModule,
-    target_triple: string
+    target_triple: string,
+    freestanding: bool
 ) !ZBackendIrTypeLayout {
     type_layout: ZBackendIrTypeLayout = ZBackendIrTypeLayout{
         allocator: allocator,
         ast: ast,
         target_triple: target_triple,
+        freestanding: freestanding,
         constant_scope_declaration_start: ZAstNoIndex,
         constant_scope_statement: ZAstNoIndex,
         types: cast(*ZBackendIrType, 0),

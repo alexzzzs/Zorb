@@ -43,7 +43,7 @@ partial class Program
                 var compiler = ResolveLinuxCompiler(target);
                 var args = new List<string>();
                 if (IsFreestandingLinuxTarget(target))
-                    args.AddRange(["-nostdlib", "-fno-pie", "-no-pie", "-z", "execstack", "-fno-builtin"]);
+                    args.AddRange(["-nostdlib", "-fno-pie", "-no-pie", "-fno-builtin"]);
                 else
                     args.Add("-no-pie");
                 args.Add(objectPath);

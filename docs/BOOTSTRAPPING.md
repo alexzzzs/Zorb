@@ -13,6 +13,13 @@ python scripts/bootstrap_compiler.py bootstrap
 ./build/zorb run compiler/self-check/fixtures/simple.zorb
 ```
 
+The v0.2.4 seed predates `Builtin.IsFreestanding`. For its first hosted
+compiler or self-check build, the bootstrap tools copy the compiler and runtime
+sources to a temporary directory and fold runtime uses of that builtin to
+`false`. The updated lowering implementation is compiled intact. Release
+generations 2 and 3 use the original sources, including the new builtin and
+freestanding runtime paths.
+
 The implementation requires Python 3.10 or newer, uses only the standard
 library, and supports Linux x64, Linux ARM64, and Windows x64. The shell and
 PowerShell scripts in `scripts/` are compatibility wrappers around the Python

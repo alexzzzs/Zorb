@@ -28,6 +28,9 @@ fn zbackend_ir_write_target(target: ZBackendIrTarget) {
     ZJson.write_string(target.features)
     std.io.print(",\"optimize\":")
     ZJson.write_string(target.optimize)
+    std.io.print(",\"freestanding\":")
+    if target.freestanding { std.io.print("true") }
+    else { std.io.print("false") }
     std.io.print("}")
 }
 

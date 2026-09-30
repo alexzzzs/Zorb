@@ -453,6 +453,12 @@ public partial class Parser
                 StampNode(expr, startToken);
                 return expr;
             }
+            if (builtinName == "IsFreestanding")
+            {
+                var expr = new BuiltinExpr { Name = "Builtin.IsFreestanding" };
+                StampNode(expr, startToken);
+                return expr;
+            }
             if (builtinName == "IsX86_64")
             {
                 var expr = new BuiltinExpr { Name = "Builtin.IsX86_64" };

@@ -34,7 +34,7 @@ export fn ZBackendIrLowering.lower_module(
     concrete_function_count: i64 = zbackend_ir_function_count(ast)
     global_count: i64 = zbackend_ir_global_count(ast)
     type_layout: ZBackendIrTypeLayout = zbackend_ir_module_type_layout(
-        allocator, ast, target.triple
+        allocator, ast, target.triple, target.freestanding
     ) catch |err| {
         zbackend_ir_set_module_failure_diagnostic(diagnostic, ast, err)
         return err

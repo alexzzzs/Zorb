@@ -3,8 +3,12 @@ import "collections.zorb"
 import "errors.zorb"
 import "io.zorb"
 import "mem.zorb"
+import "os.zorb"
 import "str.zorb"
 
+extern fn open(path: *u8, flags: i32, mode: i32) -> i32
+extern fn lseek(fd: i32, offset: i64, origin: i32) -> i64
+extern fn unlink(path: *u8) -> i32
 extern fn _open(path: *u8, flags: i32, mode: i32) -> i32
 extern fn _read(fd: i32, buf: *u8, len: i32) -> i32
 extern fn _write(fd: i32, buf: *u8, len: i32) -> i32
@@ -105,6 +109,16 @@ fn std.fs.renameat_nr() -> i64 {
 
 export fn std.fs.open_read(path: string) !i32 {
     if Builtin.IsLinux {
+        if !Builtin.IsFreestanding {
+            fd: i32 = open(cast(*u8, path), cast(i32, LINUX_OPEN_READ_ONLY), 0)
+            if fd < 0 {
+                errno: i32 = std.os.linux_errno()
+                if errno == 2 || errno == 20 { return error.NotFound }
+                return error.IOError
+            }
+            return fd
+        }
+
         openat_nr: i64 = std.fs.openat_nr()
         if openat_nr == 0 {
             return error.UnsupportedPlatform
@@ -131,6 +145,13 @@ export fn std.fs.open_read(path: string) !i32 {
 
 export fn std.fs.open_write(path: string) !i32 {
     if Builtin.IsLinux {
+        if !Builtin.IsFreestanding {
+            flags: i32 = cast(i32, LINUX_OPEN_WRITE_ONLY | LINUX_OPEN_CREATE | LINUX_OPEN_TRUNCATE)
+            fd: i32 = open(cast(*u8, path), flags, cast(i32, LINUX_DEFAULT_FILE_MODE))
+            if fd < 0 { return error.IOError }
+            return fd
+        }
+
         openat_nr: i64 = std.fs.openat_nr()
         if openat_nr == 0 {
             return error.UnsupportedPlatform
@@ -162,9 +183,13 @@ export fn std.fs.open_write(path: string) !i32 {
 
 export fn std.fs.close(fd: i32) {
     if Builtin.IsLinux {
-        close_nr: i64 = std.fs.close_nr()
-        if close_nr != 0 {
-            syscall(close_nr, cast(i64, fd))
+        if Builtin.IsFreestanding {
+            close_nr: i64 = std.fs.close_nr()
+            if close_nr != 0 {
+                syscall(close_nr, cast(i64, fd))
+            }
+        } else {
+            std.os.linux_close(fd)
         }
     }
 
@@ -201,6 +226,10 @@ fn std.fs.read(fd: i32, buf: []u8) -> i64 {
 
 fn std.fs.write(fd: i32, buf: []u8) -> i64 {
     if Builtin.IsLinux {
+        if !Builtin.IsFreestanding {
+            return std.os.linux_write(fd, buf)
+        }
+
         write_nr: i64 = std.fs.write_nr()
         if write_nr == 0 {
             return -1
@@ -245,6 +274,13 @@ export fn std.fs.size(path: string) !i64 {
     }
 
     if Builtin.IsLinux {
+        if !Builtin.IsFreestanding {
+            size_value: i64 = lseek(fd, 0, cast(i32, LINUX_SEEK_END))
+            std.fs.close(fd)
+            if size_value < 0 { return error.IOError }
+            return size_value
+        }
+
         lseek_nr: i64 = std.fs.lseek_nr()
         if lseek_nr == 0 {
             std.fs.close(fd)
@@ -274,10 +310,7 @@ export fn std.fs.size(path: string) !i64 {
 
 export fn std.fs.read_all(path: string, allocator: *std.mem.HeapAllocator) ![]u8 {
     fd: i32 = std.fs.open_read(path) catch |err| {
-        if err == error.NotFound {
-            return error.NotFound
-        }
-        return error.UnsupportedPlatform
+        return err
     }
 
     result: std.collections.ByteList = std.collections.ByteList.init(allocator, 4096) catch |err| {
@@ -347,6 +380,16 @@ export fn std.fs.write_all(path: string, buf: []u8) !i32 {
 
 export fn std.fs.delete(path: string) !i32 {
     if Builtin.IsLinux {
+        if !Builtin.IsFreestanding {
+            result: i32 = unlink(cast(*u8, path))
+            if result < 0 {
+                errno: i32 = std.os.linux_errno()
+                if errno == 2 || errno == 20 { return error.NotFound }
+                return error.IOError
+            }
+            return result
+        }
+
         unlinkat_nr: i64 = std.fs.unlinkat_nr()
         if unlinkat_nr == 0 {
             return error.UnsupportedPlatform
@@ -372,6 +415,16 @@ export fn std.fs.delete(path: string) !i32 {
 
 export fn std.fs.rename(old_path: string, new_path: string) !i32 {
     if Builtin.IsLinux {
+        if !Builtin.IsFreestanding {
+            result: i32 = rename(cast(*u8, old_path), cast(*u8, new_path))
+            if result < 0 {
+                errno: i32 = std.os.linux_errno()
+                if errno == 2 || errno == 20 { return error.NotFound }
+                return error.IOError
+            }
+            return result
+        }
+
         renameat_nr: i64 = std.fs.renameat_nr()
         if renameat_nr == 0 {
             return error.UnsupportedPlatform

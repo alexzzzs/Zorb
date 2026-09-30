@@ -27,13 +27,22 @@ export struct std.collections.StringInterner {
     capacity: i64
 }
 
-fn std.collections.next_capacity(current: i64, needed: i64) -> i64 {
+const STD_COLLECTIONS_MAX_I64: i64 = 9223372036854775807
+
+fn std.collections.next_capacity(current: i64, needed: i64) !i64 {
+    if current < 0 || needed < 0 {
+        return error.InvalidSize
+    }
+
     cap: i64 = current
     if cap < 8 {
         cap = 8
     }
 
     while cap < needed {
+        if cap > STD_COLLECTIONS_MAX_I64 / 2 {
+            return error.OutOfMemory
+        }
         cap = cap * 2
     }
 
@@ -69,7 +78,9 @@ export fn std.collections.ByteList.reserve(self: *std.collections.ByteList, allo
         return 0
     }
 
-    new_capacity: i64 = std.collections.next_capacity(self.capacity, needed)
+    new_capacity: i64 = std.collections.next_capacity(self.capacity, needed) catch |err| {
+        return err
+    }
     new_ptr: *u8 = std.mem.HeapAllocator.alloc(allocator, new_capacity) catch |err| {
         return error.OutOfMemory
     }
@@ -89,6 +100,10 @@ export fn std.collections.ByteList.reserve(self: *std.collections.ByteList, allo
 }
 
 export fn std.collections.ByteList.append_byte(self: *std.collections.ByteList, allocator: *std.mem.HeapAllocator, value: u8) !i32 {
+    if self.len < 0 || self.len >= STD_COLLECTIONS_MAX_I64 {
+        return error.InvalidSize
+    }
+
     std.collections.ByteList.reserve(self, allocator, self.len + 1) catch |err| {
         if err == error.InvalidSize {
             return error.InvalidSize
@@ -103,6 +118,9 @@ export fn std.collections.ByteList.append_byte(self: *std.collections.ByteList, 
 
 export fn std.collections.ByteList.append_slice(self: *std.collections.ByteList, allocator: *std.mem.HeapAllocator, values: []u8) !i32 {
     if values.len < 0 {
+        return error.InvalidSize
+    }
+    if self.len < 0 || self.len > STD_COLLECTIONS_MAX_I64 - values.len {
         return error.InvalidSize
     }
 
@@ -194,6 +212,10 @@ export fn std.collections.StringBuilder.slice(self: *std.collections.StringBuild
 }
 
 export fn std.collections.StringBuilder.c_string(self: *std.collections.StringBuilder, allocator: *std.mem.HeapAllocator) !*u8 {
+    if self.bytes.len < 0 || self.bytes.len >= STD_COLLECTIONS_MAX_I64 {
+        return error.InvalidSize
+    }
+
     std.collections.ByteList.reserve(&self.bytes, allocator, self.bytes.len + 1) catch |err| {
         if err == error.InvalidSize {
             return error.InvalidSize
@@ -233,7 +255,11 @@ fn std.collections.StringInterner.allocate_entries(allocator: *std.mem.HeapAlloc
         return error.InvalidSize
     }
 
-    byte_count: i64 = capacity * Builtin.sizeof(std.collections.StringEntry)
+    entry_size: i64 = Builtin.sizeof(std.collections.StringEntry)
+    if entry_size <= 0 || capacity > STD_COLLECTIONS_MAX_I64 / entry_size {
+        return error.OutOfMemory
+    }
+    byte_count: i64 = capacity * entry_size
     raw: *u8 = std.mem.HeapAllocator.alloc(allocator, byte_count) catch |err| {
         return error.OutOfMemory
     }
@@ -245,7 +271,9 @@ fn std.collections.StringInterner.allocate_entries(allocator: *std.mem.HeapAlloc
 export fn std.collections.StringInterner.init(allocator: *std.mem.HeapAllocator, initial_capacity: i64) !std.collections.StringInterner {
     interner: std.collections.StringInterner
     interner.len = 0
-    interner.capacity = std.collections.next_capacity(0, initial_capacity)
+    interner.capacity = std.collections.next_capacity(0, initial_capacity) catch |err| {
+        return err
+    }
     interner.entries = std.collections.StringInterner.allocate_entries(allocator, interner.capacity) catch |err| {
         return error.OutOfMemory
     }
@@ -278,6 +306,9 @@ fn std.collections.StringInterner.insert_existing(self: *std.collections.StringI
 fn std.collections.StringInterner.grow(self: *std.collections.StringInterner, allocator: *std.mem.HeapAllocator) !i32 {
     old_entries: *std.collections.StringEntry = self.entries
     old_capacity: i64 = self.capacity
+    if old_capacity <= 0 || old_capacity > STD_COLLECTIONS_MAX_I64 / 2 {
+        return error.OutOfMemory
+    }
     new_capacity: i64 = old_capacity * 2
     self.entries = std.collections.StringInterner.allocate_entries(allocator, new_capacity) catch |err| {
         self.entries = old_entries
@@ -308,7 +339,7 @@ export fn std.collections.StringInterner.intern(self: *std.collections.StringInt
 
     hash: u64 = std.collections.hash_bytes(text)
 
-    while (self.len + 1) * 4 >= self.capacity * 3 {
+    while self.len >= ((self.capacity / 4) * 3) - 1 {
         std.collections.StringInterner.grow(self, allocator) catch |err| {
             return error.OutOfMemory
         }

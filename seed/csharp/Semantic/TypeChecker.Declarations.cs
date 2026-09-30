@@ -461,6 +461,7 @@ public partial class TypeChecker
         MakeVisible("Builtin.IsLinux");
         MakeVisible("Builtin.IsWindows");
         MakeVisible("Builtin.IsBareMetal");
+        MakeVisible("Builtin.IsFreestanding");
         MakeVisible("Builtin.IsX86_64");
         MakeVisible("Builtin.IsAArch64");
     }
@@ -487,6 +488,9 @@ public partial class TypeChecker
         _symbolTable.DefineVariable("Builtin.IsBareMetal", new TypeNode { Name = "bool" });
         MakeVisible("Builtin.IsBareMetal");
 
+        _symbolTable.DefineVariable("Builtin.IsFreestanding", new TypeNode { Name = "bool" });
+        MakeVisible("Builtin.IsFreestanding");
+
         _symbolTable.DefineVariable("Builtin.IsX86_64", new TypeNode { Name = "bool" });
         MakeVisible("Builtin.IsX86_64");
 
@@ -506,6 +510,7 @@ public partial class TypeChecker
             or "Builtin.IsLinux"
             or "Builtin.IsWindows"
             or "Builtin.IsBareMetal"
+            or "Builtin.IsFreestanding"
             or "Builtin.IsX86_64"
             or "Builtin.IsAArch64"
             or "Builtin.CompileError"

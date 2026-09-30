@@ -1,4 +1,5 @@
 import "errors.zorb"
+import "os.zorb"
 
 import c "winsock2.h"
 extern fn WSAStartup(wVersionRequested: u16, wsa_data: *u8) -> i32
@@ -8,10 +9,13 @@ extern fn bind(fd: i64, addr: *std.net.SockAddrV4, addr_len: i32) -> i32
 extern fn listen(fd: i64, backlog: i32) -> i32
 extern fn accept(fd: i64, addr: *u8, addr_len: *i32) -> i64
 extern fn connect(fd: i64, addr: *std.net.SockAddrV4, addr_len: i32) -> i32
-extern fn send(fd: i64, buf: *u8, len: i32, flags: i32) -> i32
-extern fn recv(fd: i64, buf: *u8, len: i32, flags: i32) -> i32
+// POSIX uses size_t/ssize_t here; the Windows paths clamp lengths to Winsock's
+// 32-bit int range and narrow its return values before checking errors.
+extern fn send(fd: i64, buf: *u8, len: i64, flags: i32) -> i64
+extern fn recv(fd: i64, buf: *u8, len: i64, flags: i32) -> i64
 extern fn closesocket(fd: i64) -> i32
 extern fn WSAPoll(fds: *std.net.WinPollFd, count: u32, timeout_ms: i32) -> i32
+extern fn poll(fds: *std.net.PollFd, count: i64, timeout_ms: i32) -> i32
 
 export struct std.net {}
 
@@ -304,6 +308,14 @@ export fn std.net.socket(domain: i32, kind: i32, protocol: i32) -> i64 {
         return win_fd
     }
 
+    if !Builtin.IsFreestanding {
+        linux_fd: i32 = cast(i32, socket(domain, kind, protocol))
+        if linux_fd < 0 {
+            return -cast(i64, std.os.linux_errno())
+        }
+        return cast(i64, linux_fd)
+    }
+
     nr: i64 = std.net.socket_nr()
     if nr == 0 {
         return -cast(i64, error.UnsupportedPlatform)
@@ -334,6 +346,14 @@ export fn std.net.bind_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
         return cast(i64, result)
     }
 
+    if !Builtin.IsFreestanding {
+        result: i32 = bind(cast(i64, fd), addr, cast(i32, Builtin.sizeof(std.net.SockAddrV4)))
+        if result < 0 {
+            return -cast(i64, std.os.linux_errno())
+        }
+        return cast(i64, result)
+    }
+
     nr: i64 = std.net.bind_nr()
     if nr == 0 {
         return -cast(i64, error.UnsupportedPlatform)
@@ -357,6 +377,14 @@ export fn std.net.listen(fd: i32, backlog: i32) -> i64 {
             return -cast(i64, WSAGetLastError())
         }
 
+        return cast(i64, result)
+    }
+
+    if !Builtin.IsFreestanding {
+        result: i32 = listen(cast(i64, fd), backlog)
+        if result < 0 {
+            return -cast(i64, std.os.linux_errno())
+        }
         return cast(i64, result)
     }
 
@@ -386,6 +414,14 @@ export fn std.net.accept(fd: i32) -> i64 {
         return accepted_fd
     }
 
+    if !Builtin.IsFreestanding {
+        accepted_fd: i32 = cast(i32, accept(cast(i64, fd), cast(*u8, 0), cast(*i32, 0)))
+        if accepted_fd < 0 {
+            return -cast(i64, std.os.linux_errno())
+        }
+        return cast(i64, accepted_fd)
+    }
+
     nr: i64 = std.net.accept_nr()
     if nr == 0 {
         return -cast(i64, error.UnsupportedPlatform)
@@ -412,6 +448,17 @@ export fn std.net.connect_v4(fd: i32, addr: *std.net.SockAddrV4) -> i64 {
         return cast(i64, result)
     }
 
+    if !Builtin.IsFreestanding {
+        result: i32 = connect(
+            cast(i64, fd),
+            addr,
+            cast(i32, Builtin.sizeof(std.net.SockAddrV4)))
+        if result < 0 {
+            return -cast(i64, std.os.linux_errno())
+        }
+        return cast(i64, result)
+    }
+
     nr: i64 = std.net.connect_nr()
     if nr == 0 {
         return -cast(i64, error.UnsupportedPlatform)
@@ -424,6 +471,9 @@ export fn std.net.send(fd: i32, buf: []u8) -> i64 {
     if !std.net.is_supported() {
         return -cast(i64, error.UnsupportedPlatform)
     }
+    if buf.len < 0 {
+        return -cast(i64, error.InvalidArgument)
+    }
 
     if Builtin.IsWindows {
         if std.net.ensure_windows_started() != 0 {
@@ -435,12 +485,21 @@ export fn std.net.send(fd: i32, buf: []u8) -> i64 {
             send_len = 2147483647
         }
 
-        wrote: i32 = send(cast(i64, fd), buf.ptr, send_len, 0)
-        if wrote < 0 {
+        wrote: i64 = send(cast(i64, fd), buf.ptr, cast(i64, send_len), 0)
+        wrote_int: i32 = cast(i32, wrote)
+        if wrote_int < 0 {
             return -cast(i64, WSAGetLastError())
         }
 
-        return cast(i64, wrote)
+        return cast(i64, wrote_int)
+    }
+
+    if !Builtin.IsFreestanding {
+        wrote: i64 = send(cast(i64, fd), buf.ptr, buf.len, 0)
+        if wrote < 0 {
+            return -cast(i64, std.os.linux_errno())
+        }
+        return wrote
     }
 
     nr: i64 = std.net.sendto_nr()
@@ -455,6 +514,9 @@ export fn std.net.recv(fd: i32, buf: []u8) -> i64 {
     if !std.net.is_supported() {
         return -cast(i64, error.UnsupportedPlatform)
     }
+    if buf.len < 0 {
+        return -cast(i64, error.InvalidArgument)
+    }
 
     if Builtin.IsWindows {
         if std.net.ensure_windows_started() != 0 {
@@ -466,12 +528,21 @@ export fn std.net.recv(fd: i32, buf: []u8) -> i64 {
             recv_len = 2147483647
         }
 
-        read: i32 = recv(cast(i64, fd), buf.ptr, recv_len, 0)
-        if read < 0 {
+        read: i64 = recv(cast(i64, fd), buf.ptr, cast(i64, recv_len), 0)
+        read_int: i32 = cast(i32, read)
+        if read_int < 0 {
             return -cast(i64, WSAGetLastError())
         }
 
-        return cast(i64, read)
+        return cast(i64, read_int)
+    }
+
+    if !Builtin.IsFreestanding {
+        read: i64 = recv(cast(i64, fd), buf.ptr, buf.len, 0)
+        if read < 0 {
+            return -cast(i64, std.os.linux_errno())
+        }
+        return read
     }
 
     nr: i64 = std.net.recvfrom_nr()
@@ -498,6 +569,10 @@ export fn std.net.close(fd: i32) -> i64 {
         }
 
         return cast(i64, result)
+    }
+
+    if !Builtin.IsFreestanding {
+        return std.os.linux_close(fd)
     }
 
     nr: i64 = std.net.close_nr()
@@ -547,6 +622,14 @@ export fn std.net.poll(fds: *std.net.PollFd, count: i64, timeout_ms: i32) -> i64
             i = i + 1
         }
 
+        return cast(i64, result)
+    }
+
+    if !Builtin.IsFreestanding {
+        result: i32 = poll(fds, count, timeout_ms)
+        if result < 0 {
+            return -cast(i64, std.os.linux_errno())
+        }
         return cast(i64, result)
     }
 

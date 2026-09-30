@@ -1,11 +1,12 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "module_name": "scalar_smoke",
   "target": {
     "triple": "x86_64-pc-linux-gnu",
     "cpu": "generic",
     "features": "",
-    "optimize": "O0"
+    "optimize": "O0",
+    "freestanding": false
   },
   "output_kind": "llvm_ir",
   "output_path": "backend/llvm/tests/scalar.ll",

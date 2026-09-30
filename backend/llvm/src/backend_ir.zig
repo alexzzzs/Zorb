@@ -1,7 +1,8 @@
 const std = @import("std");
 
 pub const legacy_schema_version = 2;
-pub const schema_version = 3;
+pub const previous_schema_version = 3;
+pub const schema_version = 4;
 
 pub const OutputKind = enum {
     llvm_ir,
@@ -31,6 +32,12 @@ pub const Target = struct {
     cpu: []const u8 = "generic",
     features: []const u8 = "",
     optimize: OptimizeLevel = .O0,
+    freestanding: bool = false,
+
+    pub fn isFreestanding(self: Target) bool {
+        // Older producers identify bare-metal targets through the triple only.
+        return self.freestanding or std.mem.indexOf(u8, self.triple, "-none-") != null;
+    }
 };
 
 pub const ScalarKind = enum {
@@ -276,10 +283,13 @@ pub const Module = struct {
     functions: []const Function = &.{},
 
     pub fn validate(self: Module, diagnostics: *std.Io.Writer) !void {
-        if (self.schema_version != schema_version and self.schema_version != legacy_schema_version) {
+        if (self.schema_version != schema_version and
+            self.schema_version != previous_schema_version and
+            self.schema_version != legacy_schema_version)
+        {
             try diagnostics.print(
-                "unsupported backend IR schema version {d}; expected version {d} or legacy version {d}\n",
-                .{ self.schema_version, schema_version, legacy_schema_version },
+                "unsupported backend IR schema version {d}; expected version {d}, previous version {d}, or legacy version {d}\n",
+                .{ self.schema_version, schema_version, previous_schema_version, legacy_schema_version },
             );
             return error.InvalidBackendIr;
         }
@@ -361,9 +371,9 @@ test "parse and validate legacy scalar module" {
 test "parse and validate current scalar module" {
     const json =
         \\{
-        \\  "schema_version": 3,
+        \\  "schema_version": 4,
         \\  "module_name": "test",
-        \\  "target": {"triple":"x86_64-pc-linux-gnu"},
+        \\  "target": {"triple":"x86_64-pc-linux-gnu","freestanding":false},
         \\  "output_kind": "llvm_ir",
         \\  "output_path": "test.ll",
         \\  "types": [],

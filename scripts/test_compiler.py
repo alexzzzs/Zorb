@@ -538,14 +538,21 @@ class NativeCompilerSuite:
                     target,
                     "--output-kind",
                     "llvm-ir",
+                    "-O2",
                     "-o",
                     output,
                 ],
             )
             if built.returncode != 0 or not output.is_file():
                 raise SuiteFailure(format_command_failure(f"named target {target} failed", built))
-            if f'target triple = "{triple}"' not in output.read_text(encoding="utf-8"):
+            llvm_ir = output.read_text(encoding="utf-8")
+            if f'target triple = "{triple}"' not in llvm_ir:
                 raise SuiteFailure(f"named target {target} did not emit triple {triple}")
+            freestanding = target.startswith("freestanding-") or target == "bare-metal-x86_64"
+            if ('"no-builtins"' in llvm_ir) != freestanding:
+                raise SuiteFailure(f"named target {target} emitted the wrong library optimization policy")
+            if freestanding and "@strlen(" in llvm_ir:
+                raise SuiteFailure(f"named target {target} introduced a libc strlen dependency at -O2")
 
     def _test_bare_metal_linking(self, output_root: Path) -> None:
         if platform.machine().lower() not in {"x86_64", "amd64"}:

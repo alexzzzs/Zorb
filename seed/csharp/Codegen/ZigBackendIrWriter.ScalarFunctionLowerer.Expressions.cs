@@ -53,6 +53,7 @@ public sealed partial class ZigBackendIrWriter
                     "Builtin.IsLinux" or
                     "Builtin.IsWindows" or
                     "Builtin.IsBareMetal" or
+                    "Builtin.IsFreestanding" or
                     "Builtin.IsX86_64" or
                     "Builtin.IsAArch64":
                     {

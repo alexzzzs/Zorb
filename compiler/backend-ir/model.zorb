@@ -1,10 +1,11 @@
-export const ZBackendIrSchemaVersion: i64 = 3
+export const ZBackendIrSchemaVersion: i64 = 4
 
 export struct ZBackendIrTarget {
     triple: string,
     cpu: string,
     features: string,
-    optimize: string
+    optimize: string,
+    freestanding: bool
 }
 
 export fn ZBackendIrTarget.init(triple: string) -> ZBackendIrTarget {
@@ -12,7 +13,8 @@ export fn ZBackendIrTarget.init(triple: string) -> ZBackendIrTarget {
         triple: triple,
         cpu: "generic",
         features: "",
-        optimize: "O0"
+        optimize: "O0",
+        freestanding: false
     }
 }
 

@@ -27,6 +27,21 @@ pub fn declareFunctions(self: anytype) !void {
             .external => llvm.LLVMExternalLinkage,
             .internal => llvm.LLVMInternalLinkage,
         });
+        if (self.module_ir.target.isFreestanding()) {
+            // LLVM's library analysis otherwise turns loops into libc calls
+            // such as strlen, even though freestanding linking omits libc.
+            try addStringFunctionAttribute(self, function, "no-builtins");
+        }
+        // Linux enters _start with a 16-byte-aligned stack, rather than the
+        // alignment after a normal x86-64 call's pushed return address. Realign
+        // this frame before it calls C ABI functions, including hosted libc.
+        if (function_ir.blocks.len != 0 and
+            std.mem.eql(u8, function_ir.name, "_start") and
+            std.mem.startsWith(u8, self.module_ir.target.triple, "x86_64-") and
+            std.mem.indexOf(u8, self.module_ir.target.triple, "linux") != null)
+        {
+            try addStringFunctionAttribute(self, function, "stackrealign");
+        }
         // Inline assembly may implement an ABI boundary such as a stack
         // switch. Keep its containing frame intact across optimization.
         if (function_ir.containsInlineAsm()) {
@@ -49,6 +64,21 @@ pub fn declareFunctions(self: anytype) !void {
             .function_type = function_type,
         });
     }
+}
+
+fn addStringFunctionAttribute(self: anytype, function: llvm.LLVMValueRef, name: []const u8) !void {
+    const attribute = llvm.LLVMCreateStringAttribute(
+        self.context,
+        name.ptr,
+        @intCast(name.len),
+        "",
+        0,
+    ) orelse return error.OutOfMemory;
+    llvm.LLVMAddAttributeAtIndex(
+        function,
+        std.math.maxInt(llvm.LLVMAttributeIndex),
+        attribute,
+    );
 }
 
 pub fn emitFunctionBodies(self: anytype) !void {

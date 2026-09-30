@@ -83,6 +83,12 @@ fn zorb_link_target(target: string) -> string {
     return ""
 }
 
+fn zorb_target_is_freestanding(link_target: string) -> bool {
+    return std.str.eql(link_target, "freestanding-linux") ||
+        std.str.eql(link_target, "freestanding-linux-aarch64") ||
+        std.str.eql(link_target, "bare-metal-x86_64")
+}
+
 fn zorb_usage() {
     std.io.eprint("usage: zorb check <input.zorb> [")
     std.io.eprint(ZORB_CHECK_JSON_OPTION)
@@ -209,6 +215,7 @@ fn zorb_compile(
     }
     target: ZBackendIrTarget = ZBackendIrTarget.init(target_triple)
     target.optimize = optimize
+    target.freestanding = zorb_target_is_freestanding(link_target)
     lowering_diagnostic: ZDiagnostic = ZDiagnostic.empty()
     module: ZBackendIrModule = ZBackendIrLowering.lower_module(
         &session.heap, lowering_ast, input, target, backend_kind, backend_output,

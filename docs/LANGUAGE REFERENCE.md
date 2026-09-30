@@ -119,8 +119,10 @@ Attributes configure functions, variables, and structs. Current forms include
 `abi(...)`, `align(...)`, `noinline`, `noclone`, `section("...")`, `packed`,
 `layout(explicit)`, `offset(N)`, and `volatile`.
 
-`Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`, architecture
-queries, and `Builtin.sizeof(...)` expose compile-time target information.
+`Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`,
+`Builtin.IsFreestanding`, architecture queries, and `Builtin.sizeof(...)`
+expose compile-time target information. `IsFreestanding` is true for
+freestanding Linux and bare-metal targets.
 `Builtin.CompileError(...)` produces a compile-time diagnostic.
 
 ## Example

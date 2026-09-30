@@ -112,7 +112,7 @@ pub const LinkTarget = enum {
 pub fn baseArgCount(target: LinkTarget) usize {
     return switch (target) {
         .host_linux, .host_linux_aarch64 => 5,
-        .freestanding_linux, .freestanding_linux_aarch64 => 10,
+        .freestanding_linux, .freestanding_linux_aarch64 => 8,
         .bare_metal_x86_64 => 10,
         .host_windows => 13,
     };
@@ -149,12 +149,10 @@ pub fn populateBaseArgs(args: [][]const u8, options: PopulateOptions) !void {
             args[1] = "-nostdlib";
             args[2] = "-fno-pie";
             args[3] = "-no-pie";
-            args[4] = "-z";
-            args[5] = "execstack";
-            args[6] = "-fno-builtin";
-            args[7] = options.object_path;
-            args[8] = "-o";
-            args[9] = options.output_path;
+            args[4] = "-fno-builtin";
+            args[5] = options.object_path;
+            args[6] = "-o";
+            args[7] = options.output_path;
         },
         .bare_metal_x86_64 => {
             if (options.linker_script_path.len == 0) return error.InvalidArgument;
@@ -269,7 +267,7 @@ test "all targets expose their composed capability policy" {
 }
 
 test "AArch64 arguments select the native or cross compiler for the host" {
-    var args: [10][]const u8 = undefined;
+    var args: [8][]const u8 = undefined;
     try populateBaseArgs(&args, .{
         .target = .freestanding_linux_aarch64,
         .object_path = "program.o",
@@ -278,8 +276,8 @@ test "AArch64 arguments select the native or cross compiler for the host" {
     });
     const expected_compiler = if (builtin.cpu.arch == .aarch64) "gcc" else "/toolchain/aarch64-gcc";
     try expectArgs(&.{
-        expected_compiler, "-nostdlib",    "-fno-pie",  "-no-pie", "-z",
-        "execstack",       "-fno-builtin", "program.o", "-o",      "program",
+        expected_compiler, "-nostdlib",    "-fno-pie", "-no-pie",
+        "-fno-builtin",   "program.o",    "-o",       "program",
     }, &args);
 }
 

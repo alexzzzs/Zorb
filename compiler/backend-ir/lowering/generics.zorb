@@ -477,10 +477,10 @@ export fn zbackend_ir_array_type_parts(
 ) -> bool {
     text = zbackend_ir_trim_type_text(text)
     if text.len < 4 || text.ptr[0] != 91 { return false }
-    close: i64 = 1
-    while close < text.len && text.ptr[close] != 93 { close = close + 1 }
-    if close <= 1 || close >= text.len - 1 { return false }
-    length_text: ZAstText = ZAstText{ ptr: text.ptr + 1, len: close - 1 }
+    close_index: i64 = 1
+    while close_index < text.len && text.ptr[close_index] != 93 { close_index = close_index + 1 }
+    if close_index <= 1 || close_index >= text.len - 1 { return false }
+    length_text: ZAstText = ZAstText{ ptr: text.ptr + 1, len: close_index - 1 }
     parsed_length: i64 = zbackend_ir_eval_integer_text(
         type_layout.ast, length_text,
         type_layout.constant_scope_declaration_start,
@@ -488,8 +488,8 @@ export fn zbackend_ir_array_type_parts(
     ) catch |err| { return false }
     if parsed_length <= 0 { return false }
     element[0] = zbackend_ir_trim_type_text(ZAstText{
-        ptr: text.ptr + close + 1,
-        len: text.len - close - 1
+        ptr: text.ptr + close_index + 1,
+        len: text.len - close_index - 1
     })
     if element.len == 0 { return false }
     length[0] = parsed_length

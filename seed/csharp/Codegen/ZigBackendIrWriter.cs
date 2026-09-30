@@ -23,11 +23,12 @@ public sealed record ZigBackendTarget(
     string Triple,
     string Cpu = "generic",
     string Features = "",
-    string Optimize = "O0");
+    string Optimize = "O0",
+    bool Freestanding = false);
 
 public sealed partial class ZigBackendIrWriter
 {
-    public const uint SchemaVersion = 2;
+    public const uint SchemaVersion = 4;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -79,7 +80,8 @@ public sealed partial class ZigBackendIrWriter
                 Triple = target.Triple,
                 Cpu = target.Cpu,
                 Features = target.Features,
-                Optimize = target.Optimize
+                Optimize = target.Optimize,
+                Freestanding = target.Freestanding
             },
             OutputKind = outputKind switch
             {
@@ -179,6 +181,7 @@ public sealed partial class ZigBackendIrWriter
         public string Cpu { get; init; } = "generic";
         public string Features { get; init; } = "";
         public string Optimize { get; init; } = "O0";
+        public bool Freestanding { get; init; }
     }
 
     private sealed class BackendFunction
