@@ -528,21 +528,21 @@ export fn std.net.recv(fd: i32, buf: []u8) -> i64 {
             recv_len = 2147483647
         }
 
-        read: i64 = recv(cast(i64, fd), buf.ptr, cast(i64, recv_len), 0)
-        read_int: i32 = cast(i32, read)
-        if read_int < 0 {
+        received: i64 = recv(cast(i64, fd), buf.ptr, cast(i64, recv_len), 0)
+        received_int: i32 = cast(i32, received)
+        if received_int < 0 {
             return -cast(i64, WSAGetLastError())
         }
 
-        return cast(i64, read_int)
+        return cast(i64, received_int)
     }
 
     if !Builtin.IsFreestanding {
-        read: i64 = recv(cast(i64, fd), buf.ptr, buf.len, 0)
-        if read < 0 {
+        received: i64 = recv(cast(i64, fd), buf.ptr, buf.len, 0)
+        if received < 0 {
             return -cast(i64, std.os.linux_errno())
         }
-        return read
+        return received
     }
 
     nr: i64 = std.net.recvfrom_nr()

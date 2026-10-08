@@ -469,15 +469,15 @@ export fn std.async.recv_exact_timeout(fd: i32, buf: []u8, timeout_ms: i32) !i64
         chunk: []u8 = buf
         chunk.ptr = buf.ptr + received
         chunk.len = buf.len - received
-        read: i64 = std.net.recv(fd, chunk)
-        if read < 0 {
+        received_count: i64 = std.net.recv(fd, chunk)
+        if received_count < 0 {
             return error.IOError
         }
-        if read == 0 {
+        if received_count == 0 {
             return error.EndOfFile
         }
 
-        received = received + read
+        received = received + received_count
     }
 
     return received
