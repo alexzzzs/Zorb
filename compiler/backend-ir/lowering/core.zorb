@@ -678,5 +678,12 @@ export fn zbackend_ir_builtin_platform_value(type_layout: *ZBackendIrTypeLayout,
         if zbackend_ir_string_contains(triple, "freestanding") { return 1 }
         return 0
     }
+    if ZAstText.eql_string(name, "IsFreestanding") {
+        if type_layout.freestanding { return 1 }
+        if zbackend_ir_string_contains(triple, "none") { return 1 }
+        if zbackend_ir_string_contains(triple, "bare") { return 1 }
+        if zbackend_ir_string_contains(triple, "freestanding") { return 1 }
+        return 0
+    }
     return error.NotImplemented
 }

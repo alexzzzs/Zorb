@@ -236,7 +236,7 @@ internal static partial class Program
             throw new Exception($"native lowering wrote to stderr.\n{execution.StdErr}".Trim());
 
         using var document = System.Text.Json.JsonDocument.Parse(execution.StdOut.Trim());
-        if (document.RootElement.GetProperty("schema_version").GetInt32() != 2)
+        if (document.RootElement.GetProperty("schema_version").GetInt32() != 4)
             throw new Exception("native lowering emitted the wrong backend IR schema version.");
 
         var irPath = Path.Combine(tempDirectory, $"{Path.GetFileNameWithoutExtension(inputPath)}-native.json");

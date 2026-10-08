@@ -20,7 +20,7 @@ internal static partial class Program
         using (var document = System.Text.Json.JsonDocument.Parse(execution.StdOut))
         {
             var root = document.RootElement;
-            if (root.GetProperty("schema_version").GetInt32() != 2)
+            if (root.GetProperty("schema_version").GetInt32() != 4)
                 throw new Exception("native backend IR emitted the wrong schema version.");
             if (root.GetProperty("types").GetArrayLength() != 2 ||
                 root.GetProperty("types")[1].GetProperty("scalar").GetString() != "bool")

@@ -1,13 +1,19 @@
 // Hosted process helpers and command-line arguments. Process argument vectors
 // passed to spawn/run are borrowed for the duration of the native launch call;
 // the child inherits the parent's standard handles. Linux uses an empty
-// environment through execve; Windows follows the native CRT environment.
+// environment through posix_spawn on hosted Linux and execve when freestanding;
+// Windows follows the native CRT environment.
 
 import "errors.zorb"
+import "os.zorb"
 
 import c "process.h"
+import c "spawn.h"
+import c "sys/wait.h"
 extern fn _spawnvp(mode: i32, file: *u8, argv: **u8) -> i64
 extern fn _cwait(termstat: *i32, process: i64, action: i32) -> i64
+extern fn posix_spawn(pid: *i32, path: *u8, file_actions: *void, attributes: *void, argv: **u8, envp: **u8) -> i32
+extern fn waitpid(pid: i32, status: *i32, options: i32) -> i32
 
 export struct std.process {}
 
@@ -56,6 +62,13 @@ const LINUX_EXIT_STATUS_SHIFT: i32 = 8
 const LINUX_SIGNAL_EXIT_BASE: i32 = 128
 const LINUX_CHILD_EXEC_FAILURE: i32 = 127
 const LINUX_SIGCHLD: i64 = 17
+const LINUX_ENOENT: i32 = 2
+const LINUX_ENOTDIR: i32 = 20
+const LINUX_EINTR: i32 = 4
+
+// POSIX spawn requires a null-terminated environment vector. Linux keeps the
+// existing std.process contract of launching children with an empty one.
+linux_empty_environment: [1]*u8
 
 fn std.process.linux_clone_nr() -> i64 {
     if Builtin.IsX86_64 {
@@ -111,6 +124,9 @@ export fn std.process.is_supported() -> bool {
     }
 
     if Builtin.IsLinux {
+        if !Builtin.IsFreestanding {
+            return true
+        }
         return std.process.linux_clone_nr() != 0 &&
             std.process.linux_execve_nr() != 0 &&
             std.process.linux_wait4_nr() != 0 &&
@@ -142,12 +158,34 @@ export fn std.process.spawn(argv: **u8) !std.process.Child {
     }
 
     if Builtin.IsLinux {
+        if !Builtin.IsFreestanding {
+            pid: i32 = 0
+            result: i32 = posix_spawn(
+                &pid,
+                cast(*u8, argv[0]),
+                cast(*void, 0),
+                cast(*void, 0),
+                argv,
+                cast(**u8, &linux_empty_environment[0])
+            )
+            if result == LINUX_ENOENT || result == LINUX_ENOTDIR {
+                return error.NotFound
+            }
+            if result != 0 {
+                return error.IOError
+            }
+
+            child.handle = cast(i64, pid)
+            child.active = true
+            return child
+        }
+
         clone_nr: i64 = std.process.linux_clone_nr()
         execve_nr: i64 = std.process.linux_execve_nr()
         exit_nr: i64 = std.process.linux_exit_nr()
         pid: i64 = 0
         if Builtin.IsX86_64 {
-            pid = syscall(clone_nr)
+            pid = syscall(clone_nr, LINUX_SIGCHLD, 0, 0, 0, 0)
         }
         if Builtin.IsAArch64 {
             pid = syscall(clone_nr, LINUX_SIGCHLD, 0, 0, 0, 0)
@@ -202,21 +240,33 @@ export fn std.process.wait(self: *std.process.Child) !i32 {
     }
 
     if Builtin.IsLinux {
+        if !Builtin.IsFreestanding {
+            status: i32 = 0
+            while true {
+                result: i32 = waitpid(cast(i32, self.handle), &status, 0)
+                if result >= 0 { break }
+                if std.os.linux_errno() == LINUX_EINTR { continue }
+                return error.IOError
+            }
+
+            self.handle = 0
+            self.active = false
+            return std.process.linux_exit_code(status)
+        }
+
         wait4_nr: i64 = std.process.linux_wait4_nr()
         status: i32 = 0
-        result: i64 = syscall(wait4_nr, self.handle, cast(i64, &status), 0, 0)
-        if result < 0 {
+        while true {
+            result: i64 = syscall(wait4_nr, self.handle, cast(i64, &status), 0, 0)
+            if result >= 0 { break }
+            if result == -cast(i64, LINUX_EINTR) { continue }
             return error.IOError
         }
 
         self.handle = 0
         self.active = false
 
-        if (status & LINUX_EXIT_STATUS_MASK) == 0 {
-            return (status >> LINUX_EXIT_STATUS_SHIFT) & LINUX_EXIT_STATUS_MASK
-        }
-
-        return LINUX_SIGNAL_EXIT_BASE + (status & LINUX_EXIT_STATUS_MASK)
+        return std.process.linux_exit_code(status)
     }
 
     if Builtin.IsWindows {
@@ -231,6 +281,13 @@ export fn std.process.wait(self: *std.process.Child) !i32 {
     }
 
     return error.UnsupportedPlatform
+}
+
+fn std.process.linux_exit_code(status: i32) -> i32 {
+    if (status & LINUX_EXIT_STATUS_MASK) == 0 {
+        return (status >> LINUX_EXIT_STATUS_SHIFT) & LINUX_EXIT_STATUS_MASK
+    }
+    return LINUX_SIGNAL_EXIT_BASE + (status & LINUX_EXIT_STATUS_MASK)
 }
 
 // Convenience form of spawn followed by wait. argv must follow the same

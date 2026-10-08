@@ -92,14 +92,14 @@ partial class Program
         {
             CompilationTarget.HostLinux or CompilationTarget.FreestandingLinux
                 when RuntimeInformation.ProcessArchitecture == Architecture.X64
-                => new ZigBackendTarget("x86_64-pc-linux-gnu"),
+                => new ZigBackendTarget("x86_64-pc-linux-gnu", Freestanding: target == CompilationTarget.FreestandingLinux),
             CompilationTarget.HostLinux or CompilationTarget.FreestandingLinux
                 when RuntimeInformation.ProcessArchitecture == Architecture.Arm64
-                => new ZigBackendTarget("aarch64-unknown-linux-gnu"),
+                => new ZigBackendTarget("aarch64-unknown-linux-gnu", Freestanding: target == CompilationTarget.FreestandingLinux),
             CompilationTarget.HostLinuxAArch64 or CompilationTarget.FreestandingLinuxAArch64
-                => new ZigBackendTarget("aarch64-unknown-linux-gnu"),
+                => new ZigBackendTarget("aarch64-unknown-linux-gnu", Freestanding: target == CompilationTarget.FreestandingLinuxAArch64),
             CompilationTarget.BareMetalX86_64
-                => new ZigBackendTarget("x86_64-unknown-none-elf"),
+                => new ZigBackendTarget("x86_64-unknown-none-elf", Freestanding: true),
             CompilationTarget.HostWindows
                 when RuntimeInformation.ProcessArchitecture == Architecture.X64
                 => new ZigBackendTarget("x86_64-pc-windows-msvc"),

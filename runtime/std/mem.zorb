@@ -4,6 +4,8 @@ import "os.zorb"
 
 export struct std.mem {}
 
+const STD_MEM_MAX_I64: i64 = 9223372036854775807
+
 export struct std.mem.HeapAllocator {
     buffer: *u8,
     len: i64,
@@ -76,12 +78,19 @@ export fn std.mem.HeapAllocator.alloc(self: *std.mem.HeapAllocator, size: i64) !
         return error.InvalidSize
     }
 
+    if size > STD_MEM_MAX_I64 - 7 {
+        return error.InvalidSize
+    }
+
     aligned_size: i64 = (size + 7) & -8
-    
-    if self.pos + aligned_size > self.len {
+
+    if self.pos < 0 || self.len < 0 || self.pos > self.len {
         return error.OutOfMemory
     }
-    
+    if aligned_size > self.len - self.pos {
+        return error.OutOfMemory
+    }
+
     ptr: *u8 = &self.buffer[self.pos]
     view: []u8
     view.ptr = ptr

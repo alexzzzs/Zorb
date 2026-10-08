@@ -573,15 +573,19 @@ Current builtins:
 - `Builtin.IsLinux`
 - `Builtin.IsWindows`
 - `Builtin.IsBareMetal`
+- `Builtin.IsFreestanding`
 - `Builtin.IsX86_64`
 - `Builtin.IsAArch64`
 
 Meaning:
 
-- These are compile-time-known source constructs lowered to C preprocessor-backed constants.
+- These are compile-time-known source constructs lowered from the selected
+  backend IR target profile and target triple.
 - They describe the selected compilation target, not the host OS running the
   Zorb compiler.
 - Semantically they behave as `bool` values.
+- `Builtin.IsFreestanding` is true for freestanding Linux and bare-metal
+  targets; hosted Linux and Windows targets set it to false.
 
 ## Name Resolution And Visibility
 
@@ -601,7 +605,9 @@ Meaning:
 
 - A symbol may exist in the symbol table but still fail visibility checks if it was not made visible in the current file/import scope.
 - Imported symbols are made visible by semantic import processing.
-- Builtins like `syscall`, `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`, `Builtin.IsX86_64`, and `Builtin.IsAArch64` are inserted as visible built-in symbols.
+- Builtins like `syscall`, `Builtin.IsLinux`, `Builtin.IsWindows`,
+  `Builtin.IsBareMetal`, `Builtin.IsFreestanding`, `Builtin.IsX86_64`, and
+  `Builtin.IsAArch64` are inserted as visible built-in symbols.
 
 ## Type Checking
 
@@ -629,7 +635,9 @@ Notes:
 
 - `if`, `while`, and `for` conditions must have type `bool`.
 - Numeric and pointer values are not implicitly truthy in conditions.
-- `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsX86_64`, and `Builtin.IsAArch64` may be used directly as conditions because they are `bool`.
+- `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`,
+  `Builtin.IsFreestanding`, `Builtin.IsX86_64`, and `Builtin.IsAArch64` may be
+  used directly as conditions because they are `bool`.
 - To branch on a numeric or pointer expression, compare it explicitly, for example `value != 0`.
 
 ### Binary Operator Checking
@@ -906,6 +914,7 @@ The semantic checker injects:
 - `Builtin.IsLinux: bool`
 - `Builtin.IsWindows: bool`
 - `Builtin.IsBareMetal: bool`
+- `Builtin.IsFreestanding: bool`
 - `Builtin.IsX86_64: bool`
 - `Builtin.IsAArch64: bool`
 
@@ -927,6 +936,7 @@ object code.
 - Linux syscall support code is emitted only for targets that use the Linux syscall ABI.
 - On Linux syscall targets, the generated syscall wrapper currently has x86_64 and AArch64 inline-assembly implementations.
 - `Builtin.IsLinux`, `Builtin.IsWindows`, `Builtin.IsBareMetal`,
+  `Builtin.IsFreestanding`,
   `Builtin.IsX86_64`, and `Builtin.IsAArch64` lower to compile-time-known
   boolean-like constants.
 

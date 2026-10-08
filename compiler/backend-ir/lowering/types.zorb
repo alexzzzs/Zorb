@@ -24,6 +24,7 @@ export struct ZBackendIrTypeLayout {
     allocator: *std.mem.HeapAllocator,
     ast: *ZAstModule,
     target_triple: string,
+    freestanding: bool,
     constant_scope_declaration_start: i64,
     constant_scope_statement: i64,
     types: *ZBackendIrType,

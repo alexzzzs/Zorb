@@ -25,6 +25,14 @@ Support is module and target specific:
 - `std.async` requires both `std.task` and `std.net`; check
   `std.async.is_supported()` before using it.
 
+Hosted Linux uses libc for process creation and waiting, file descriptors,
+memory mappings, clocks, and sockets. These wrappers translate libc's `-1` plus
+`errno` result into the standard library's existing error conventions; read and
+write operations also handle interrupted calls and short transfers. Freestanding
+Linux keeps its raw syscall path, and the explicit session bump allocator is
+unchanged. `Builtin.IsFreestanding` selects the runtime profile when hosted and
+freestanding Linux share the same target triple.
+
 Unsupported operations return `error.UnsupportedPlatform` where their
 signatures allow errors. Check the module's `is_supported()` function before
 using target-specific facilities.
@@ -47,7 +55,7 @@ I/O, and platform failures. Use the names as `error.Name` in error unions.
   `is_bare_metal`, `is_x86_64`, `is_aarch64`, `platform_name`, `arch_name`.
 - Process control: `exit`.
 - Page allocation: `get_pages`, `free_pages`.
-- Hosted monotonic clock: `monotonic_millis`.
+- Monotonic clock: `monotonic_millis`.
 - Legacy numeric platform code: `get_type`.
 
 ### Process and arguments — `std/process.zorb`
@@ -59,6 +67,8 @@ I/O, and platform failures. Use the names as `error.Name` in error unions.
   `wait`.
 - `run` starts a child and waits for it, inheriting standard input, output, and
   error.
+- Hosted Linux uses `posix_spawn` and `waitpid`; freestanding Linux retains the
+  syscall implementation. Linux children receive an empty environment.
 
 ### Input and output — `std/io.zorb`
 
@@ -96,7 +106,8 @@ requested byte range.
 - Readiness polling: `poll`, `poll_readable`, and `poll_writable`.
 
 These are low-level APIs. Callers own socket descriptors and must handle
-platform error results.
+platform error results. On Linux, failures are returned as negative `errno`
+values; Windows returns negative Winsock error codes.
 
 ### Tasks — `std/task.zorb`
 

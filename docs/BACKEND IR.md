@@ -2,14 +2,15 @@
 
 Backend IR is the versioned JSON boundary between the compiler frontend and
 `backend/llvm`. It is an internal compiler protocol, not a source-language or
-LLVM API. The native Zorb writer emits the current contract; the frozen C# seed
-writer remains a version 2 compatibility producer.
+LLVM API. The native Zorb writer emits the current contract; the C# recovery
+compiler emits the same current contract.
 
 The canonical schema is defined by
 [`backend/llvm/src/backend_ir.zig`](../backend/llvm/src/backend_ir.zig). The
-current schema version is `3`. The backend also accepts version 2 modules from
-the frozen C# seed writer, but version 2 cannot contain the `pointer_difference`
-instruction. Unknown JSON fields are rejected by the backend.
+current schema version is `4`. The backend also accepts version 3 modules from
+the previous native writer and version 2 modules from older seed compilers.
+Version 2 cannot contain the `pointer_difference` instruction. Unknown JSON
+fields are rejected by the backend.
 
 ## Module envelope
 
@@ -17,9 +18,9 @@ Every document contains:
 
 | Field | Type | Contract |
 | --- | --- | --- |
-| `schema_version` | unsigned integer | Must be `3`, or legacy version `2` without version 3 instructions. |
+| `schema_version` | unsigned integer | Must be `4`, `3`, or legacy version `2` without version 3 instructions. |
 | `module_name` | string | Non-empty diagnostic/module identity. |
-| `target` | object | Target triple plus optional CPU, features, and optimization level. |
+| `target` | object | Target triple, freestanding runtime profile, CPU, features, and optimization level. |
 | `output_kind` | string | `llvm_ir`, `bitcode`, `object`, or `assembly`. |
 | `output_path` | string | Non-empty backend output path. |
 | `types` | array | Interned type definitions. Defaults to empty. |
@@ -28,6 +29,13 @@ Every document contains:
 
 `target.cpu`, `target.features`, and `target.optimize` default to `generic`, an
 empty feature string, and `O0` respectively.
+`target.freestanding` defaults to `false` for older schema versions. Version 4
+writers set it explicitly so Linux hosted code can select libc while
+freestanding Linux retains direct system calls, even though both use the same
+Linux target triple.
+The backend disables library-call optimizations for freestanding targets so
+optimized loops do not introduce libc dependencies such as `strlen`. Older
+bare-metal modules are also recognized by their `-none-` target triple.
 
 ## Identity and references
 
@@ -64,7 +72,7 @@ operation-specific optional fields. Operation names and their payload fields
 are defined by `InstructionOp` in the canonical schema. Producers must omit
 irrelevant optional fields rather than assigning invented sentinel values.
 
-Schema version 3 adds `pointer_difference`. Its `lhs` and `rhs` are pointer
+Schema version 3 added `pointer_difference`. Its `lhs` and `rhs` are pointer
 values, `source_type` is their pointee type, and the result `type` is signed
 `i64`. The backend subtracts their target pointer representations and divides
 the signed byte difference by the pointee's ABI size. Version 2 modules cannot
@@ -84,9 +92,9 @@ Any incompatible field, enum, reference, or semantic change increments
 3. the checked-in JSON fixtures and contract tests; and
 4. this document.
 
-The frozen C# seed writer may continue producing version 2 while it is used for
-recovery bootstrapping. New version 3 instructions must be emitted by the
-native writer.
+Schema version 4 adds the freestanding runtime profile. The C# recovery
+compiler emits version 4 as well, while the backend continues to accept older
+version 2 and version 3 modules.
 
 Additive fields still require a version increment while unknown fields are
 rejected. This keeps old bootstrap compilers from silently producing a module

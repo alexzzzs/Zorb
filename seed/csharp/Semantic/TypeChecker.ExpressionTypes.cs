@@ -379,6 +379,7 @@ public partial class TypeChecker
             "Builtin.IsLinux" => new TypeNode { Name = "bool" },
             "Builtin.IsWindows" => new TypeNode { Name = "bool" },
             "Builtin.IsBareMetal" => new TypeNode { Name = "bool" },
+            "Builtin.IsFreestanding" => new TypeNode { Name = "bool" },
             "Builtin.IsX86_64" => new TypeNode { Name = "bool" },
             "Builtin.IsAArch64" => new TypeNode { Name = "bool" },
             "Builtin.CompileError" => new TypeNode { Name = "void" },

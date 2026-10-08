@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Sequence
 
@@ -310,6 +310,25 @@ def native_flags_for_recovery(link_args: Sequence[str]) -> str:
     return shlex.join(link_args)
 
 
+def prepare_seed_entry(root: Path, entry: Path, workspace: Path, target: str) -> Path:
+    """Fold the new runtime builtin for hosted builds made by pre-v4 seeds."""
+    if target not in ("host-linux", "host-linux-aarch64", "host-windows"):
+        raise BuildError(f"Seed source compatibility requires a hosted target; got {target}.")
+    source_root = workspace / "seed-sources"
+    for directory in ("compiler", "runtime"):
+        shutil.copytree(root / directory, source_root / directory)
+    # The v0.2.4 seed cannot lower IsFreestanding. Its compiler and self-check
+    # binaries are hosted, so false is their correct compile-time value. Only
+    # runtime code is adapted; the new frontend/lowering implementation remains
+    # intact and can compile the original sources in subsequent generations.
+    for source in (source_root / "runtime").rglob("*.zorb"):
+        original = source.read_text(encoding="utf-8")
+        adapted = original.replace("Builtin.IsFreestanding", "false")
+        if adapted != original:
+            source.write_text(adapted, encoding="utf-8")
+    return source_root / entry.relative_to(root)
+
+
 def build_generation(
     description: str,
     compiler_command: Sequence[str],
@@ -360,10 +379,16 @@ def bootstrap(options: argparse.Namespace, environment: BuildEnvironment) -> Non
                 options, environment.root, environment.target
             )
             recovery = False
+        seed_environment = environment if recovery else replace(
+            environment,
+            driver_entry=prepare_seed_entry(
+                environment.root, environment.driver_entry, workspace, environment.target
+            ),
+        )
         build_generation(
             "Build integrated Zorb compiler",
             seed_command,
-            environment,
+            seed_environment,
             backend,
             output_path,
             recovery,
@@ -384,16 +409,18 @@ def bootstrap_self_check(options: argparse.Namespace) -> None:
 
     with tempfile.TemporaryDirectory(prefix="zorb-self-check-bootstrap-") as temporary_dir:
         workspace = Path(temporary_dir)
+        source_entry = root / "compiler/self-check/main.zorb"
         if options.recovery_csharp:
             compiler_command = prepare_recovery_command(root, workspace)
         else:
             compiler_command = resolve_seed_command(options, root, target)
+            source_entry = prepare_seed_entry(root, source_entry, workspace, target)
         run_checked(
             "Build native frontend self-check",
             (
                 *compiler_command,
                 "build",
-                root / "compiler/self-check/main.zorb",
+                source_entry,
                 "--target",
                 target,
                 "-o",
@@ -448,6 +475,12 @@ def publish(options: argparse.Namespace, environment: BuildEnvironment) -> None:
                 options, environment.root, environment.target
             )
             recovery = False
+        seed_environment = environment if recovery else replace(
+            environment,
+            driver_entry=prepare_seed_entry(
+                environment.root, environment.driver_entry, workspace, environment.target
+            ),
+        )
 
         executable_suffix = ".exe" if environment.target == "host-windows" else ""
         generation_1 = workspace / f"zorb-generation-1{executable_suffix}"
@@ -456,7 +489,7 @@ def publish(options: argparse.Namespace, environment: BuildEnvironment) -> None:
         build_generation(
             "Build generation-1 compiler",
             seed_command,
-            environment,
+            seed_environment,
             backend,
             generation_1,
             recovery,

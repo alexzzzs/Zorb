@@ -1,6 +1,7 @@
 // std/io.zorb
 
 import "str.zorb"
+import "os.zorb"
 export struct std.io {}
 
 std_io_stdout_fd: i32 = 1
@@ -121,16 +122,16 @@ export fn std.io.write(fd: i32, buf: []u8) {
     }
 
     if Builtin.IsLinux {
-        write_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            write_nr = 1
+        offset: i64 = 0
+        while offset < validated_len {
+            remaining: []u8
+            remaining.ptr = cast(*u8, cast(i64, buf.ptr) + offset)
+            remaining.len = validated_len - offset
+            written: i64 = std.os.linux_write(fd, remaining)
+            if written <= 0 { return }
+            offset = offset + written
         }
-        if Builtin.IsAArch64 {
-            write_nr = 64
-        }
-        if write_nr != 0 {
-            syscall(write_nr, cast(i64, fd), cast(i64, buf.ptr), validated_len)
-        }
+        return
     }
 
     if Builtin.IsWindows {
@@ -166,18 +167,7 @@ export fn std.io.read(fd: i32, buf: []u8) -> i64 {
     }
 
     if Builtin.IsLinux {
-        read_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            read_nr = 0
-        }
-        if Builtin.IsAArch64 {
-            read_nr = 63
-        }
-        if read_nr == 0 && !Builtin.IsX86_64 {
-            return -1
-        }
-
-        return syscall(read_nr, cast(i64, fd), cast(i64, buf.ptr), buf.len)
+        return std.os.linux_read(fd, buf)
     }
 
     if Builtin.IsWindows {

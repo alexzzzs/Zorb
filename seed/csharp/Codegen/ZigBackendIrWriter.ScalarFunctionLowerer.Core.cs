@@ -196,6 +196,7 @@ public sealed partial class ZigBackendIrWriter
                 "Builtin.IsLinux" => triple.Contains("linux", StringComparison.Ordinal),
                 "Builtin.IsWindows" => triple.Contains("windows", StringComparison.Ordinal),
                 "Builtin.IsBareMetal" => triple.Contains("-none-", StringComparison.Ordinal),
+                "Builtin.IsFreestanding" => _target.Freestanding || triple.Contains("-none-", StringComparison.Ordinal),
                 "Builtin.IsX86_64" => triple.StartsWith("x86_64-", StringComparison.Ordinal),
                 "Builtin.IsAArch64" => triple.StartsWith("aarch64-", StringComparison.Ordinal),
                 _ => throw new ZorbCompilerException($"Unknown target builtin '{name}'.")
@@ -265,6 +266,7 @@ public sealed partial class ZigBackendIrWriter
                     "Builtin.IsLinux" or
                     "Builtin.IsWindows" or
                     "Builtin.IsBareMetal" or
+                    "Builtin.IsFreestanding" or
                     "Builtin.IsX86_64" or
                     "Builtin.IsAArch64"
                     => new TypeNode { Name = "bool" },

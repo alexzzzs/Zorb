@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: linux-hosted-x64
@@ -25,12 +28,11 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-22-dev lld-22 g++
+          sudo apt-get install -y llvm-22-dev lld-22 g++ minisign
 
       - name: Install Zig 0.16
         run: |
-          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-          tar -xf zig.tar.xz
+          bash scripts/install-zig-linux.sh x86_64
           echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
 
       - name: Cache Zig build artifacts
@@ -79,12 +81,11 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-22-dev lld-22 g++ gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+          sudo apt-get install -y llvm-22-dev lld-22 g++ gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user minisign
 
       - name: Install Zig 0.16
         run: |
-          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-          tar -xf zig.tar.xz
+          bash scripts/install-zig-linux.sh x86_64
           echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
 
       - name: Cache Zig build artifacts
@@ -227,9 +228,8 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-22-dev lld-22 g++
-          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-          tar -xf zig.tar.xz
+          sudo apt-get install -y llvm-22-dev lld-22 g++ minisign
+          bash scripts/install-zig-linux.sh x86_64
           echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
 
       - name: Cache Zig and bootstrap artifacts
@@ -277,9 +277,8 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-22-dev lld-22 g++
-          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-          tar -xf zig.tar.xz
+          sudo apt-get install -y llvm-22-dev lld-22 g++ minisign
+          bash scripts/install-zig-linux.sh x86_64
           echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
 
       - name: Build LLVM backend
@@ -311,8 +310,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/install-llvm-windows.ps1
-          Invoke-WebRequest https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip -OutFile zig.zip
-          Expand-Archive zig.zip -DestinationPath .
+          ./scripts/install-zig-windows.ps1
           "$PWD/zig-x86_64-windows-0.16.0" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "$env:ProgramFiles\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
@@ -435,9 +433,8 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y llvm-22-dev lld-22 g++
-          curl -fsSLo zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-          tar -xf zig.tar.xz
+          sudo apt-get install -y llvm-22-dev lld-22 g++ minisign
+          bash scripts/install-zig-linux.sh x86_64
           echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
 
       - name: Install release toolchain
@@ -445,8 +442,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/install-llvm-windows.ps1
-          Invoke-WebRequest https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip -OutFile zig.zip
-          Expand-Archive zig.zip -DestinationPath .
+          ./scripts/install-zig-windows.ps1
           "$PWD/zig-x86_64-windows-0.16.0" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "$env:ProgramFiles\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 

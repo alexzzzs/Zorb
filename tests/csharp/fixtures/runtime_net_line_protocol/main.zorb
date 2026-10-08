@@ -32,11 +32,11 @@ fn recv_exact(fd: i32, buf: []u8) -> bool {
         chunk: []u8 = buf
         chunk.ptr = buf.ptr + received
         chunk.len = buf.len - received
-        read: i64 = std.net.recv(fd, chunk)
-        if read <= 0 {
+        received_count: i64 = std.net.recv(fd, chunk)
+        if received_count <= 0 {
             return false
         }
-        received = received + read
+        received = received + received_count
     }
 
     return true

@@ -1,6 +1,9 @@
 // std/os.zorb
 
 import "errors.zorb"
+import c "errno.h"
+import c "sys/mman.h"
+import c "time.h"
 
 export struct std.os {}
 
@@ -9,10 +12,105 @@ extern fn ExitProcess(uExitCode: u32) -> void
 extern fn VirtualAlloc(addr: *u8, size: i64, type: u32, protect: u32) -> *u8
 extern fn VirtualFree(addr: *u8, size: i64, free_type: u32) -> i32
 extern fn GetTickCount64() -> u64
+extern fn __errno_location() -> *i32
+extern fn read(fd: i32, buf: *u8, len: i64) -> i64
+extern fn write(fd: i32, buf: *u8, len: i64) -> i64
+extern fn close(fd: i32) -> i32
+extern fn mmap(addr: *u8, size: i64, protect: i32, flags: i32, fd: i32, offset: i64) -> *u8
+extern fn munmap(addr: *u8, size: i64) -> i32
+extern fn clock_gettime(clock_id: i32, ts: *std.os.Timespec) -> i32
 
 struct std.os.Timespec {
     tv_sec: i64,
     tv_nsec: i64
+}
+
+const LINUX_EINTR: i32 = 4
+
+export fn std.os.linux_errno() -> i32 {
+    if !Builtin.IsLinux || Builtin.IsFreestanding {
+        return 0
+    }
+
+    value: *i32 = __errno_location()
+    if cast(i64, value) == 0 {
+        return 0
+    }
+    return value[0]
+}
+
+// These descriptor helpers keep libc errno handling in one place. The
+// freestanding path preserves Linux's raw -errno return convention.
+export fn std.os.linux_read(fd: i32, buf: []u8) -> i64 {
+    if !Builtin.IsLinux || buf.len < 0 {
+        return -1
+    }
+
+    while true {
+        result: i64 = 0
+        if Builtin.IsFreestanding {
+            read_nr: i64 = 0
+            if Builtin.IsX86_64 { read_nr = 0 }
+            if Builtin.IsAArch64 { read_nr = 63 }
+            if read_nr == 0 && !Builtin.IsX86_64 { return -1 }
+            result = syscall(read_nr, cast(i64, fd), cast(i64, buf.ptr), buf.len)
+            if result == -cast(i64, LINUX_EINTR) { continue }
+            return result
+        }
+
+        result = read(fd, buf.ptr, buf.len)
+        if result >= 0 { return result }
+        errno: i32 = std.os.linux_errno()
+        if errno == LINUX_EINTR { continue }
+        return -cast(i64, errno)
+    }
+    return -1
+}
+
+export fn std.os.linux_write(fd: i32, buf: []u8) -> i64 {
+    if !Builtin.IsLinux || buf.len < 0 {
+        return -1
+    }
+
+    while true {
+        result: i64 = 0
+        if Builtin.IsFreestanding {
+            write_nr: i64 = 0
+            if Builtin.IsX86_64 { write_nr = 1 }
+            if Builtin.IsAArch64 { write_nr = 64 }
+            if write_nr == 0 { return -1 }
+            result = syscall(write_nr, cast(i64, fd), cast(i64, buf.ptr), buf.len)
+            if result == -cast(i64, LINUX_EINTR) { continue }
+            return result
+        }
+
+        result = write(fd, buf.ptr, buf.len)
+        if result >= 0 { return result }
+        errno: i32 = std.os.linux_errno()
+        if errno == LINUX_EINTR { continue }
+        return -cast(i64, errno)
+    }
+    return -1
+}
+
+export fn std.os.linux_close(fd: i32) -> i64 {
+    if !Builtin.IsLinux {
+        return -1
+    }
+
+    if Builtin.IsFreestanding {
+        close_nr: i64 = 0
+        if Builtin.IsX86_64 { close_nr = 3 }
+        if Builtin.IsAArch64 { close_nr = 57 }
+        if close_nr == 0 { return -1 }
+        return syscall(close_nr, cast(i64, fd))
+    }
+
+    result: i32 = close(fd)
+    if result < 0 {
+        return -cast(i64, std.os.linux_errno())
+    }
+    return cast(i64, result)
 }
 
 export fn std.os.is_linux() -> bool {
@@ -134,23 +232,22 @@ export fn std.os.get_pages(size: i64) !*u8 {
     }
 
     if Builtin.IsLinux {
-        mmap_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            mmap_nr = 9
-        }
-        if Builtin.IsAArch64 {
-            mmap_nr = 222
-        }
-        if mmap_nr == 0 {
-            return error.UnsupportedPlatform
+        if Builtin.IsFreestanding {
+            mmap_nr: i64 = 0
+            if Builtin.IsX86_64 { mmap_nr = 9 }
+            if Builtin.IsAArch64 { mmap_nr = 222 }
+            if mmap_nr == 0 { return error.UnsupportedPlatform }
+
+            // addr: 0, len: size, prot: 3 (READ|WRITE), flags: 34 (PRIVATE|ANON), fd: -1, offset: 0
+            addr: i64 = syscall(mmap_nr, 0, size, 3, 34, -1, 0)
+            if addr < 0 { return error.OutOfMemory }
+            return cast(*u8, addr)
         }
 
-        // addr: 0, len: size, prot: 3 (READ|WRITE), flags: 34 (PRIVATE|ANON), fd: -1, offset: 0
-        addr: i64 = syscall(mmap_nr, 0, size, 3, 34, -1, 0)
-        if addr < 0 {
-            return error.OutOfMemory
-        }
-        return cast(*u8, addr)
+        // MAP_PRIVATE | MAP_ANONYMOUS, PROT_READ | PROT_WRITE.
+        pages: *u8 = mmap(cast(*u8, 0), size, 3, 34, -1, 0)
+        if cast(i64, pages) == -1 { return error.OutOfMemory }
+        return pages
     }
     
     if Builtin.IsWindows {
@@ -180,22 +277,20 @@ export fn std.os.free_pages(addr: *u8, size: i64) !i32 {
     }
 
     if Builtin.IsLinux {
-        munmap_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            munmap_nr = 11
-        }
-        if Builtin.IsAArch64 {
-            munmap_nr = 215
-        }
-        if munmap_nr == 0 {
-            return error.UnsupportedPlatform
+        if Builtin.IsFreestanding {
+            munmap_nr: i64 = 0
+            if Builtin.IsX86_64 { munmap_nr = 11 }
+            if Builtin.IsAArch64 { munmap_nr = 215 }
+            if munmap_nr == 0 { return error.UnsupportedPlatform }
+
+            result: i64 = syscall(munmap_nr, cast(i64, addr), size)
+            if result < 0 { return error.IOError }
+            return 0
         }
 
-        result: i64 = syscall(munmap_nr, cast(i64, addr), size)
-        if result < 0 {
-            return error.IOError
-        }
-        return 0
+        result: i32 = munmap(addr, size)
+        if result < 0 { return error.IOError }
+        return result
     }
 
     if Builtin.IsWindows {
@@ -215,21 +310,18 @@ export fn std.os.monotonic_millis() !i64 {
     }
 
     if Builtin.IsLinux {
-        clock_gettime_nr: i64 = 0
-        if Builtin.IsX86_64 {
-            clock_gettime_nr = 228
-        }
-        if Builtin.IsAArch64 {
-            clock_gettime_nr = 113
-        }
-        if clock_gettime_nr == 0 {
-            return error.UnsupportedPlatform
-        }
-
         ts: std.os.Timespec
-        result: i64 = syscall(clock_gettime_nr, 1, cast(i64, &ts))
-        if result < 0 {
-            return error.IOError
+        if Builtin.IsFreestanding {
+            clock_gettime_nr: i64 = 0
+            if Builtin.IsX86_64 { clock_gettime_nr = 228 }
+            if Builtin.IsAArch64 { clock_gettime_nr = 113 }
+            if clock_gettime_nr == 0 { return error.UnsupportedPlatform }
+
+            result: i64 = syscall(clock_gettime_nr, 1, cast(i64, &ts))
+            if result < 0 { return error.IOError }
+        } else {
+            result: i32 = clock_gettime(1, &ts)
+            if result < 0 { return error.IOError }
         }
 
         return ts.tv_sec * 1000 + (ts.tv_nsec / 1000000)
